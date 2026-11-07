@@ -172,7 +172,7 @@ function project(game, e) {
     case 'virgin': return {...base, seat: e.nominator, target: e.seat, text: `${n(e.nominator)} is executed at once for nominating ${n(e.seat)}.`};
     case 'death': return e.cause === 'execution' ? null : {...base, seat: e.seat, text: `${n(e.seat)} dies.`};
     case 'win': return {...base, team: e.team, text: e.text.charAt(0).toUpperCase() + e.text.slice(1) + '.'};
-    case 'told': return {...base, what: e.what, text: toldText(game, e)};
+    case 'told': return {...base, seat: e.seat, what: e.what, text: toldText(game, e)};
   }
   return null; // a type no seat is shown
 }
@@ -202,7 +202,7 @@ export function pendingFor(game, seat) {
   if (p.kind === 'choose' && p.seat === seat) return {kind: 'choose', role: p.role, question: p.question, options: copy(p.options), ...(p.count ? {count: p.count} : {})};
   if (p.kind === 'vote' && p.seats.includes(seat)) {
     const votes = game.ballot?.votes || {};
-    return {kind: 'vote', nominee: p.nominee, nominator: p.nominator, voted: Object.keys(votes).map(Number), mine: votes[seat] ?? null,
+    return {kind: 'vote', nominee: p.nominee, nominator: p.nominator, voted: Object.keys(votes).map(Number), ballots: copy(votes), mine: votes[seat] ?? null,
       question: `${nameOf(game, p.nominator)} nominates ${nameOf(game, p.nominee)}: do you vote to execute?${s.alive ? '' : ' (You are dead: a yes spends your one ghost vote.)'}`};
   }
   if (p.kind === 'nomination' && game.clock.nominationsOpen && s.alive && !game.today.nominators.includes(seat) && !game.clock.passedNominating.includes(seat)) {
