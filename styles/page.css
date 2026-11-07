@@ -20,6 +20,7 @@ a { color: var(--gold); }
 .bar .empty { margin: 0; color: var(--dim); }
 .bar .field { font: 14px var(--sans); color: var(--dim); }
 .bar .source { font: 14px var(--sans); color: var(--dim); }
+.bar .pace-note { font: 12px var(--sans); } .bar .pace-note:empty { display: none; }
 .bar .grow { flex: 1; }
 .relay { font: 13px var(--sans); color: var(--off); } .relay[data-state="connected"] { color: var(--ok); }
 
