@@ -7,7 +7,7 @@
 // role, a Storyteller reason or a whisper between two others never reaches a seat (npm run playertoolcheck proves it).
 // Every refusal comes back as {ok: false, error} with what is open to the seat now. With no game behind the relay (the
 // stub backend: no ctx.game or ctx.api) look answers "no game yet" and the rest say so.
-import {seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine} from '../seats/player.js';
+import {seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf} from '../seats/player.js';
 
 const READ_CAP = 40; // read_talk and my_whispers show at most this many entries
 
@@ -21,7 +21,8 @@ const msg = e => String((e && e.message) || e || 'That did not work.');
 function openNow(ctx) {
   try {
     const v = viewOf(ctx), asked = askedOf(ctx.game, v, me(ctx), pendingOf(ctx));
-    return `${asked && !asked.done ? asked.text + ' ' : ''}Open to you now: ${usefulTools(v, asked, null).join(', ')}.`;
+    const waiting = waitingOf(ctx.game, ctx.api, v, me(ctx), asked);
+    return `${asked && !asked.done ? asked.text + ' ' : waiting ? waiting.text + ' ' : ''}Open to you now: ${usefulTools(v, asked, null, waiting).join(', ')}.`;
   } catch {return 'Use look or what_is_asked to see what is open.'}
 }
 function refuse(ctx, error) {
@@ -97,7 +98,10 @@ function myNotes(args, ctx) {
 }
 function whatIsAsked(args, ctx) {
   const v = viewOf(ctx), asked = askedOf(ctx.game, v, me(ctx), pendingOf(ctx));
-  if (!asked) return {ok: true, asked: null, text: `Nothing is asked of you right now. ${clockLine(v, me(ctx))}`, useful: usefulTools(v, null, null)};
+  if (!asked) {
+    const waiting = waitingOf(ctx.game, ctx.api, v, me(ctx), null);
+    return {ok: true, asked: null, text: `Nothing is asked of you right now. ${waiting ? waiting.text : clockLine(v, me(ctx))}`, useful: usefulTools(v, null, null, waiting)};
+  }
   return {ok: true, asked: asked.kind, text: asked.text, ...(asked.options ? {options: asked.options} : {}),
     ...(asked.count > 1 ? {count: asked.count} : {}), tool: asked.tool};
 }

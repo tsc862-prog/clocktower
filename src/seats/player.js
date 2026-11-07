@@ -154,7 +154,8 @@ export function clockLine(v, me) {
   if (v.phase === 'ended') return `The game is over${v.winner ? `: ${v.winner.team || v.winner} wins` : ''}.`;
   return 'The game is being set up.';
 }
-export function usefulTools(v, asked, news) {
+export function usefulTools(v, asked, news, waiting) {
+  if (waiting) return news?.total ? ['read_talk', 'look', 'my_notes'] : ['look', 'my_notes', 'note']; // nothing to act on: reads only
   // the dead are never in toSpeak: pass means nothing to them; they may still speak and whisper
   if (v.alive === false && v.phase === 'day' && asked?.kind !== 'vote' && asked?.tool !== 'night_choice') return news?.total ? ['read_talk', 'speak', 'whisper'] : ['speak', 'whisper', 'read_talk'];
   if (asked?.tool === 'night_choice') return ['night_choice', 'what_is_asked', 'my_role'];
@@ -163,6 +164,57 @@ export function usefulTools(v, asked, news) {
   if (v.phase === 'ended') return ['look', 'read_talk'];
   if (v.phase === 'night' || v.phase === 'setup') return ['my_role', 'my_notes', 'note'];
   return news?.total ? ['read_talk', 'speak', 'whisper'] : ['speak', 'whisper', 'pass'];
+}
+
+// ---- waiting: the seat has nothing to act on now (#29) ----
+// The game says whether a seat can act (canAct) and when its next turn comes (nextTurnText) in src/game/api.js; until those
+// exist, the clock answers: a living seat by day, before nominations, that has had its turn this round. Null when the seat
+// can act, or something waits on it, or it is not day.
+export function waitingOf(game, a, v, me, asked) {
+  if (v.phase !== 'day' || v.winner || (asked && !asked.done)) return null;
+  let cannot;
+  if (typeof a?.canAct === 'function') {try {cannot = !a.canAct(game, me)} catch {cannot = false}}
+  else {const c = v.clock || {}; cannot = v.alive !== false && !c.nominationsOpen && Array.isArray(c.toSpeak) && !c.toSpeak.includes(me)}
+  if (!cannot) return null;
+  let next = null;
+  if (typeof a?.nextTurnText === 'function') {try {next = a.nextTurnText(game, me)} catch {next = null}}
+  return {text: waitText(v, typeof next === 'string' && next.trim() ? next.trim() : nextFromClock(v, asked))};
+}
+function nextFromClock(v, asked) {
+  const c = v.clock || {};
+  if (!c.nominationsOpen) return (c.round || 1) < (c.roundsBeforeNominations || 0) ? `until round ${(c.round || 1) + 1}` : 'until nominations open';
+  return asked?.done ? 'until the vote closes' : 'until a vote opens';
+}
+// "You have had your turn this round; nothing to do until round 3; reading is fine." The game's text may be a phrase
+// ("until round 3", "round 3", "nominations open") or a whole sentence; both read right.
+function waitText(v, next) {
+  const head = v.clock?.nominationsOpen ? 'Nothing is asked of you now' : 'You have had your turn this round';
+  const t = next.replace(/[.\s]+$/, '');
+  if (/^(until|when|after|once|till)\b/i.test(t)) return `${head}; nothing to do ${t}; reading is fine.`;
+  if (/^(round|nominations|the|day|night|a vote)\b/i.test(t)) return `${head}; nothing to do until ${t}; reading is fine.`;
+  return `${t}.${/read/i.test(t) ? '' : ' Reading is fine.'}`;
+}
+
+// ---- the stakes when few are alive (#38) ----
+// By day with four or fewer alive: the count, the nightly kill, and how many wrong executions the town can still afford
+// before the count reaches two (evil wins at two alive). Public arithmetic: every seat may know it.
+export function stakesLine(v) {
+  if (v.phase !== 'day' || v.winner) return null;
+  const n = (v.seats || []).filter(s => s.alive).length;
+  if (n > 4 || n < 3) return null;
+  const spare = Math.max(0, Math.floor((n - 3) / 2)); // a wrong execution and the night's kill take two
+  const wrong = n - 1 <= 2 ? `${n - 1} left, evil wins at once; no execution: 2 after tonight` : `${n - 1} left, ${n - 2} after tonight${n - 2 <= 2 ? ', evil wins' : ''}`;
+  return `Stakes: ${n} alive; the demon kills one a night; evil wins at 2. A wrong execution today: ${wrong}. Wrong executions to spare: ${spare || 'none'}.`;
+}
+
+// ---- a nudge for a quiet table (#31) ----
+function nudgeLine(v, asked, waiting) {
+  if (v.phase !== 'day' || v.winner || waiting) return null;
+  if (asked?.kind === 'nomination' && !(v.today?.nominations || []).length)
+    return 'Nobody nominated yet. With nothing solid, nominate someone anyway and let the vote decide: a day with no execution is a day given to the demon.';
+  if (v.day === 1 && v.alive !== false && !v.clock?.nominationsOpen && !asked)
+    return 'First day: say something about yourself or ask a player a question by name, rather than pass.';
+  return null;
 }
 
 const TEAM_SIDE = {townsfolk: 'good', outsider: 'good', minion: 'evil', demon: 'evil'};
@@ -178,14 +230,20 @@ export function playerHeader(game, seat, api) {
   const living = seats.filter(s => s.alive).map(s => s.name), dead = seats.filter(s => !s.alive).map(s => s.name);
   const news = whatsNew(game, me, undefined, a);
   const asked = askedOf(game, v, me, a.pendingFor(game, me));
+  const waiting = waitingOf(game, a, v, me, asked);
+  const stakes = stakesLine(v), nudge = nudgeLine(v, asked, waiting);
   const lines = [
     `You are ${v.name}, the ${role.name || 'unknown role'} (${role.team || '?'}, ${sideOf(role.team)}), ${life}.`,
-    clockLine(v, me),
+    waiting ? clockLine(v, null) : clockLine(v, me),
     `Alive (${living.length}): ${listNames(living)}.${dead.length ? ` Dead: ${listNames(dead)}.` : ''}`,
+    ...(stakes ? [stakes] : []),
     newsLine(news),
   ];
   if (asked && !asked.done) lines.push(`**WAITING ON YOU: ${asked.text}**`);
-  lines.push(`Useful now: ${usefulTools(v, asked, news).join(', ')}.`);
-  if (v.alive === false && v.phase === 'day') lines.push(`You are dead: you may still speak and whisper${v.ghostVote ? ', and vote once with your ghost vote' : ''}; there is nothing to pass.`);
+  if (waiting) lines.push(waiting.text);
+  if (nudge) lines.push(nudge);
+  const useful = usefulTools(v, asked, news, waiting);
+  lines.push(`Useful now: ${useful.join(', ')}.${useful.includes('speak') ? ' Speak without your name in front.' : ''}`);
+  if (v.alive === false && v.phase === 'day' && !waiting) lines.push(`You are dead: you may still speak and whisper${v.ghostVote ? ', and vote once with your ghost vote' : ''}; there is nothing to pass.`);
   return lines.join('\n');
 }
