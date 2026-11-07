@@ -3,3 +3,4 @@ logs/
 .env
 dist/
 .claude/settings.local.json
+overlay.local.json
