@@ -10,7 +10,8 @@
 //   POST /play/narrate   {text, player?, runner}: the runner's narration, for the watcher only
 //   POST /play/pace      {player, runner, realMs?, brief?}: runner pacing (scripts/pacing.mjs): answers when the seat's next turn
 //                        should start ({wake: 'now'|'soft'|'heartbeat'}) or after realMs with wake null; not a tool, does not
-//                        count as activity for the link state; {brief: true} answers at once with the seat's state header
+//                        count as activity for the link state; {brief: true} answers at once with the seat's state header;
+//                        {role: 'storyteller', runner, ...} is the Storyteller runner's own pace and header (never a player's)
 //   POST /play/claim     {player, runner, provider?, model?} (or {role: 'storyteller', runner, ...}): a runner binds itself to one
 //                        seat and refreshes the claim every few seconds; 409 when another live runner holds it
 //   POST /play/release   {player | role: 'storyteller', runner}: the runner lets go (on exit)
@@ -252,6 +253,16 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
         if (role === 'player' || b.role === 'player' || player != null || b.player != null || holdsPlayer(rid)) return send(403, {ok: false, error: 'Players have no Storyteller tools: a player hears the Storyteller only in the game.'});
         const sh = heldBy(STORYTELLER_KEY, rid); if (sh) return send(409, {ok: false, refused: true, error: `The Storyteller seat is held by another runner (${sh}).`});
         return send(200, await storytellerCall(b.tool, b.args && typeof b.args === 'object' ? b.args : {}))}
+      // The Storyteller's own pacing and header: its runner's long poll ({role: 'storyteller'}), never a player's seat.
+      if (path === '/play/pace' && stAsked) {
+        if (b.role === 'player' || player != null || b.player != null || holdsPlayer(rid)) return send(403, {ok: false, error: 'Players have no Storyteller pace: a player hears the Storyteller only in the game.'});
+        const sh = heldBy(STORYTELLER_KEY, rid); if (sh) return send(409, {ok: false, refused: true, error: `The Storyteller seat is held by another runner (${sh}).`});
+        const a = b.args && typeof b.args === 'object' ? b.args : b, args = a.brief ? {brief: true} : {realMs: Math.min(PACE_MAX_MS, Math.max(0, Number(a.realMs) || 10000)), wake: a.wake === 'now' || a.wake === 'must' ? a.wake : 'all'};
+        let r;
+        if (be.pace) {try {r = await be.pace(STORYTELLER_KEY, args)} catch (e) {r = {ok: false, error: String(e.message || e)}}}
+        else if (args.brief) r = {ok: true, brief: {phase: 'no game yet', seat: 'Storyteller'}};
+        else {await new Promise(res => setTimeout(res, args.realMs)); r = args.wake === 'all' ? {ok: true, wake: 'heartbeat', why: 'no game yet: a quiet beat'} : {ok: true, wake: null, why: 'no game yet'}}
+        return send(200, r && typeof r === 'object' ? r : {ok: false, error: 'no answer'})}
       if ((path === '/play/call' || path === '/play/narrate' || path === '/play/pace') && (stAsked || holdsStoryteller(rid)))
         return send(403, {ok: false, error: 'The Storyteller seat has no player tools: it speaks to the players only in the game.'});
       if ((path === '/play/claim' || path === '/play/release') && stAsked) {
