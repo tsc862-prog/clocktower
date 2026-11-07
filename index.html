@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clocktower</title>
+  <style>
+    :root { --bg: #14121a; --ink: #e8e2d4; --dim: #9a937f; --ok: #7fbf7f; --off: #c97b6b; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 16px/1.5 Georgia, 'Times New Roman', serif; }
+    main { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem; }
+    h1 { margin: 0; font-size: clamp(2.5rem, 6vw, 5rem); font-weight: normal; letter-spacing: .08em; }
+    #empty { margin: 0; color: var(--dim); font-size: 1.25rem; }
+    #health { position: fixed; top: 1rem; right: 1.25rem; font: 13px/1.4 system-ui, sans-serif; color: var(--dim); text-align: right; }
+    #health b { font-weight: 600; }
+    #health .ok { color: var(--ok); } #health .off { color: var(--off); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Clocktower</h1>
+    <p id="empty">No game yet</p>
+  </main>
+  <aside id="health" aria-live="polite">relay: checking...</aside>
+  <script type="module" src="/src/ui/main.js"></script>
+</body>
+</html>
