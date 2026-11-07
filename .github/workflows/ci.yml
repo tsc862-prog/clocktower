@@ -52,6 +52,8 @@ jobs:
         run: npm run apicheck
       - name: Seeded headless game (seed 1)
         run: npm run sim -- --seed 1
+      - name: Player tools (every tool and the header against a fake api with planted secrets)
+        run: npm run playertoolcheck
       - name: "Storyteller tools (every tool against a fake api, the header, the prompt)"
         run: npm run storytellertoolcheck
       - name: Quote the patch note on the PR
