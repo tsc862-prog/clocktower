@@ -44,6 +44,12 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           GH_TOKEN: ${{ github.token }}
       - {name: Build the page, run: npm run build}
+      - name: Game check (the script, the deal, the night order, seeds 1-20 of the sim)
+        run: npm run gamecheck
+      - name: Edge check (every rule with an edge case)
+        run: npm run edgecheck
+      - name: Seeded headless game (seed 1)
+        run: npm run sim -- --seed 1
       - name: Quote the patch note on the PR
         if: github.event_name == 'pull_request'
         continue-on-error: true
