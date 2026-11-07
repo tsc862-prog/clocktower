@@ -106,6 +106,20 @@ woken only if its role is in play. Roles marked "never" are not woken.
 The characters at the table, as the watcher sees them: **Odette, Bram, Ines, Corwin, Thea, Fitch, Yusuf**.
 Roles are dealt to seats at random; a name belongs to a character, not to a role.
 
+Each character has a manner at the table, given to its seat in the system prompt (`SEAT_MANNERS` in
+`src/data/prompts.js`) so seven seats played by one model do not speak as one voice. A manner is how the
+character talks, never which side it is on.
+
+| Seat | Manner |
+| --- | --- |
+| Odette | Methodical: keeps the order of who said what and lays it out before concluding. |
+| Bram | Blunt: says the plain thing first, in few words; little patience for hedging. |
+| Ines | Curious: asks more than she tells; wants to know why someone said a thing. |
+| Corwin | Cautious: slow to accuse, weighs both sides out loud, changes his mind for a reason. |
+| Thea | Warm: speaks to people by name, looks for who can be trusted, stands up for the quiet ones. |
+| Fitch | Dry: few words and a flat aside; points out what does not add up. |
+| Yusuf | Suspicious: trusts a claim once it is tested; pushes back when the table agrees too fast. |
+
 ## The official names
 
 The ids in code and the names the agents and the page use today are the official ones. The skin above
