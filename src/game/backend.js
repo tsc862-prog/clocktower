@@ -22,7 +22,7 @@ import {STORYTELLER_TOOLS} from '../data/storyteller-tools.js';
 import {playerHeader} from '../seats/player.js';
 import {storytellerHeader} from '../seats/storyteller.js';
 
-export const SCRIPTED_GRACE_MS = 2000, PACE_MAX_MS = 30000;
+export const SCRIPTED_GRACE_MS = 2000, PACE_MAX_MS = 30000, PUSH_MS = 250;
 export const SCRIPTED_REASON = 'scripted default: no Storyteller answered in time';
 const ST = api.ST;
 
@@ -50,6 +50,35 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     pendingId = id;
     for (const w of [...waiters]) w();
     if (fresh) arm();
+    schedulePush();
+  }
+  // The watcher's whole view (GET /play/watch, the page only): everything, whispers with their text and every seat's told lines
+  // included; events are the log entries after `since` with the table's sentence as `text`. A `since` past the end of this game
+  // (a new game began) reads from the start.
+  function watchView(since = -1) {
+    const last = game.log.length ? game.log.at(-1).id : -1, from = Number.isFinite(Number(since)) && Number(since) <= last ? Number(since) : -1;
+    const copy = v => v == null ? v : JSON.parse(JSON.stringify(v)), g = api.grimoire(game), c = game.clock;
+    const told = api.events(game, ST, from), whispers = game.log.filter(e => e.type === 'whisper' && e.id > from).map(({n, ...e}) => copy(e));
+    return {ok: true, seed: game.config.seed, rounds: game.config.rounds, phase: g.phase, night: game.night, day: game.day,
+      clock: {day: c.day, round: c.round, roundsBeforeNominations: c.roundsBeforeNominations, nominationsOpen: c.nominationsOpen, spoke: [...c.spoke], passedNominating: [...c.passedNominating]},
+      pending: copy(game.pending), ballot: copy(game.ballot), grimoire: g, nightOrder: api.nightOrder(game), rulings: api.rulings(game),
+      winner: copy(game.winner), last, canNewGame: true, events: [...told, ...whispers].sort((a, b) => a.id - b.id)};
+  }
+  // The live push to the page's sockets: what changed since the last push, batched per PUSH_MS tick (a vote's ballots arrive as they
+  // land). {type: 'watch', seed, last, events, clock, pending, ballot, phase, day, night, winner}: the same fields and shapes as the
+  // watch body; the page polls ?since only when its socket reconnects.
+  let pushed = -1, pushT = null, lastBallot = 'null';
+  function schedulePush() {
+    if (pushT || closed || !socks.size) return;
+    pushT = setTimeout(() => {pushT = null; pushNow()}, PUSH_MS);
+    if (pushT.unref) pushT.unref();
+  }
+  function pushNow() {
+    if (!socks.size) return;
+    const v = watchView(pushed), ballot = JSON.stringify(v.ballot);
+    if (!v.events.length && ballot === lastBallot) return;
+    pushed = v.last; lastBallot = ballot;
+    sendAll({type: 'watch', seed: v.seed, last: v.last, events: v.events, clock: v.clock, pending: v.pending, ballot: v.ballot, phase: v.phase, day: v.day, night: v.night, winner: v.winner});
   }
   // The scripted Storyteller: answers a Storyteller decision left alone for `grace` ms. The wait starts again with each
   // new decision and each Storyteller call (timers only: the engine's folder reads no clock).
@@ -136,19 +165,11 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     pace: (id, args) => pace(id === ST ? ST : id, args || {}),
     narrate(id, text) {sendAll({type: 'narrate', player: id, text: String(text).slice(0, 600)})},
     links(map, runners = {}, st = null, ready = {}) {sendAll({type: 'links', links: map, runners, ready, ...(st ? {storyteller: st} : {})})},
-    attach(ws) {socks.add(ws); log('[play] watcher page connected'); ws.on('close', () => {socks.delete(ws); log('[play] watcher page disconnected')}); ws.on('message', () => {})},
+    attach(ws) {if (!socks.size) {pushed = game.log.length ? game.log.at(-1).id : -1; lastBallot = JSON.stringify(game.ballot ?? null)} socks.add(ws); log('[play] watcher page connected'); ws.on('close', () => {socks.delete(ws); log('[play] watcher page disconnected')}); ws.on('message', () => {})},
     // The watcher's whole view (GET /play/watch, the page only): everything, whispers with their text and every seat's told lines
     // included; events are the log entries after `since` with the table's sentence as `text`. A `since` past the end of this game
     // (a new game began) reads from the start.
-    watch(since = -1) {
-      const last = game.log.length ? game.log.at(-1).id : -1, from = Number.isFinite(Number(since)) && Number(since) <= last ? Number(since) : -1;
-      const copy = v => v == null ? v : JSON.parse(JSON.stringify(v)), g = api.grimoire(game), c = game.clock;
-      const told = api.events(game, ST, from), whispers = game.log.filter(e => e.type === 'whisper' && e.id > from).map(({n, ...e}) => copy(e));
-      return {ok: true, seed: game.config.seed, rounds: game.config.rounds, phase: g.phase, night: game.night, day: game.day,
-        clock: {day: c.day, round: c.round, roundsBeforeNominations: c.roundsBeforeNominations, nominationsOpen: c.nominationsOpen, spoke: [...c.spoke], passedNominating: [...c.passedNominating]},
-        pending: copy(game.pending), ballot: copy(game.ballot), grimoire: g, nightOrder: api.nightOrder(game), rulings: api.rulings(game),
-        winner: copy(game.winner), last, canNewGame: true, events: [...told, ...whispers].sort((a, b) => a.id - b.id)};
-    },
+    watch: since => watchView(since),
     // A fresh seeded game in place of this one (POST /play/game/new, after the supervisor's stop-all): same seats, so the relay's
     // claims and links stay. -> {seed, rounds}
     newGame(nextSeed = game.config.seed, nextRounds = game.config.rounds) {
@@ -156,10 +177,10 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
       game = newGame({seed: nextSeed, ...(seats ? {seats} : {}), ...(nextRounds != null ? {rounds: nextRounds} : {})});
       answerer = scripted ? createScripted(nextSeed) : null;
       for (const k of Object.keys(seen)) delete seen[k];
-      pendingId = null; changed();
+      pendingId = null; pushed = -1; lastBallot = 'null'; changed();
       log(`[game] a new game: seed ${nextSeed}`);
       return {seed: game.config.seed, rounds: game.config.rounds};
     },
-    close() {closed = true; if (timer) clearTimeout(timer); timer = null; for (const w of [...waiters]) waiters.delete(w)},
+    close() {closed = true; if (timer) clearTimeout(timer); timer = null; if (pushT) clearTimeout(pushT); pushT = null; for (const w of [...waiters]) waiters.delete(w)},
   };
 }
