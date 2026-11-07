@@ -17,7 +17,8 @@
     "runnercheck": "node scripts/runnercheck.mjs",
     "providercheck": "node scripts/providercheck.mjs",
     "behavior-report": "node scripts/behavior-report.mjs",
-    "cost-report": "node scripts/cost-report.mjs"
+    "cost-report": "node scripts/cost-report.mjs",
+    "upcheck": "node scripts/upcheck.mjs"
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.316",
