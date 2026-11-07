@@ -16,6 +16,9 @@ export function start(state) {
   return state;
 }
 
+// Whether this state object drives a live game (a plain JSON copy does not until replayed).
+export const isLive = state => live.has(state);
+
 function settle(state, r) {
   state.pending = r.done ? null : r.value;
 }
@@ -34,7 +37,7 @@ export function answer(state, value) {
 
 // Rebuild a live game from a plain copy: the same config and the same answers give the same game.
 export function replay(copy, script) {
-  const state = start(createState({seed: copy.config.seed, seats: copy.config.seats, roles: copy.config.roles, ...(script ? {script} : {})}));
+  const state = start(createState({seed: copy.config.seed, seats: copy.config.seats, roles: copy.config.roles, ...(copy.config.rounds != null ? {rounds: copy.config.rounds} : {}), ...(script ? {script} : {})}));
   for (const a of copy.answers) answer(state, a);
   return state;
 }

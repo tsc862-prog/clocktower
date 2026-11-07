@@ -42,8 +42,22 @@ export const isDrunk = (state, i) => !!roleOf(state, state.seats[i].role)?.disgu
 export const isPoisoned = (state, i) => hasToken(state, i, 'poisoned', t => t.active);
 export const malfunctioning = (state, i) => isDrunk(state, i) || isPoisoned(state, i);
 
+// Who may see a log entry: 'all' (the table), [seat indexes] (those seats alone) or 'storyteller'. Every entry carries one;
+// src/game/api.js shows a seat only the entries whose audience includes it. A death by day happens in front of the table;
+// a death by night is announced at dawn (the dawn entry), so the death itself is the Storyteller's.
+export const PUBLIC_TYPES = ['night', 'dawn', 'nomination', 'vote', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'win'];
+export function audienceOf(state, type, data) {
+  if (type === 'told') return [data.seat];
+  if (PUBLIC_TYPES.includes(type)) return 'all';
+  if (type === 'death' && state.phase === 'day') return 'all';
+  return 'storyteller';
+}
+
+// One log entry. id (= n) increases by one with every entry; data.audience overrides the default audience.
 export function log(state, type, data = {}) {
-  const e = {n: state.log.length, phase: state.phase, night: state.night, day: state.day, type, ...data};
+  const {audience, ...rest} = data;
+  const e = {n: state.log.length, id: state.log.length, phase: state.phase, night: state.night, day: state.day, type, ...rest,
+    audience: audience !== undefined ? audience : audienceOf(state, type, rest)};
   state.log.push(e);
   return e;
 }
