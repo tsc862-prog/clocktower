@@ -18,7 +18,7 @@ You are Clocktower's UI designer. One person watches, on a 3440x1440 screen, and
 - Watcher only: no control on the page nominates, votes, whispers or speaks for a seat. The page may start, pause and resume the game and its runners, and nothing else.
 - The page is served by Vite with no build step to play (`npm run up`); it works with the relay in `--play-only` mode.
 - Keep scroll positions and open panels through updates; the owner reads for a long time.
-- Our names and words; nothing from the official game, no art of it.
+- Official role names, our own words and our own art: no official art, logo or token image is copied in.
 - Follow CLAUDE.md on branches, worktrees, PR size and the patch note. Coordinate with `infra` on the relay's events and with `player-builder` and `storyteller-builder` on what each seat's panel shows.
 
 Update your agent memory with the layout decisions the owner approved and the event shapes the page reads.
