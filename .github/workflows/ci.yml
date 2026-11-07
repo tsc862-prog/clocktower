@@ -43,6 +43,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           GH_TOKEN: ${{ github.token }}
+      - {name: Build the page, run: npm run build}
       - name: Game check (the script, the deal, the night order, seeds 1-20 of the sim)
         run: npm run gamecheck
       - name: Edge check (every rule with an edge case)
@@ -58,12 +59,28 @@ jobs:
           node scripts/patchnotes.mjs --quote "${{ github.event.pull_request.number }}" > comment.md
           node scripts/pr-comment.mjs "${{ github.event.pull_request.number }}" clocktower-patch-note comment.md
 
+  runtime:
+    name: Relay, runners, providers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - {name: Relay seats and claims, run: npm run relaycheck}
+      - {name: Runners with budget stops, run: npm run runnercheck}
+      - {name: Providers against their mocks, run: npm run providercheck}
+      - {name: The launcher starts the relay and the page, run: npm run upcheck}
+
   ok:
     name: CI ok
     if: always()
-    needs: [core]
+    needs: [core, runtime]
     runs-on: ubuntu-latest
     steps:
       - name: Every group passed
         run: |
           test "${{ needs.core.result }}" = success
+          test "${{ needs.runtime.result }}" = success

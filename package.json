@@ -13,6 +13,12 @@
     "notes": "node scripts/patchnotes.mjs",
     "rulescheck": "node scripts/rulescheck.mjs",
     "flakehunt": "node scripts/flakehunt.mjs",
+    "relaycheck": "node scripts/relaycheck.mjs",
+    "runnercheck": "node scripts/runnercheck.mjs",
+    "providercheck": "node scripts/providercheck.mjs",
+    "behavior-report": "node scripts/behavior-report.mjs",
+    "cost-report": "node scripts/cost-report.mjs",
+    "upcheck": "node scripts/upcheck.mjs",
     "sim": "node scripts/headless.mjs",
     "gamecheck": "node scripts/gamecheck.mjs",
     "edgecheck": "node scripts/edgecheck.mjs"
