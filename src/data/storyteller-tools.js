@@ -104,6 +104,22 @@ function legalList(game, p, max = 12) {
   return opts.length > max ? `${opts.slice(0, max).join('; ')}; and ${opts.length - max} more (what_is_asked)` : opts.join('; ');
 }
 
+// Long option lists (over GROUP_OVER) read as groups: by seat, then by role, with the option numbers kept.
+// A statement "one of A and B is the R" is filed under A (the lower seat of the pair) as "R (with B #n)".
+export const GROUP_OVER = 24;
+export function groupedOptions(game, p) {
+  const opts = p.options || [], bySeat = new Map(), other = [];
+  opts.forEach((o, k) => {
+    if (o && typeof o === 'object' && Array.isArray(o.players) && o.players.length === 2) {
+      const [a, b] = o.players, roles = bySeat.get(a) || new Map(), withs = roles.get(o.role) || [];
+      withs.push(`${seatLabel(game, b)} #${k + 1}`); roles.set(o.role, withs); bySeat.set(a, roles);
+    } else other.push(`#${k + 1} ${valueWords(game, p, o)}`);
+  });
+  const lines = [...bySeat.keys()].sort((x, y) => x - y).map(a =>
+    `${seatLabel(game, a)}: ${[...bySeat.get(a)].map(([role, w]) => `${roleLabel(game, role)} (with ${w.join(', ')})`).join('; ')}`);
+  return [...lines, ...other];
+}
+
 // Nothing waits on the Storyteller: say what the game waits on instead.
 const notYours = game => no(`Nothing waits on you: the game waits on ${waitingOn(game)}. ${phaseOf(game) === 'day' ? 'Read talk or day_state.' : 'Read night_order or grimoire.'}`);
 
@@ -157,12 +173,19 @@ const TOOLS = [
         ...(o === now ? {now: true} : {}),
       }))};
     })},
-  {name: 'what_is_asked', act: false, args: {},
-    desc: 'The decision waiting on you in plain words: what kind, which seat it concerns, the truth, every legal option numbered, why it is asked, and whether the ability malfunctions (drunk or poisoned). When nothing waits on you, says what the game waits on.',
+  {name: 'what_is_asked', act: false,
+    args: {full: {type: 'string', optional: true, desc: 'true: list every option numbered even when the list is long (over 24 options it comes grouped by seat and role)'}},
+    desc: 'The decision waiting on you in plain words: what kind, which seat it concerns, the truth, every legal option numbered (a long list grouped by seat and role), why it is asked, and whether the ability malfunctions (drunk or poisoned). When nothing waits on you, says what the game waits on.',
     handler: (args, {game, api}) => tryApi(() => {
       const p = api.pendingFor(game, ME);
       if (!p) return {ok: true, pending: null, waitingOn: waitingOn(game)};
-      return {ok: true, pending: describePending(game, p, {max: 400})};
+      const d = describePending(game, p, {max: 400});
+      const full = args.full === true || /^(true|yes|1)$/i.test(String(args.full ?? ''));
+      if (!full && d.count > GROUP_OVER) {
+        d.options = groupedOptions(game, p);
+        d.grouped = `The ${d.count} options are grouped by seat, then by role; each keeps its number (answer with "#n"). Call what_is_asked with {full: true} for the full numbered list.`;
+      }
+      return {ok: true, pending: d};
     })},
   {name: 'talk', act: false,
     args: {since: {type: 'integer', optional: true, desc: 'Only what came after this event id (default: everything today)'}},

@@ -264,6 +264,35 @@ section('first night: information while poisoned');
   ok(r.ok && r.answer === String(lie), `a false count is legal while poisoned (${lie}, the truth is ${truth})`);
 }
 
+section('a long option list is grouped; the night count leaves out phase entries');
+{
+  const G = newGame({seed: 21, roles: ['imp', 'mayor', 'poisoner', 'washerwoman', 'chef', 'empath', 'soldier']});
+  const api = fakeApi();
+  const roles = SCRIPT.roles.filter(r => r.team === 'townsfolk').map(r => r.id);
+  const options = [];
+  for (let a = 0; a < 7; a++) for (let b = a + 1; b < 7; b++) for (const role of roles) options.push({players: [a, b], role});
+  G.pending = {kind: 'info', seat: 'storyteller', role: 'washerwoman', subject: 3, malfunctioning: true, truth: [options[0]], options, question: 'Washerwoman: which two?'};
+  const w = call(G, api, 'what_is_asked');
+  ok(w.ok && w.pending.count === options.length && options.length > 24, `the long list is counted whole (${w.pending.count})`);
+  ok(w.pending.options.length <= 7 && w.pending.options.every(l => /#\d+/.test(l)), `grouped by seat: ${w.pending.options.length} lines, option numbers kept`);
+  ok(/^\S.*: .*\(with .* #\d+/.test(w.pending.options[0]) && /Washerwoman|Chef|Empath/.test(w.pending.options[0]), `by role inside a seat: ${w.pending.options[0].slice(0, 90)}`);
+  ok(JSON.stringify(w.pending).length < JSON.stringify(call(G, api, 'what_is_asked', {full: true}).pending).length / 2, 'the grouped answer is less than half the length');
+  const f = call(G, api, 'what_is_asked', {full: true});
+  ok(f.pending.options.length === options.length && f.pending.options[0].startsWith('#1 '), 'full: true keeps the whole numbered list');
+  ok(call(G, api, 'what_is_asked', {full: 'true'}).pending.options.length === options.length, 'full: "true" works too');
+  const short = {...G.pending, options: options.slice(0, 24)};
+  G.pending = short;
+  ok(call(G, api, 'what_is_asked').pending.options.length === 24, 'a list of 24 or fewer stays numbered');
+  G.pending = null;
+
+  const N = newGame({seed: 22, roles: ['imp', 'mayor', 'poisoner', 'washerwoman', 'chef', 'empath', 'soldier']});
+  const evs = [{id: 1, type: 'phase', text: 'Night falls.'}, {id: 2, type: 'dawn', text: 'x'}, {id: 3, type: 'say', seat: 0, text: 'hi'}];
+  const napi = {...api, events: () => evs};
+  N.phase = 'night'; N.night = 1;
+  const h1 = header(N, napi);
+  ok(/Since your last turn: 1 said, 0 whispers seen, 1 other events/.test(h1), `at night the phase entry is not counted: ${h1.split(String.fromCharCode(10)).find(l => /Since/.test(l))}`);
+}
+
 // ---- game B: the Mayor and a star pass ----
 section('the Mayor\'s bounce');
 {
