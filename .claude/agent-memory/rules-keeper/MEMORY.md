@@ -22,3 +22,14 @@
 - Ghost vote spent only by a counted yes. Bar = ceil(alive/2); a tie clears the block but keeps the bar.
 - Slayer offered once at the start of each day (open: mid-day shots come with slice 5).
 - Red herring: any good seat, may be the Fortune Teller.
+
+## The api and backend (slice 3)
+- Every log entry: `id` (= n, = index) and `audience` ('all' | [seats] | 'storyteller'), set in grimoire.js `log` (PUBLIC_TYPES; a day death is public, a night death is announced by dawn). api.events projects each entry through a per-type whitelist (`project`), never the raw entry; engine 'night' -> 'phase', 'vote' -> 'vote-result'.
+- Api state lives in the game: `clock` {day, round, roundsBeforeNominations, nominationsOpen, spoke, passedNominating}, `ballot` {id, nominee, votes}, `notes` {seat: [...]}, `actions` (every mutating api call). `restore(plainCopy)` = newGame(config) + replay actions. `sync()` resets the clock on a new day; idempotent and logs nothing, so reads may call it.
+- Clock: one say-or-pass per seat per round before nominations; round ends when every living seat has had one; nominations open after `rounds` (default 3, config.rounds) or by openNominations; after that talk is free, a pass means "pass on nominating", and the day ends itself when every living seat nominated or passed (logs phase day-ends, answers the engine null).
+- No per-hand public events: a Butler's voided yes would show. The vote pending carries `ballots` (hands so far) because the player-builder asked; vote-result's `yes` is the counted hands only.
+- closeVote/endDay take a reason, logged as a ruling with decision null. grimoire() adds `by` to tokens (engine grimoire unchanged, so dawn entries and the sim stay the same). nightOrder() is a flat [{role, seat|null, acted, status, wakes}].
+- forSeat(seat): a player's api refuses other seats and every Storyteller function; the Storyteller may view/pendingFor any seat but never notes, events of a seat, or acts.
+- backend.js: no Date.now (gamecheck forbids clocks in src/game): the scripted Storyteller is a setTimeout(grace) reset by each new decision and each Storyteller call. Seen-tracking for the soft wake: brief, wake, and ctx.api.events mark seen.
+- An api game driven by createScripted makes exactly the sim's engine answers (apicheck holds this for seeds 1-5, 7).
+- Seed 3 deals Odette the Spy: her told carries the whole grimoire, so leak checks on her allow roles named in her told.

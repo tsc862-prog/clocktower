@@ -131,7 +131,9 @@ section('day 1: nominations, the ballot, endDay');
   const vr = api.events(g, 4).filter(e => e.type === 'vote-result').at(-1);
   ok(vr && vr.tally === 2 && vr.needed === 4 && !('voided' in vr), `the table sees the result: "${vr && vr.text}"`);
   ok(api.view(g, 4).today.nominations[0].result === 'not enough', "the day's book in the view shows it");
-  api.endDay(g);
+  ok(throws(() => api.endDay(g), /Say why/), 'endDay without a reason is refused');
+  api.endDay(g, 'the table has said its piece');
+  ok(api.rulings(g).at(-1).kind === 'end-day' && api.rulings(g).at(-1).reason === 'the table has said its piece', 'endDay logs its reason as a ruling');
   ok(g.phase === 'night' && g.night === 2, 'endDay ends the day: night 2');
   ok(throws(() => api.endDay(g), /not day/), 'endDay at night is refused');
 }
@@ -155,7 +157,8 @@ section('night 2 and day 2: the dead, ghost votes, closeVote, the day ending its
   ok(throws(() => api.vote(g, 0, true), /ghost vote is spent/), 'a vote from a seat not in the ballot is refused');
   ok(api.pendingFor(g, 0) === null, 'and it gets no vote pending');
   api.vote(g, 1, true);
-  const closed = api.closeVote(g);
+  ok(throws(() => api.closeVote(g), /Say why/), 'closeVote without a reason is refused');
+  const closed = api.closeVote(g, 'four seats sat on their hands');
   ok(closed.missing.length === 5, 'the Storyteller closes the vote');
   const vc = api.events(g, 2).filter(e => e.type === 'vote-closed').at(-1);
   ok(vc && vc.missing.length === 5 && g.pending.kind === 'nomination', `closeVote counts the missing as no and the table hears it: "${vc && vc.text}"`);
@@ -184,7 +187,12 @@ section('forSeat: a seat acts and reads only as itself');
   ok(a.view(g, 1).name === 'Bram' && a.notes(g, 1).length === 50, "it reads its own seat");
   ok(s.view(g, 2).name === 'Ines' && Array.isArray(s.grimoire(g).seats) && throws(() => s.notes(g, 2)) && throws(() => s.events(g, 2)) && throws(() => s.say(g, 2, 'x')), 'the Storyteller reads any view and the grimoire, never a seat\'s notes or whispers, and never acts for a player');
   const no = api.nightOrder(g);
-  ok(no.night === 3 && no.steps.some(x => x.step === 'imp') && (g.phase === 'night' ? no.steps.some(x => x.status === 'now') : no.steps.every(x => x.status === 'to come')), 'nightOrder gives the waking order of the night and where the night stands');
+  ok(Array.isArray(no) && no.every(x => x.night === 3 && 'role' in x && 'seat' in x && typeof x.acted === 'boolean') && no.some(x => x.role === 'imp' && x.seat === 2) && no.some(x => x.status === 'now'),
+    'nightOrder lists the night in waking order as {role, seat, acted}');
+  const night1 = api.nightOrder(newGame({seed: 1, roles: ROLES}));
+  ok(night1.some(x => x.role === 'minion-info' && x.seat === null) && night1.every(x => !x.acted), 'the first night lists its tellings with seat null, nothing acted yet');
+  const gr = api.grimoire(g).seats.flatMap(x => x.tokens);
+  ok(gr.length && gr.every(t => 'by' in t) && gr.some(t => t.token === 'master' && t.by === 4), 'the grimoire tokens carry who placed them');
 }
 
 section('a plain copy restores');

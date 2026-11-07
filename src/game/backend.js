@@ -27,11 +27,11 @@ export const SCRIPTED_REASON = 'scripted default: no Storyteller answered in tim
 const ST = api.ST;
 
 export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = SCRIPTED_GRACE_MS, players = PLAYER_TOOLS,
-  storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}, now = () => Date.now()} = {}) {
+  storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}} = {}) {
   const game = newGame({seed, ...(seats ? {seats} : {}), ...(rounds != null ? {rounds} : {})});
   const answerer = scripted ? createScripted(seed) : null;
   const socks = new Set(), waiters = new Set(), seen = {}, apis = {};
-  let lastSt = 0, pendingId = null, pendingAt = now(), timer = null, closed = false;
+  let pendingId = null, timer = null, closed = false;
 
   const keyOf = id => id === ST ? ST : id - 1;
   const seatOf = id => id === ST ? {index: ST, name: 'Storyteller'} : game.seats[id - 1] ? {index: id - 1, name: game.seats[id - 1].name} : null;
@@ -46,27 +46,26 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
   })());
 
   function changed() {
-    const p = game.pending, id = p ? p.id : null;
-    if (id !== pendingId) {pendingId = id; pendingAt = now()}
+    const p = game.pending, id = p ? p.id : null, fresh = id !== pendingId;
+    pendingId = id;
     for (const w of [...waiters]) w();
-    arm();
+    if (fresh) arm();
   }
-  // The scripted Storyteller: answers a Storyteller decision left alone for `grace` ms.
+  // The scripted Storyteller: answers a Storyteller decision left alone for `grace` ms. The wait starts again with each
+  // new decision and each Storyteller call (timers only: the engine's folder reads no clock).
   function arm() {
     if (!answerer || closed) return;
     if (timer) {clearTimeout(timer); timer = null}
     const p = game.pending;
     if (!p || p.seat !== ST) return;
-    const due = Math.max(pendingAt, lastSt) + grace - now();
     timer = setTimeout(() => {
       timer = null;
       const q = game.pending;
       if (closed || !q || q.seat !== ST || q.id !== p.id) return;
-      if (now() - Math.max(pendingAt, lastSt) < grace) return arm();
       try {api.answer(game, ST, answerer(game), SCRIPTED_REASON); log(`[game] scripted Storyteller answered ${q.kind}`)}
       catch (e) {log(`[game] scripted Storyteller failed on ${q.kind}: ${e.message}`); return}
       changed();
-    }, Math.max(0, due));
+    }, Math.max(0, grace));
     if (timer.unref) timer.unref();
   }
 
@@ -128,10 +127,10 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
       return run(players, tool, args, seat);
     },
     async storytellerCall(tool, args) {
-      lastSt = now();
       if (tool === 'pace') return pace(ST, args || {});
+      if (timer) clearTimeout(timer), timer = null;
       const r = await run(storyteller, tool, args, seatOf(ST));
-      lastSt = now(); arm();
+      arm();
       return r;
     },
     pace: (id, args) => pace(id === ST ? ST : id, args || {}),

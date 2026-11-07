@@ -382,11 +382,15 @@ export const answer = act('answer', (game, seat, value, reason) => {
 // ---- the Storyteller's ----
 export function grimoire(game) {
   sync(game);
-  return {phase: PHASES[game.phase] || game.phase, night: game.night, day: game.day, seats: fullGrimoire(game), bluffs: [...game.bluffs],
+  // the engine's grimoire, each token with who placed it (by: a seat index, or null for the Storyteller)
+  const seats = fullGrimoire(game).map((s, i) => ({...s, tokens: s.tokens.map((t, k) => ({...t, by: game.seats[i].tokens[k]?.by ?? null}))}));
+  return {phase: PHASES[game.phase] || game.phase, night: game.night, day: game.day, seats, bluffs: [...game.bluffs],
     pending: pendingFor(game, ST), winner: copy(game.winner)};
 }
 
-// Tonight's waking order (the coming night's, by day): each step with the seats that wake for it and whether they woke.
+// Tonight's waking order (the coming night's, by day), one entry per waking: {role, seat, acted, ...}. A telling (the minions'
+// and the demon's first-night information) has seat null; a role not in play is left out. acted: it has woken and acted
+// tonight (for a telling: the night is past it). status: 'done' | 'now' | 'to come'; wakes: whether that seat will wake.
 export function nightOrder(game) {
   const night = game.phase === 'night' ? game.night : game.night + 1;
   const order = night === 1 ? game.script.firstNight : game.script.otherNights;
@@ -395,14 +399,14 @@ export function nightOrder(game) {
   const out = [];
   order.forEach((id, k) => {
     const status = cur < 0 ? 'to come' : k < cur ? 'done' : k === cur ? 'now' : 'to come';
-    if (TELLINGS[id]) {out.push({step: id, telling: true, status}); return}
-    const seats = game.seats.filter(s => s.believed === id);
-    if (!seats.length) return;
+    if (TELLINGS[id]) {out.push({role: id, seat: null, acted: status === 'done', night, telling: true, status}); return}
     const h = HOOKS[id];
-    out.push({step: id, role: roleName(game, id), status, seats: seats.map(s => ({index: s.index, name: s.name, alive: s.alive,
-      wakes: h?.wakeIf ? !!h.wakeIf(game, s.index) : s.alive, woke: woke.some(w => w.seat === s.index && w.role === id)}))});
+    for (const s of game.seats.filter(x => x.believed === id)) {
+      const acted = woke.some(w => w.seat === s.index && w.role === id) && (status === 'done' || status === 'now' && game.pending?.seat !== s.index);
+      out.push({role: id, name: roleName(game, id), seat: s.index, seatName: s.name, acted, night, status, alive: s.alive, wakes: h?.wakeIf ? !!h.wakeIf(game, s.index) : s.alive});
+    }
   });
-  return {night, steps: out};
+  return out;
 }
 
 export function rulings(game) {
@@ -424,9 +428,16 @@ export const openNominations = act('openNominations', game => {
   return {open: true};
 });
 
-export const closeVote = act('closeVote', game => {
+// A Storyteller act outside a decision carries its reason too, logged as a ruling.
+function stReason(game, kind, reason, question) {
+  if (typeof reason !== 'string' || !reason.trim()) refuse(game, ST, 'Say why: this call carries a reason.');
+  log(game, 'ruling', {kind, decision: null, question, subject: null, value: null, reason: reason.trim().slice(0, LIMITS.reason), audience: ST});
+}
+
+export const closeVote = act('closeVote', (game, reason) => {
   const p = game.pending;
   if (!p || p.kind !== 'vote') refuse(game, ST, 'No vote is open.');
+  stReason(game, 'close-vote', reason, `Close the vote on ${nameOf(game, p.nominee)} before every voter has voted?`);
   const missing = p.seats.filter(i => !(i in game.ballot.votes));
   log(game, 'vote-closed', {missing, audience: 'all'});
   for (const i of missing) game.ballot.votes[i] = false;
@@ -435,10 +446,11 @@ export const closeVote = act('closeVote', game => {
   return {missing};
 });
 
-export const endDay = act('endDay', game => {
+export const endDay = act('endDay', (game, reason) => {
   const p = game.pending;
   if (game.phase !== 'day') refuse(game, ST, 'It is not day.');
   if (!p || p.kind !== 'nomination') refuse(game, ST, p && p.kind === 'vote' ? 'A vote is open; close it first (closeVote).' : `The day waits on another decision first (${p ? p.kind : 'none'}).`);
+  stReason(game, 'end-day', reason, `End day ${game.day} now?`);
   log(game, 'phase', {what: 'day-ends', text: 'The Storyteller ends the day.', audience: 'all'});
   toEngine(game, null);
   return {ended: true};
