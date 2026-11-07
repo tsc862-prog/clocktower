@@ -7,7 +7,7 @@
 // role, a Storyteller reason or a whisper between two others never reaches a seat (npm run playertoolcheck proves it).
 // Every refusal comes back as {ok: false, error} with what is open to the seat now. With no game behind the relay (the
 // stub backend: no ctx.game or ctx.api) look answers "no game yet" and the rest say so.
-import {seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine} from '../seats/player.js';
+import {seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf} from '../seats/player.js';
 
 const READ_CAP = 40; // read_talk and my_whispers show at most this many entries
 
@@ -21,7 +21,8 @@ const msg = e => String((e && e.message) || e || 'That did not work.');
 function openNow(ctx) {
   try {
     const v = viewOf(ctx), asked = askedOf(ctx.game, v, me(ctx), pendingOf(ctx));
-    return `${asked && !asked.done ? asked.text + ' ' : ''}Open to you now: ${usefulTools(v, asked, null).join(', ')}.`;
+    const waiting = waitingOf(ctx.game, ctx.api, v, me(ctx), asked);
+    return `${asked && !asked.done ? asked.text + ' ' : waiting ? waiting.text + ' ' : ''}Open to you now: ${usefulTools(v, asked, null, waiting).join(', ')}.`;
   } catch {return 'Use look or what_is_asked to see what is open.'}
 }
 function refuse(ctx, error) {
@@ -97,7 +98,10 @@ function myNotes(args, ctx) {
 }
 function whatIsAsked(args, ctx) {
   const v = viewOf(ctx), asked = askedOf(ctx.game, v, me(ctx), pendingOf(ctx));
-  if (!asked) return {ok: true, asked: null, text: `Nothing is asked of you right now. ${clockLine(v, me(ctx))}`, useful: usefulTools(v, null, null)};
+  if (!asked) {
+    const waiting = waitingOf(ctx.game, ctx.api, v, me(ctx), null);
+    return {ok: true, asked: null, text: `Nothing is asked of you right now. ${waiting ? waiting.text : clockLine(v, me(ctx))}`, useful: usefulTools(v, null, null, waiting)};
+  }
   return {ok: true, asked: asked.kind, text: asked.text, ...(asked.options ? {options: asked.options} : {}),
     ...(asked.count > 1 ? {count: asked.count} : {}), tool: asked.tool};
 }
@@ -116,14 +120,24 @@ function whoVoted(args, ctx) {
 }
 
 // ---- the acts ----
+// A line with the speaker's own name in front ("Corwin: ...", "Yusuf (ghost): ...", "**Odette:** ...") loses it: the table
+// already shows who speaks, and game 1 read "Corwin: Corwin: ..." on 49 of 55 lines (#33). Only the seat's own name.
+const escapeRe = x => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export function stripOwnName(text, name) {
+  let t = String(text ?? '').trim();
+  if (!name) return t;
+  const re = new RegExp(String.raw`^[*_\s]*` + escapeRe(name) + String.raw`[*_]*(\s*\([^)]{0,20}\))?[*_]*\s*[:\u2014\u2013][*_]*\s*`, 'i');
+  for (let k = 0; k < 3 && re.test(t); k++) t = t.replace(re, '').trim();
+  return t;
+}
 function speak(args, ctx) {
-  const text = String(args.text ?? '').trim();
-  if (!text) return refuse(ctx, 'speak needs text: what you say.');
+  const text = stripOwnName(args.text, ctx.seat?.name || viewOf(ctx).name);
+  if (!text) return refuse(ctx, 'speak needs text: what you say, without your name in front.');
   ctx.api.say(ctx.game, me(ctx), text);
   return {ok: true, said: text};
 }
 function whisper(args, ctx) {
-  const v = viewOf(ctx), text = String(args.text ?? '').trim();
+  const v = viewOf(ctx), text = stripOwnName(args.text, ctx.seat?.name || v.name);
   const f = findSeat(v, args.to);
   if (f.error) return refuse(ctx, f.error);
   if (f.seat.index === me(ctx)) return refuse(ctx, 'You cannot whisper to yourself; use note to remember something.');
@@ -200,7 +214,7 @@ export const PLAYER_TOOLS = [
     {text: {type: 'string', desc: 'The note, one or two sentences.'}}, note),
   // acts: each one spends the turn
   T('speak', true, 'Say one short line to the whole table (day only). Say something new; a repeat is refused.',
-    {text: {type: 'string', desc: 'What you say, in your own voice, at most 600 characters.'}}, speak),
+    {text: {type: 'string', desc: 'Only the words you say, in your own voice, without your name in front (the table shows who speaks). At most 600 characters.'}}, speak),
   T('whisper', true, 'Whisper to one player (day only). Only they hear it; the table sees that you two whispered.',
     {to: {type: 'string', desc: 'The player\'s name.'}, text: {type: 'string', desc: 'What you whisper, at most 600 characters.'}}, whisper),
   T('nominate', true, 'Nominate a living or dead player for execution once nominations are open. One nomination each a day; each player can be nominated once a day.',
