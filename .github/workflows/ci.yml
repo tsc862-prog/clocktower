@@ -44,6 +44,7 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           GH_TOKEN: ${{ github.token }}
       - {name: Rights (no official name in a tracked file), run: npm run rightscheck}
+      - {name: Build the page, run: npm run build}
       - name: Quote the patch note on the PR
         if: github.event_name == 'pull_request'
         continue-on-error: true
@@ -66,6 +67,7 @@ jobs:
       - {name: Relay seats and claims, run: npm run relaycheck}
       - {name: Runners with budget stops, run: npm run runnercheck}
       - {name: Providers against their mocks, run: npm run providercheck}
+      - {name: The launcher starts the relay and the page, run: npm run upcheck}
 
   ok:
     name: CI ok
