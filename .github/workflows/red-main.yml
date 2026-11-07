@@ -1,0 +1,67 @@
+name: Red main alarm
+
+# When CI fails on a push to main, open or update one issue "main is red" (label red-main); close it when CI is green on
+# main again. An open "main is red" issue is a merge stop. Runs from the default branch's copy of this file.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      simulate:
+        description: Pretend CI failed on main (opens the issue) or passed (closes it)
+        type: choice
+        options: [failure, success]
+        default: failure
+
+permissions:
+  contents: read
+
+jobs:
+  alarm:
+    name: Red main
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion != 'cancelled' && github.event.workflow_run.conclusion != 'skipped')
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RESULT: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate || github.event.workflow_run.conclusion }}
+      RUN_ID: ${{ github.event.workflow_run.id || github.run_id }}
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - name: Failing jobs and the merge that broke main
+        id: info
+        run: |
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN_ID"
+          jobs="$(gh run view "$RUN_ID" --json jobs --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")' 2>/dev/null || true)"
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "jobs=${jobs:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+      - name: Open or update the issue
+        if: env.RESULT == 'failure'
+        run: |
+          {
+            echo "CI is red on main. **Merges stop until this is closed** (the pm and the manager treat an open red-main issue as a stop sign)."
+            echo
+            echo "- Run: ${{ steps.info.outputs.url }}"
+            echo "- Failing jobs: ${{ steps.info.outputs.jobs }}"
+            echo "- Commit: $SHA"
+            if [ -n "${{ steps.info.outputs.pr }}" ]; then echo "- The merge that broke it: #${{ steps.info.outputs.pr }}"; fi
+            echo
+            echo "This issue closes by itself when CI is green on main again."
+          } > issue.md
+          node scripts/ci-issue.mjs open --title "main is red" --body-file issue.md --label red-main
+          if [ -n "${{ steps.info.outputs.pr }}" ]; then gh pr comment "${{ steps.info.outputs.pr }}" --body "CI failed on main after this merge: ${{ steps.info.outputs.url }} (failing: ${{ steps.info.outputs.jobs }}). See the open issue \"main is red\"."; fi
+      - name: Close the issue when main is green
+        if: env.RESULT == 'success'
+        run: |
+          node scripts/ci-issue.mjs close --title "main is red" --comment "CI is green on main again ($SHA): ${{ steps.info.outputs.url }}"

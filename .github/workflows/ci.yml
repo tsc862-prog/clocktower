@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '23 4 * * *'   # nightly at real timing (CI_FAST off), so the real pacing is exercised
+  workflow_dispatch:
+    inputs:
+      real_timing:
+        description: Run the timer-bound checks at real timing (CI_FAST off)
+        type: boolean
+        default: false
+
+# CI_FAST=1 (scripts/ci-clock.mjs) scales the real-time waits inside the check scripts about tenfold.
+env:
+  CI_FAST: ${{ (github.event_name == 'schedule' || inputs.real_timing) && '0' || '1' }}
+
+# A new push to a PR cancels its older run. Every PR runs CI, so "CI ok" always reports and the merge flow
+# (the automerge label today, branch protection with gh pr merge --auto once the repo is public) can act.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Parallel groups: a run takes as long as its slowest group. "CI ok" is the one check the merge flow waits for.
+# Add a new check as a step in a group; a new job must also be listed in ok.needs.
+jobs:
+  core:
+    name: Rules, rights, build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - name: Repo rules (patch notes, workflow files, CI coverage)
+        run: npm run rulescheck
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          GH_TOKEN: ${{ github.token }}
+      - {name: Rights (no official name in a tracked file), run: npm run rightscheck}
+      - name: Quote the patch note on the PR
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/patchnotes.mjs --quote "${{ github.event.pull_request.number }}" > comment.md
+          node scripts/pr-comment.mjs "${{ github.event.pull_request.number }}" clocktower-patch-note comment.md
+
+  ok:
+    name: CI ok
+    if: always()
+    needs: [core]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every group passed
+        run: |
+          test "${{ needs.core.result }}" = success

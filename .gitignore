@@ -1,6 +1,10 @@
 node_modules/
+dist/
 logs/
 .env
-dist/
+.env.local
+.DS_Store
 .claude/settings.local.json
+.claude/worktrees/
+# The owner's private overlay: our role names mapped to the official ones, for private play only. Never committed.
 overlay.local.json
