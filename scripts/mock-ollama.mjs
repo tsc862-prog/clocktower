@@ -2,11 +2,13 @@
 // calling), mock-json (no tool support: 400 on tools), mock-text (writes calls as text), mock-zh (answers in Chinese, never calling a
 // tool), mock-loop (Ollama aborts every generation: "token repeat limit reached"), mock-loop1 (aborts every call at the play
 // temperature; the cooler retry at 0.4 plays like mock-tools), mock-slow (the start gate's warm-up call answers after WARM_SLOW_MS,
-// then plays like mock-tools), mock-down (every call fails). Each turn it plays look, a bad tool (fly), then narrates.
+// then plays like mock-tools), mock-down (every call fails), mock-play (plays the game: the mock mind of scripts/mock-mind.mjs, as the
+// fake Agent SDK does). Each turn the others play look, a bad tool (fly), then narrate.
 // startMockOllama({embed}) -> {url, seen (every /api/chat body; seen.final counts closing calls, seen.warm the warm-ups), close}
 import http from 'node:http';
+import {nextCall} from './mock-mind.mjs';
 
-export const MOCK_MODELS = ['mock-tools:1b', 'mock-json:1b', 'mock-text:1b', 'mock-zh:1b', 'mock-loop:1b', 'mock-loop1:1b', 'mock-slow:1b', 'mock-down:1b'];
+export const MOCK_MODELS = ['mock-tools:1b', 'mock-json:1b', 'mock-text:1b', 'mock-zh:1b', 'mock-loop:1b', 'mock-loop1:1b', 'mock-slow:1b', 'mock-down:1b', 'mock-play:1b'];
 export const WARM_SLOW_MS = 2500; // mock-slow's warm-up answer takes this long
 // Embeddings: startMockOllama({embed: true}) also lists the model MOCK_EMBED_MODEL and answers POST /api/embed with a
 // deterministic concept vector: every word of a text adds to the axes of the MOCK_CONCEPTS groups that hold it (a made-up thesaurus, so
@@ -71,6 +73,15 @@ export async function startMockOllama({embed = false} = {}) {
         if (body.tools) return send(400, {error: `registry.ollama.ai/library/mock-json does not support tools`});
         const n = after.filter(m => m.role === 'assistant').length;
         return send(200, {...done, message: {role: 'assistant', content: JSON.stringify({narration: '', ...plan.json[Math.min(n, plan.json.length - 1)]})}});
+      }
+      if (body.model === 'mock-play:1b') { // this turn's calls and their results, then the mock mind's next step
+        const seen = [];
+        for (const m of after) {
+          if (m.role === 'assistant' && Array.isArray(m.tool_calls)) for (const c of m.tool_calls) seen.push({tool: c.function && c.function.name, args: (c.function && c.function.arguments) || {}, result: undefined});
+          else if (m.role === 'tool') {const x = seen.find(y => y.result === undefined && (!m.tool_name || y.tool === m.tool_name)); if (x) {try {x.result = JSON.parse(m.content)} catch {x.result = null}}}
+        }
+        const step = body.tools ? nextCall('player', seen) : {text: 'The player waits for the table.'};
+        return send(200, {...done, message: step.text ? {role: 'assistant', content: step.text} : {role: 'assistant', content: '', tool_calls: [{function: {name: step.tool, arguments: step.args}}]}});
       }
       const n = after.filter(m => m.role === 'assistant').length;
       if (body.model === 'mock-zh:1b') // answers in Chinese, never calling a tool

@@ -12,6 +12,16 @@
 //                             to what is left; when it runs out every paid runner is stopped and new paid starts are refused); a
 //                             running runner's own turn cap or budget can be lowered live (the supervisor stops it on reaching it)
 //   POST /play/runner/slot, /slot/release, /slot/cancel, /slot/beat: the Claude slot leases (scripts/pacing.mjs takeClaudeSlot)
+//   POST /play/runner/resume  {scripted?: true} -> {ok, runner}: the owner resumes a game whose Storyteller runner is gone; by
+//                             default the scripted Storyteller (scripts/storyteller-runner.mjs --scripted) answers from here on
+//
+// The game budget (issue #12): GAME_BUDGET dollars (default 5.00) across every paid runner of the game, split in two pools so the
+// game never loses its Storyteller first: the Storyteller's share (STORYTELLER_SHARE, default 0.30) set apart, the rest for the
+// seven players. A runner started with no budget gets its default (a player: the players' pool / 7; the Storyteller: its pool);
+// any budget is clipped to what is left in its pool, and when a pool is spent its paid runners stop ("game budget reached").
+// POST /play/runner/limits {gameBudget} changes the total; a new game (stop-all) starts the pools over.
+// A gone Storyteller pauses the game: when the Storyteller's runner ends while the game runs, the supervisor marks the game paused
+// (GET /play/runner: paused) and nothing answers for the Storyteller; the owner's resume starts the scripted fallback.
 //
 // Cost is the limit, not turns: no runner has a turn cap unless one is asked. A paid runner plays until stopped or until its budget
 // in dollars is spent; a local one (Ollama) costs nothing and plays until stopped.
@@ -20,8 +30,9 @@
 // active list and resume() skips it across a relay restart (the list's `spent`). Every start and end goes to
 // logs/runners/events.jsonl with who asked (`by`: owner, page, setup, resume, local) and why it ended (`why`).
 //
-// A runner is one child process of a known kind (RUNNER_KINDS): 'player' plays one player seat (scripts/seat-runner.mjs --player <id>),
-// 'storyteller' the Storyteller seat (scripts/storyteller-runner.mjs, once it exists; one at most). Each runner has a key
+// A runner is one child process of a known kind (RUNNER_KINDS): 'player' plays one player seat (a Claude seat:
+// scripts/agent-seat.mjs; any other mind: scripts/seat-runner.mjs --player <id>), 'storyteller' the Storyteller seat
+// (scripts/storyteller-runner.mjs; one at most). Each runner has a key
 // ('player:3', 'storyteller'), a state (starting, live, waiting, stopping, stopped, crashed), pid, uptime, turns and cost (read
 // from its turn lines: "[turn N ..." and "| run $x"), turns per minute, what its pacing waits for (its last "[pace]" line),
 // provider and model, the last lines of its output and, when it crashed, its last error line. Output goes to
@@ -65,40 +76,55 @@ export const MAX_RUNNERS = SEATS, STOP_GRACE_MS = 6000, KEEP_LINES = 12, MAX_BOD
 export const MODEL_RE = /^[A-Za-z0-9][\w.:\/+-]{0,99}$/; // the relay's (providers/index.mjs), kept here so this module has no SDK imports
 export const HOW = 'Runners are off. Start the relay with runners on: npm run relay -- --runners (or set RELAY_RUNNERS=1).';
 // Kinds of runner. defaults: what a start uses; caps: the most a request may ask. No turn cap by default: maxTurns stays optional.
+// The game budget in dollars and the Storyteller's share of it, set apart (issue #12: $5 a game, Haiku on every seat).
+export const GAME_BUDGET = 5, STORYTELLER_SHARE = 0.3, GAME_BUDGET_MAX = 500;
+const cents = v => Math.floor(v * 100 + 1e-9) / 100;
+// The two pools and each runner's default budget for a game of `total` dollars.
+export function gameShares(total = GAME_BUDGET, share = STORYTELLER_SHARE) {
+  const st = total * share, players = total - st;
+  return {total, share, pools: {storyteller: st, players}, player: Math.max(.01, cents(players / PLAYER_SEATS)), storyteller: Math.max(.01, cents(st))};
+}
+const envNum = (v, d) => v === undefined || v === null || v === '' || !Number.isFinite(Number(v)) ? d : Number(v);
+export const gameFromEnv = (env = {}) => gameShares(Math.min(GAME_BUDGET_MAX, Math.max(.01, envNum(env.GAME_BUDGET, GAME_BUDGET))), Math.min(.9, Math.max(.05, envNum(env.STORYTELLER_SHARE, STORYTELLER_SHARE))));
+// A runner's default budget when none is asked: {player, storyteller}; RUNNER_BUDGET overrides both.
+export const defaultBudgets = (env = {}) => {const g = gameFromEnv(env), r = envNum(env.RUNNER_BUDGET, null); return r != null ? {player: r, storyteller: r} : {player: g.player, storyteller: g.storyteller}};
 export const RUNNER_KINDS = {
-  player: {script: 'scripts/seat-runner.mjs', label: 'player runner', needsPlayer: true,
-    defaults: {maxTurns: null, budget: 1}, caps: {maxTurns: 500, budget: 5},
+  player: {script: 'scripts/seat-runner.mjs', claudeScript: 'scripts/agent-seat.mjs', label: 'player runner', needsPlayer: true,
+    defaults: {maxTurns: null, budget: gameShares().player}, caps: {maxTurns: 500, budget: 5},
     key: r => 'player:' + r.player, args: r => ['--player', String(r.player)]},
   storyteller: {script: 'scripts/storyteller-runner.mjs', label: 'Storyteller runner', needsPlayer: false, seat: 'storyteller',
-    missing: 'The Storyteller runner is not installed yet (it comes with the storyteller-builder\'s seat in slice 3).',
-    defaults: {maxTurns: null, budget: 1}, caps: {maxTurns: 500, budget: 5},
-    key: () => 'storyteller', args: () => []},
+    missing: 'The Storyteller runner is not installed.',
+    defaults: {maxTurns: null, budget: gameShares().storyteller}, caps: {maxTurns: 500, budget: 5},
+    key: () => 'storyteller', args: r => r.scripted ? ['--scripted'] : []},
 };
+// The script a runner runs: a Claude player seat plays through the Agent SDK runner, every other mind through the local loop.
+export const scriptOf = req => {const K = RUNNER_KINDS[req.kind]; return K.claudeScript && (req.claude || req.provider === 'anthropic') ? K.claudeScript : K.script};
 export const kindInstalled = K => existsSync(join(ROOT, K.script));
 
 const localHost = h => /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(String(h || ''));
 const loopback = a => /^(127\.|::1$|::ffff:127\.)/.test(String(a || ''));
 // The reason a runner gives for ending by itself, and how a budget stop reads.
-const OWN_END = /^(?:\[[\d:]+\] )?\[(?:agent|storyteller)\] stopped after \d+ turns[^()]*\(([^)]{1,80})\)/, BUDGET_WHY = /^(session )?budget reached/;
+const OWN_END = /^(?:\[[\d:]+\] )?\[(?:agent|storyteller)\] stopped after \d+ turns[^()]*\(([^)]{1,80})\)/, BUDGET_WHY = /^((?:session|game) )?budget reached/;
 const stripAnsi = s => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
 const num = v => v === undefined || v === null || v === '' ? null : Number(v);
 export const SESSION_BUDGET_MAX = 500; // dollars: the most a session budget may be set to
 
 // Check a start request against the kinds, providers and caps. players: the game's player seats. Returns {req} or {error, code}.
-export function checkStart(b, players, {running = [], max = MAX_RUNNERS} = {}) {
+export function checkStart(b, players, {running = [], max = MAX_RUNNERS, budgets = null} = {}) {
   if (!b || typeof b !== 'object') return {error: 'bad body', code: 400};
   const kind = b.kind == null ? 'player' : b.kind, K = RUNNER_KINDS[kind];
   if (!K) return {error: 'unknown runner kind (one of: ' + Object.keys(RUNNER_KINDS).join(', ') + ')', code: 400};
   const req = {kind};
   if (b.provider != null && b.provider !== '') {if (!RUNNER_PROVIDERS.includes(b.provider)) return {error: 'unknown provider (one of: ' + RUNNER_PROVIDERS.join(', ') + ')', code: 400}; req.provider = b.provider}
   if (b.model != null && b.model !== '') {if (typeof b.model !== 'string' || !MODEL_RE.test(b.model)) return {error: 'bad model name', code: 400}; req.model = b.model}
-  const local = req.provider === 'ollama'; // every other provider is paid: it keeps a budget
+  if (kind === 'storyteller' && b.scripted === true) {req.scripted = true; delete req.provider; delete req.model} // the scripted fallback: no mind
+  const local = req.provider === 'ollama' || !!req.scripted; // every other provider is paid: it keeps a budget
   const mt = num(b.maxTurns), bu = num(b.budget);
   if (mt !== null && !(Number.isInteger(mt) && mt >= 1 && mt <= K.caps.maxTurns)) return {error: `maxTurns must be a whole number from 1 to ${K.caps.maxTurns}`, code: 400};
   if (bu !== null && !(Number.isFinite(bu) && bu >= .01 && bu <= K.caps.budget)) return {error: `budget must be from $0.01 to $${K.caps.budget.toFixed(2)}`, code: 400};
   if (b.fresh === true) req.fresh = true; // this start only: never saved to the active list, so a resume does not wipe a session
   req.maxTurns = mt; // null: until stopped (a paid mind until its budget is spent)
-  req.budget = local ? null : bu ?? K.defaults.budget; // a local model costs nothing
+  req.budget = local ? null : bu ?? (budgets && budgets[kind] != null ? budgets[kind] : K.defaults.budget); // a local model costs nothing
   if (K.needsPlayer) {
     const id = typeof b.player === 'number' ? b.player : /^\d{1,9}$/.test(String(b.player ?? '').trim()) ? Number(String(b.player).trim()) : NaN;
     if (!Number.isInteger(id)) return {error: 'start needs the player seat id', code: 400};
@@ -118,7 +144,7 @@ export function checkStart(b, players, {running = [], max = MAX_RUNNERS} = {}) {
 
 // The command line for a runner (no key, no shell): node <script> --url <base> ...
 export function runnerArgs(req, base) {
-  const K = RUNNER_KINDS[req.kind], a = [K.script, '--url', base, ...K.args(req)];
+  const K = RUNNER_KINDS[req.kind], a = [scriptOf(req), '--url', base, ...K.args(req)];
   if (req.maxTurns != null) a.push('--max-turns', String(req.maxTurns));
   if (req.budget != null) a.push('--budget', String(req.budget));
   if (req.provider) a.push('--provider', req.provider);
@@ -159,6 +185,17 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
   const table = new Map(); // key -> runner record (running and recently finished)
   let closing = false; // the host is shutting down: what is running stays on the active list so a restart can resume it
   const session = {budget: null, spent: 0}; // one budget across every paid runner of this supervisor
+  // the game budget: two pools, the Storyteller's set apart (issue #12)
+  let game = gameFromEnv(env); const gameSpent = {players: 0, storyteller: 0};
+  const r4 = v => Math.round(v * 10000) / 10000;
+  const poolOf = r => RUNNER_KINDS[r.kind].seat === 'storyteller' ? 'storyteller' : 'players';
+  const poolLeft = pool => Math.max(0, game.pools[pool] - gameSpent[pool]);
+  const gameView = () => ({budget: game.total, storytellerShare: game.share, defaults: {player: game.player, storyteller: game.storyteller},
+    players: {budget: r4(game.pools.players), spent: r4(gameSpent.players), left: r4(poolLeft('players'))}, storyteller: {budget: r4(game.pools.storyteller), spent: r4(gameSpent.storyteller), left: r4(poolLeft('storyteller'))}});
+  const budgetsNow = () => defaultBudgets({...env, GAME_BUDGET: game.total, STORYTELLER_SHARE: game.share});
+  // the game is paused while its Storyteller's runner is gone: {why, at}, until the owner resumes or a Storyteller runner starts
+  let paused = null;
+  const gameLive = () => {try {const g = play.backend.game; return !!g && !g.winner} catch {return false}};
   const left = () => session.budget == null ? Infinity : Math.max(0, session.budget - session.spent);
   const paid = r => r.budget != null;
   const sessionView = () => ({budget: session.budget, spent: Math.round(session.spent * 10000) / 10000, left: session.budget == null ? null : Math.round(left() * 10000) / 10000});
@@ -232,7 +269,7 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
         const pc = line.match(/\[pace\] (.*)$/); if (pc) r.pace = pc[1].slice(0, 160);
         const cx = line.match(/\| ctx (\d+)k\b/); if (cx) r.ctx = Number(cx[1]);
         if (/\[session rolled/.test(line)) r.rolls = (r.rolls || 0) + 1;
-        const c = line.match(/\| run \$(\d+\.\d+)/); if (c) {const v = Number(c[1]); if (v > r.cost) session.spent += v - r.cost; r.cost = v}
+        const c = line.match(/\| run \$(\d+\.\d+)/); if (c) {const v = Number(c[1]); if (v > r.cost) {session.spent += v - r.cost; gameSpent[poolOf(r)] += v - r.cost} r.cost = v}
         const oe = line.match(OWN_END); if (oe) r.ownEnd = oe[1];
         if (oe && oe[1] === 'budget reached') budgetOut(r, 'budget reached'); // the runner's own word on its budget
         if (err || /failed|error|not ready|refused|No ANTHROPIC|is not|cannot|could not/i.test(line)) r.lastErr = line.slice(0, 300);
@@ -254,11 +291,15 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
       log(`[runners] ${r.key} ${r.name} ${r.state} (${r.endWhy})${r.error ? ': ' + r.error : ''} (${r.turns} turns${r.cost ? ', $' + r.cost.toFixed(4) : ''})`);
       event('end', r, {why: r.endWhy, state: r.state, exit: code, by: r.stopping ? r.stopBy || 'supervisor' : 'runner', turns: r.turns, cost: r.cost, budget: budgetOf(r), uptime: Math.round((r.ended - r.started) / 1000)});
       if (r.pid) play.dropRunner(`${host}:${r.pid}`); // its claims, in case it could not release them
+      if (RUNNER_KINDS[r.kind].seat === 'storyteller' && !closing && gameLive()) { // nobody answers for the Storyteller now: the game waits for the owner
+        paused = {why: `the Storyteller's runner ended (${r.endWhy})`, at: new Date(now()).toISOString()};
+        log(`[runners] the game is paused: ${paused.why}; resume (POST /play/runner/resume) lets the scripted Storyteller answer`); event('pause', r, {why: paused.why})}
       dropLeases(r.key); saveActive();
       const done = [...table.values()].filter(x => x.done); // keep a few finished runners for the page
       if (done.length > KEEP_DONE) table.delete(done[0].key);
     }
     table.delete(req.key); table.set(req.key, r);
+    if (RUNNER_KINDS[req.kind].seat === 'storyteller' && paused) {log(`[runners] the game resumes: ${req.scripted ? 'the scripted Storyteller' : 'a Storyteller runner'} answers`); paused = null}
     log(`[runners] started ${req.kind} runner for ${req.name} (pid ${r.pid}, by ${req.by || 'local'}): ${req.provider || 'saved provider'}${req.model ? ' ' + req.model : ''}, ${req.maxTurns != null ? req.maxTurns + ' turns' : 'until stopped'}${req.budget != null ? ', $' + req.budget.toFixed(2) : ''}`);
     event('start', r, {by: req.by || 'local', budget: req.budget ?? null, provider: req.provider || null, model: req.model || null, ...(spentOut.has(req.key) ? {afterBudget: spentOut.get(req.key).cost} : {})});
     spentOut.delete(req.key);
@@ -271,7 +312,8 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
     for (const r of running()) {if (r.stopping) continue;
       const why = r.capTurns != null && r.turns >= r.capTurns ? `turn cap reached: ${r.turns} of ${r.capTurns}`
         : r.capBudget != null && r.cost >= r.capBudget ? `budget reached: $${r.cost.toFixed(2)} of $${r.capBudget.toFixed(2)}`
-        : paid(r) && session.budget != null && left() <= 0 ? `session budget reached: $${session.spent.toFixed(2)} of $${session.budget.toFixed(2)}` : null;
+        : paid(r) && session.budget != null && left() <= 0 ? `session budget reached: $${session.spent.toFixed(2)} of $${session.budget.toFixed(2)}`
+        : paid(r) && poolLeft(poolOf(r)) <= 0 ? `game budget reached: ${poolOf(r) === 'storyteller' ? "the Storyteller's" : "the players'"} $${game.pools[poolOf(r)].toFixed(2)} of $${game.total.toFixed(2)} is spent` : null;
       if (why) {r.lines.push(`[runners] stopped after ${r.turns} turns (${why})`); if (r.lines.length > KEEP_LINES) r.lines.shift(); stop(r.key, why)}}}
   // Change limits. Returns {session, runner?, applies?} or {error, code}.
   function limits(b) {
@@ -279,7 +321,10 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
     if ('sessionBudget' in b) {const v = num(b.sessionBudget);
       if (v !== null && !(Number.isFinite(v) && v >= .01 && v <= SESSION_BUDGET_MAX)) return {error: `sessionBudget must be from $0.01 to $${SESSION_BUDGET_MAX}, or null for none`, code: 400};
       session.budget = v; log(`[runners] session budget ${v == null ? 'off' : '$' + v.toFixed(2)} (spent $${session.spent.toFixed(4)})`)}
-    let out = {session: sessionView()};
+    if ('gameBudget' in b) {const v = num(b.gameBudget);
+      if (!(Number.isFinite(v) && v >= .01 && v <= GAME_BUDGET_MAX)) return {error: `gameBudget must be from $0.01 to $${GAME_BUDGET_MAX}`, code: 400};
+      game = gameShares(v, game.share); log(`[runners] game budget $${v.toFixed(2)} (the Storyteller's share $${game.pools.storyteller.toFixed(2)} set apart)`)}
+    let out = {session: sessionView(), game: gameView()};
     if (b.key != null) {const r = table.get(String(b.key)); if (!r || r.done) return {error: 'no such live runner', code: 404};
       const K = RUNNER_KINDS[r.kind], mt = num(b.maxTurns), bu = num(b.budget); let later = false;
       if ('maxTurns' in b) {if (mt !== null && !(Number.isInteger(mt) && mt >= 1 && mt <= K.caps.maxTurns)) return {error: `maxTurns must be a whole number from 1 to ${K.caps.maxTurns}`, code: 400};
@@ -318,7 +363,7 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
   async function resetAll({why = 'new game', waitMs = RESET_WAIT_MS} = {}) {
     const keys = running().map(r => r.key);
     for (const r of running()) stop(r.key, why);
-    spentOut.clear();
+    spentOut.clear(); gameSpent.players = 0; gameSpent.storyteller = 0; paused = null; // a new game: the pools start over
     for (const w of waiters.splice(0)) {clearTimeout(w.t); w.res(null)}
     const t0 = Date.now(); while (running().length && Date.now() - t0 < waitMs) await new Promise(r => setTimeout(r, 50));
     saveActive(); log(`[runners] new game: ${keys.length} runner(s) stopped`);
@@ -341,16 +386,19 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
 
   // Every start, from the page or from resume(): the checks, then the child. -> {code, obj}
   function startRequest(b, by = 'local') {
-    const c = checkStart(b, players(), {running: running(), max: maxRunners});
+    const c = checkStart(b, players(), {running: running(), max: maxRunners, budgets: budgetsNow()});
     if (c.error) {log(`[runners] start refused: ${c.error}`); return {code: c.code, obj: {ok: false, error: c.error}}}
     c.req.by = by;
     if (by === 'resume' && spentOut.has(c.req.key)) {const x = spentOut.get(c.req.key), error = `${x.name} spent its budget ($${Number(x.cost).toFixed(2)}): only you can start it again.`; log(`[runners] ${by} refused: ${error}`); return {code: 402, obj: {ok: false, error}}}
     const seat = RUNNER_KINDS[c.req.kind].seat || c.req.player;
     if (play.claimed(seat)) return {code: 409, obj: {ok: false, error: `${c.req.name} already has a live runner (one runner per seat).`}};
     if (c.req.kind === 'storyteller' && play.storytellerInfo && !play.storytellerInfo().seat) return {code: 409, obj: {ok: false, error: 'The Storyteller seat is closed.'}};
-    c.req.claude = providerFor(seat, c.req.provider) === 'anthropic';
+    c.req.claude = !c.req.scripted && providerFor(seat, c.req.provider) === 'anthropic';
     if (paid(c.req) && session.budget != null) {const l = left(); // the session budget: clip this runner's budget to what is left
       if (l < .01) return {code: 402, obj: {ok: false, error: `Session budget reached ($${session.spent.toFixed(2)} of $${session.budget.toFixed(2)}). Raise it to start another paid runner.`}};
+      if (c.req.budget > l) c.req.budget = Math.floor(l * 100) / 100}
+    if (paid(c.req)) {const pool = c.req.kind === 'storyteller' ? 'storyteller' : 'players', l = poolLeft(pool); // the game budget: clip to what is left of its pool
+      if (l < .01) return {code: 402, obj: {ok: false, error: `Game budget reached: ${pool === 'storyteller' ? "the Storyteller's" : "the players'"} share of $${game.total.toFixed(2)} is spent. Raise it to start another paid runner.`}};
       if (c.req.budget > l) c.req.budget = Math.floor(l * 100) / 100}
     const s = start(c.req); if (s.error) return {code: 500, obj: {ok: false, error: s.error}};
     return {code: 200, obj: {ok: true, runner: s.runner}};
@@ -394,7 +442,7 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
     // The runners' output (narration, tool results) is for the watcher's page only: a request without the page's origin (another
     // local process, a runner) gets the states without the lines.
     if (path === '/play/runner' && req.method === 'GET') {const page = o === origin, rs = enabled ? list().map(v => page ? v : {...v, lines: [], error: v.error ? 'see the runner log' : null}) : [];
-      return send(200, {ok: true, enabled, ...(enabled ? {} : {how: HOW}), session: sessionView(), max: maxRunners, seats: SEATS, claude: {slots: claudeMax, used: leases.size, waiting: waiters.length, storytellerSlots, storytellerUsed: stLeases.size, sceneSlots, leases: leaseView()}, kinds, providers: RUNNER_PROVIDERS, runners: rs})}
+      return send(200, {ok: true, enabled, ...(enabled ? {} : {how: HOW}), session: sessionView(), game: gameView(), paused, max: maxRunners, seats: SEATS, claude: {slots: claudeMax, used: leases.size, waiting: waiters.length, storytellerSlots, storytellerUsed: stLeases.size, sceneSlots, leases: leaseView()}, kinds, providers: RUNNER_PROVIDERS, runners: rs})}
     if (req.method !== 'POST') return send(404, {error: 'not found'});
     if (!enabled) return send(403, {error: 'runners are off', how: HOW});
     let b; try {b = await readBody(req)} catch (e) {return send(400, {error: e.message})}
@@ -434,6 +482,11 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
       const x = await resetAll({why: typeof b.why === 'string' && b.why ? b.why.slice(0, 60) : 'new game', waitMs: Number.isFinite(Number(b.waitMs)) ? Math.min(RESET_WAIT_MS, Math.max(0, Number(b.waitMs))) : RESET_WAIT_MS});
       return send(200, {ok: true, ...x});
     }
+    // The owner resumes a game whose Storyteller runner is gone: the scripted fallback answers (or, with scripted: false, a mind).
+    if (path === '/play/runner/resume') {
+      const scripted = b.scripted !== false;
+      const r = startRequest({kind: 'storyteller', ...(scripted ? {scripted: true} : {provider: b.provider, model: b.model, budget: b.budget})}, o !== origin ? 'local' : 'owner');
+      return send(r.code, r.obj)}
     if (path === '/play/runner/limits') {const l = limits(b); if (l.error) return send(l.code, {ok: false, error: l.error}); return send(200, {ok: true, ...l})}
     if (path === '/play/runner/fresh') {const f = fresh(typeof b.key === 'string' ? b.key : null); if (f.error) return send(f.code, {ok: false, error: f.error}); return send(200, {ok: true, ...f})}
     if (path === '/play/runner/stop') {
@@ -444,7 +497,7 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
     }
     send(404, {error: 'not found'});
   });
-  return {list, start, stop, fresh, stopAll, resetAll, shutdown, killAll, table, limits, resume, session: sessionView, activeFile, eventsFile};
+  return {list, start, stop, fresh, stopAll, resetAll, shutdown, killAll, table, limits, resume, session: sessionView, game: gameView, paused: () => paused, activeFile, eventsFile};
 }
 
 // A supervised runner (CLOCKTOWER_SUPERVISED=1) calls this once: fn runs on a "stop" line on stdin, or when stdin closes (the

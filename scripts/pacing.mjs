@@ -62,15 +62,15 @@ export function failTracker(maxFails) {
 // call made, or a turn whose calls failed because the game was not answering (not the runner's fault).
 export const localWorked = r => r && r.looped && !r.tools ? null : r && r.gameDown && !r.acts ? null : !!(r && r.tools > 0 && r.rejected < r.tools && !(r.repeat && !r.acts) && !r.repeatAct && !r.foreign && !(r.chatbot && !r.acts));
 
-// makePacer({base, player, runner, heartbeat, minGap, log, stopped}) -> {next(), turnDone(), state}
+// makePacer({base, player | role: 'storyteller', runner, heartbeat, minGap, log, stopped}) -> {next(), turnDone(), state}
 //   next(): waits for the next turn. -> {wake:'now'|'soft'|'heartbeat', why, table, clock} or {dead} / {gone, why} / {stopped}
 //   turnDone(): call when a turn ends (the gap and the heartbeat count from here).
-export function makePacer({base, player, runner, heartbeat = PACE_DEFAULTS.heartbeat, minGap = PACE_DEFAULTS.minGap, pollMs = POLL_REAL_MS, log = () => {}, stopped = () => false, fetchImpl = fetch}) {
+export function makePacer({base, player, role = undefined, runner, heartbeat = PACE_DEFAULTS.heartbeat, minGap = PACE_DEFAULTS.minGap, pollMs = POLL_REAL_MS, log = () => {}, stopped = () => false, fetchImpl = fetch}) {
   let lastEnd = null, since = null, nows = [], legacy = false, said = false;
   const st = {waiting: false, wake: null};
   async function pace(wake, realMs) {
     try {
-      const r = await fetchImpl(base + '/play/pace', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({player, runner, since, minutes: heartbeat, wake, realMs}), signal: AbortSignal.timeout(realMs + 20000)});
+      const r = await fetchImpl(base + '/play/pace', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({player, role, runner, since, minutes: heartbeat, wake, realMs}), signal: AbortSignal.timeout(realMs + 20000)});
       if (r.status === 404) return {unsupported: true};
       const j = await r.json().catch(() => ({ok: false, error: 'bad answer'}));
       if (j && j.ok === false && /unknown tool pace|not found/i.test(String(j.error || ''))) return {unsupported: true};
@@ -113,7 +113,7 @@ export function makePacer({base, player, runner, heartbeat = PACE_DEFAULTS.heart
   async function brief() {
     if (legacy) return null;
     try {
-      const r = await fetchImpl(base + '/play/pace', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({player, runner, brief: true}), signal: AbortSignal.timeout(8000)});
+      const r = await fetchImpl(base + '/play/pace', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({player, role, runner, brief: true}), signal: AbortSignal.timeout(8000)});
       if (r.status === 404) return null;
       const j = await r.json(); return j && j.ok && j.brief ? j.brief : null;
     } catch {return null}
@@ -126,7 +126,7 @@ export function makePacer({base, player, runner, heartbeat = PACE_DEFAULTS.heart
       if (stopped()) return {stopped: true};
       let r = null;
       try {
-        const x = await fetchImpl(base + '/play/pace', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({player, runner, held: true}), signal: AbortSignal.timeout(8000)});
+        const x = await fetchImpl(base + '/play/pace', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({player, role, runner, held: true}), signal: AbortSignal.timeout(8000)});
         r = x.status === 404 ? null : await x.json().catch(() => null);
       } catch {r = null}
       if (!r) return {};
