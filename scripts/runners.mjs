@@ -35,7 +35,8 @@
 // (scripts/storyteller-runner.mjs; one at most). Each runner has a key
 // ('player:3', 'storyteller'), a state (starting, live, waiting, stopping, stopped, crashed), pid, uptime, turns and cost (read
 // from its turn lines: "[turn N ..." and "| run $x"), turns per minute, what its pacing waits for (its last "[pace]" line),
-// provider and model, the last lines of its output and, when it crashed, its last error line. Output goes to
+// provider and model, the last lines of its output, its last turn (lastTurn: wake, at, cost, header, tools with their arguments, from
+// the turn line it posts) and, when it crashed, its last error line. Output goes to
 // logs/runners/<key>.log (AGENT_LOGS moves logs/ for tests).
 //
 // Children are spawned with process.execPath and an argument array (no npm, no shell). They inherit the host's environment as a
@@ -204,6 +205,16 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
   const players = () => (play.backend.info().players || []);
   const running = () => [...table.values()].filter(r => !r.done);
   const host = hostname();
+  // A runner's last turn, from the turn line it posts to /play/behavior/turn (the relay hands accepted lines here): what woke it,
+  // when, its cost, the header it played from and its tool calls with their arguments. For the page only (like the output lines).
+  if (play.onTurn) play.onTurn((key, rec, rid) => {
+    const r = table.get(key === 'storyteller' ? 'storyteller' : 'player:' + key);
+    if (!r || r.done || rid !== `${host}:${r.pid}`) return;
+    const w = rec.wake, cut = (v, n) => String(v ?? '').slice(0, n);
+    r.lastTurn = {wake: w && typeof w === 'object' ? w.wake || null : w || null, at: new Date(now()).toISOString(), cost: Number.isFinite(rec.cost) ? rec.cost : null,
+      header: rec.brief && typeof rec.brief.text === 'string' ? rec.brief.text.slice(0, 2000) : null,
+      tools: (Array.isArray(rec.tools) ? rec.tools : []).slice(0, 40).map(t => ({tool: cut(t && t.name, 40), args: t && t.args && typeof t.args === 'object' ? t.args : null, ok: !!(t && t.ok !== false), ...(t && t.ok === false && t.error ? {error: cut(t.error, 200)} : {})}))};
+  });
 
   // One line per start and end, for reports.
   function event(ev, r, more = {}) {try {mkdirSync(dir, {recursive: true}); appendFileSync(eventsFile, JSON.stringify({at: new Date(now()).toISOString(), event: ev, key: r.key, kind: r.kind, name: r.name, ...more}) + '\n')} catch {}}
@@ -230,7 +241,7 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
       ...(r.budgetOut ? {budgetSpent: true, spentWhy: r.budgetOut.why} : {}),
       maxTurns: r.maxTurns ?? null, turnCap: r.maxTurns != null ? 'up to ' + r.maxTurns + ' turns' : 'until stopped',
       ...(((mind && mind.provider) || r.provider) === 'ollama' ? {numCtx: numCtxFrom(env)} : {}),
-      ...ctxView(r), ...turnRate(r), pace: r.pace || null, budget: r.budget, lines: r.lines.slice(-8), error: r.error || null, exit: r.exit ?? null,
+      ...ctxView(r), ...turnRate(r), pace: r.pace || null, budget: r.budget, lastTurn: r.lastTurn || null, lines: r.lines.slice(-8), error: r.error || null, exit: r.exit ?? null,
       log: relative(ROOT, r.logFile).replace(/\\/g, '/')};
   }
   // the session's size in thousands of tokens, from the `ctx 83k` of its turn lines
@@ -441,7 +452,7 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
     const kinds = Object.fromEntries(Object.entries(RUNNER_KINDS).map(([k, K]) => [k, {defaults: K.defaults, caps: K.caps, installed: kindInstalled(K)}]));
     // The runners' output (narration, tool results) is for the watcher's page only: a request without the page's origin (another
     // local process, a runner) gets the states without the lines.
-    if (path === '/play/runner' && req.method === 'GET') {const page = o === origin, rs = enabled ? list().map(v => page ? v : {...v, lines: [], error: v.error ? 'see the runner log' : null}) : [];
+    if (path === '/play/runner' && req.method === 'GET') {const page = o === origin, rs = enabled ? list().map(v => page ? v : {...v, lines: [], lastTurn: null, error: v.error ? 'see the runner log' : null}) : [];
       return send(200, {ok: true, enabled, ...(enabled ? {} : {how: HOW}), session: sessionView(), game: gameView(), paused, max: maxRunners, seats: SEATS, claude: {slots: claudeMax, used: leases.size, waiting: waiters.length, storytellerSlots, storytellerUsed: stLeases.size, sceneSlots, leases: leaseView()}, kinds, providers: RUNNER_PROVIDERS, runners: rs})}
     if (req.method !== 'POST') return send(404, {error: 'not found'});
     if (!enabled) return send(403, {error: 'runners are off', how: HOW});

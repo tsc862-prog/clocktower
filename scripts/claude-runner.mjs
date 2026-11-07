@@ -135,7 +135,7 @@ export async function runClaudeSeat({kind, opt, flag, env, base, runner, say, ct
             sess.ctx = ctxOf(m.message.usage) ?? sess.ctx; // the last call's prompt: what the price line is measured on
             for (const x of m.message.content || []) {
               if (x.type === 'text' && x.text.trim()) {say(`  ${seat.name}: ${x.text.trim()}`); tc.text(x.text); if (!st) post('/play/narrate', {text: x.text.trim()}, 5000).catch(() => {})}
-              else if (x.type === 'tool_use') {tools++; tc.tool(x.name, x.id); say(`  > ${String(x.name).replace(/^mcp__clocktower__/, '')}(${x.input && Object.keys(x.input).length ? short(x.input, 120) : ''})`)}
+              else if (x.type === 'tool_use') {tools++; tc.tool(x.name, x.id, x.input); say(`  > ${String(x.name).replace(/^mcp__clocktower__/, '')}(${x.input && Object.keys(x.input).length ? short(x.input, 120) : ''})`)}
             }
           } else if (m.type === 'user' && Array.isArray(m.message?.content)) {
             for (const x of m.message.content) if (x.type === 'tool_result') {const c = Array.isArray(x.content) ? x.content.map(y => y.text || '').join('') : String(x.content || ''); say(`    < ${short(c, 220)}`); tc.result(x.tool_use_id, c, x.is_error)}

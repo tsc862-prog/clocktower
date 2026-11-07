@@ -28,8 +28,8 @@ const ST = api.ST;
 
 export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = SCRIPTED_GRACE_MS, players = PLAYER_TOOLS,
   storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}} = {}) {
-  const game = newGame({seed, ...(seats ? {seats} : {}), ...(rounds != null ? {rounds} : {})});
-  const answerer = scripted ? createScripted(seed) : null;
+  let game = newGame({seed, ...(seats ? {seats} : {}), ...(rounds != null ? {rounds} : {})});
+  let answerer = scripted ? createScripted(seed) : null;
   const socks = new Set(), waiters = new Set(), seen = {}, apis = {};
   let pendingId = null, timer = null, closed = false;
 
@@ -137,6 +137,29 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     narrate(id, text) {sendAll({type: 'narrate', player: id, text: String(text).slice(0, 600)})},
     links(map, runners = {}, st = null, ready = {}) {sendAll({type: 'links', links: map, runners, ready, ...(st ? {storyteller: st} : {})})},
     attach(ws) {socks.add(ws); log('[play] watcher page connected'); ws.on('close', () => {socks.delete(ws); log('[play] watcher page disconnected')}); ws.on('message', () => {})},
+    // The watcher's whole view (GET /play/watch, the page only): everything, whispers with their text and every seat's told lines
+    // included; events are the log entries after `since` with the table's sentence as `text`. A `since` past the end of this game
+    // (a new game began) reads from the start.
+    watch(since = -1) {
+      const last = game.log.length ? game.log.at(-1).id : -1, from = Number.isFinite(Number(since)) && Number(since) <= last ? Number(since) : -1;
+      const copy = v => v == null ? v : JSON.parse(JSON.stringify(v)), g = api.grimoire(game), c = game.clock;
+      const told = api.events(game, ST, from), whispers = game.log.filter(e => e.type === 'whisper' && e.id > from).map(({n, ...e}) => copy(e));
+      return {ok: true, seed: game.config.seed, rounds: game.config.rounds, phase: g.phase, night: game.night, day: game.day,
+        clock: {day: c.day, round: c.round, roundsBeforeNominations: c.roundsBeforeNominations, nominationsOpen: c.nominationsOpen, spoke: [...c.spoke], passedNominating: [...c.passedNominating]},
+        pending: copy(game.pending), ballot: copy(game.ballot), grimoire: g, nightOrder: api.nightOrder(game), rulings: api.rulings(game),
+        winner: copy(game.winner), last, canNewGame: true, events: [...told, ...whispers].sort((a, b) => a.id - b.id)};
+    },
+    // A fresh seeded game in place of this one (POST /play/game/new, after the supervisor's stop-all): same seats, so the relay's
+    // claims and links stay. -> {seed, rounds}
+    newGame(nextSeed = game.config.seed, nextRounds = game.config.rounds) {
+      if (timer) clearTimeout(timer); timer = null;
+      game = newGame({seed: nextSeed, ...(seats ? {seats} : {}), ...(nextRounds != null ? {rounds: nextRounds} : {})});
+      answerer = scripted ? createScripted(nextSeed) : null;
+      for (const k of Object.keys(seen)) delete seen[k];
+      pendingId = null; changed();
+      log(`[game] a new game: seed ${nextSeed}`);
+      return {seed: game.config.seed, rounds: game.config.rounds};
+    },
     close() {closed = true; if (timer) clearTimeout(timer); timer = null; for (const w of [...waiters]) waiters.delete(w)},
   };
 }

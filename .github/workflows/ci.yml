@@ -78,6 +78,7 @@ jobs:
         with: {node-version: 22, cache: npm}
       - run: npm ci
       - {name: Relay seats and claims, run: npm run relaycheck}
+      - {name: "Watch check (the page's routes: watch, new game, health, last turn)", run: npm run watchcheck}
       - {name: "Channel check (secrets stay in their seat; a whole game through the relay)", run: npm run channelcheck}
       - {name: Runners with budget stops, run: npm run runnercheck}
       - {name: "Mock game (eight runners from the supervisor play seed 5 to a winner, no dollar spent)", run: npm run mockgamecheck}

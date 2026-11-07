@@ -19,7 +19,10 @@
 //                        warm-up model call (the start gate); only the claiming runner
 //   POST /play/behavior/turn {player | role: 'storyteller', runner, rec}: a runner's turn line for the behavior logs
 //                        (scripts/behavior-log.mjs); only from the runner that holds the seat. 404 when the host keeps none.
-//   GET  /play/health    {ok, connected, phase, players: [{id, name, alive, link, claimed, runner?, ready}], storyteller: {...}, calls}
+//   GET  /play/health    {ok, connected, phase, players: [{id, name, alive, link, claimed, runner?, ready}], storyteller: {...}, calls}; local tools and
+//                        the page's origin (CORS)
+//   GET  /play/watch?since=N the watcher's whole view (the page's origin only): backend.watch(since), src/game/backend.js
+//   POST /play/game/new  {seed?, rounds?} (the page's origin only): the backend's game replaced by a fresh seeded one; claims stay
 //
 // Which seat: a player call names its seat by id, as the X-Clocktower-Player header, a ?player= query, or a `player` field in a
 // /play/* body. The runner: X-Clocktower-Runner, ?runner= or `runner` in the body.
@@ -28,7 +31,8 @@
 // runner never holds a player seat and the Storyteller seat. /play/narrate reaches the watcher only. No route carries text from
 // one seat to another: seats reach each other through the game alone.
 // Safety: the server listens on 127.0.0.1 only. Requests must carry a localhost Host header (DNS rebinding). /mcp and /play/*
-// refuse any request with an Origin header (a web page cannot drive a seat); the WebSocket accepts only the page's origin.
+// refuse any request with an Origin header (a web page cannot drive a seat), except the watcher's reads the page makes (/play/watch,
+// /play/game/new, /play/health: its origin only); the WebSocket accepts only the page's origin.
 // Verbose (RELAY_VERBOSE=1 or --verbose) appends each tool call to logs/play.jsonl.
 //
 // A backend is {info() -> {connected, phase, players: [{id, name, alive}], storyteller}, call(playerId, tool, args),
@@ -175,13 +179,15 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
   }
   // A runner's turn line: only the runner holding the seat may write it. A turn line also proves the seat's model answers: a claimed
   // seat with no warm-up record counts as ready once its runner has played a turn.
+  const turnHooks = new Set(); // onTurn(f): f(seat key, turn record, runner id) for every accepted turn line
   const turnPlayed = (key, rid) => {const r = readies.get(key); if (r && r.runner === rid && r.state !== 'failed') return; readies.set(key, {runner: rid, state: 'ready', implied: true, at: now()}); pushLinks()};
   function behaviorTurn(b, player, rid, st) {
     const rec = b.rec && typeof b.rec === 'object' ? b.rec : null; if (!rec) return [400, {ok: false, error: 'turn needs {rec}'}];
     const key = st ? STORYTELLER_KEY : player;
     if (!st && (player == null || Number.isNaN(player))) return [400, {ok: false, error: 'turn needs the player seat id'}];
     const c = claimOf(key); if (!c || c.runner !== rid) return [409, {ok: false, refused: true, error: 'Only the runner holding this seat writes its turns.'}];
-    turnPlayed(key, rid); if (!behavior) return [404, {ok: false, error: 'this host keeps no behavior logs'}];
+    turnPlayed(key, rid); for (const f of turnHooks) {try {f(key, rec, rid)} catch {}} // the supervisor's last turn (scripts/runners.mjs)
+    if (!behavior) return [404, {ok: false, error: 'this host keeps no behavior logs'}];
     const h = st ? null : players().find(x => x.id === player) || {id: player, name: null};
     behavior.turn({...rec, seat: st ? 'storyteller' : 'player:' + player, player: h ? {id: h.id, name: h.name} : null, runner: rid, provider: (c.info && c.info.provider) || rec.provider, model: (c.info && c.info.model) || rec.model});
     return [200, {ok: true}];
@@ -202,15 +208,37 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
   server.on('request', async (req, res) => {
     const [path, qs] = (req.url || '').split('?');
     if (!(path === '/mcp' || path.startsWith('/play/')) || path === '/play/runner' || path.startsWith('/play/runner/')) {for (const f of prior) f.call(server, req, res); return}
-    const send = (code, obj) => {res.writeHead(code, {'content-type': 'application/json'}); res.end(JSON.stringify(obj))};
+    // The watcher's routes (/play/watch, /play/game/new) answer the page's origin only; /play/health answers local tools and the page.
+    // Every other route refuses any Origin: a web page never drives a seat.
+    const o = req.headers.origin, page = !!o && o === origin, watcher = path === '/play/watch' || path === '/play/game/new';
+    const cors = page ? {'access-control-allow-origin': origin, vary: 'origin'} : {};
+    const send = (code, obj) => {res.writeHead(code, {'content-type': 'application/json', ...cors}); res.end(JSON.stringify(obj))};
     if (!localHost(req.headers.host)) return send(403, {error: 'host not allowed'});
-    if (req.headers.origin) return send(403, {error: 'browser origins may not drive a seat'});
+    if (watcher || path === '/play/health') {
+      if (o && !page) return send(403, {error: 'origin not allowed'});
+      if (req.method === 'OPTIONS') {res.writeHead(204, page ? {...cors, 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '600'} : {}); return res.end()}
+      if (watcher && !page) return send(403, {error: "the watcher's view is the page's alone (its origin only)"});
+    } else if (o) return send(403, {error: 'browser origins may not drive a seat'});
     const q = new URLSearchParams(qs || ''), role = String(req.headers[ROLE_HEADER] || q.get('role') || '').trim().toLowerCase();
     let rid = runnerParam(req.headers[RUNNER_HEADER] || q.get('runner'));
     if (role && role !== 'storyteller' && role !== 'player') return send(400, {error: 'unknown role (storyteller or player)'});
     let player = role === 'storyteller' ? null : playerParam(req.headers[PLAYER_HEADER]); if (player === null && role !== 'storyteller') player = playerParam(q.get('player'));
     if (Number.isNaN(player)) return send(400, {error: 'bad seat id (use the number, e.g. X-Clocktower-Player: 3)'});
     try {
+      if (path === '/play/watch') {
+        if (req.method !== 'GET') return send(405, {error: 'GET only'});
+        if (!be.watch) return send(404, {error: 'this relay serves no game (start it with --game)'});
+        const s = q.get('since'), since = s == null || s === '' || !Number.isFinite(Number(s)) ? -1 : Math.floor(Number(s));
+        return send(200, be.watch(since))}
+      if (path === '/play/game/new') {
+        if (req.method !== 'POST') return send(405, {error: 'POST only'});
+        if (!be.newGame) return send(404, {error: 'this relay serves no game (start it with --game)'});
+        const b = await readBody(req) || {}, int = (v, lo, hi) => v == null || v === '' ? undefined : Number.isInteger(Number(v)) && Number(v) >= lo && Number(v) <= hi ? Number(v) : NaN;
+        const seed = int(b.seed, 1, 1e9), rounds = int(b.rounds, 0, 10);
+        if (Number.isNaN(seed) || Number.isNaN(rounds)) return send(400, {ok: false, error: 'seed is a whole number from 1, rounds from 0 to 10'});
+        const r = be.newGame(seed, rounds); lastLinks = ''; pushLinks();
+        log(`[play] the page began a new game: seed ${r.seed}, ${r.rounds} rounds (seat claims kept)`);
+        return send(200, {ok: true, ...r})}
       if (path === '/play/health' && req.method === 'GET') {const i = be.info();
         return send(200, {ok: true, connected: !!i.connected, phase: i.phase || null, players: (i.players || []).map(h => {const r = runnerOf(h.id), rd = readyOf(h.id); return {...h, link: linkOf(h.id), claimed: !!claimOf(h.id), ...(r ? {runner: r} : {}), ready: rd ? rd.state : null}}), storyteller: storytellerInfo(), ...stats})}
       if (path === '/mcp') {
@@ -315,5 +343,5 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
   const holderOf = id => {const c = claimOf(id); return c ? c.runner : null};
   const dropRunner = prefix => {let n = 0; for (const [id, c] of claims) if (c.runner === prefix || c.runner.startsWith(prefix + ':')) {claims.delete(id); act.delete(id); n++}
     if (n) {log(`[play] runner ${prefix} gone: ${n} claim(s) dropped`); pushLinks()} return n};
-  return {backend: be, stats, call, storytellerCall, storytellerInfo, linkOf, links, runnerOf, readyOf, claimed, holderOf, dropRunner, behavior};
+  return {backend: be, stats, call, storytellerCall, storytellerInfo, linkOf, links, runnerOf, readyOf, claimed, holderOf, dropRunner, behavior, onTurn: f => {turnHooks.add(f); return () => turnHooks.delete(f)}};
 }
