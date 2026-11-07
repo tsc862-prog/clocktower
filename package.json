@@ -12,7 +12,12 @@
     "relay": "node scripts/relay.mjs",
     "notes": "node scripts/patchnotes.mjs",
     "rulescheck": "node scripts/rulescheck.mjs",
-    "flakehunt": "node scripts/flakehunt.mjs"
+    "flakehunt": "node scripts/flakehunt.mjs",
+    "relaycheck": "node scripts/relaycheck.mjs",
+    "runnercheck": "node scripts/runnercheck.mjs",
+    "providercheck": "node scripts/providercheck.mjs",
+    "behavior-report": "node scripts/behavior-report.mjs",
+    "cost-report": "node scripts/cost-report.mjs"
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.316",
