@@ -22,3 +22,12 @@ Useful now: vote, who_voted, read_talk.
 
 ## Talk model
 - Nothing measured yet (slice 5).
+
+## The real api (PR #16) as it met the tools
+- ctx.api is api.forSeat(index): bound, so a handler can only name its own seat; Storyteller functions throw.
+- Event ids start at 0 (lastSeen defaults to -1; read_talk since<=0 means everything). Projections include phase (what: night|round|nominations|day-ends), pass, vote-closed, no-execution, slayer-shot, virgin, death, win; all seat fields are indexes.
+- ApiError messages already end with legalNow(): handlers pass them through unchanged (only their own refusals get "Open to you now").
+- The vote pending stays after voting (mine set) and has no `seats`; who_voted approximates voters as the living plus who voted.
+- A seat that passed on nominating has no nomination pending but may still nominate: nominate calls the api anyway when nominations are open.
+- view.clock.toSpeak (living only): the header says whether my turn this round is still mine.
+- Integration case in playertoolcheck: seed 7, rounds 1, to day 3 through the tools (say, repeat refused, whisper, passes, 2 nominations, 14 votes, 5 night choices).

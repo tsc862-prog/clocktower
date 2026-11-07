@@ -48,6 +48,8 @@ jobs:
         run: npm run gamecheck
       - name: Edge check (every rule with an edge case)
         run: npm run edgecheck
+      - name: Game api (audience, talk, clock, ballot, backend)
+        run: npm run apicheck
       - name: Seeded headless game (seed 1)
         run: npm run sim -- --seed 1
       - name: Player tools (every tool and the header against a fake api with planted secrets)

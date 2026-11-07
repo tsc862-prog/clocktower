@@ -2,28 +2,26 @@
 // from the api's seat-scoped reads (view, pendingFor, events), so a header can carry nothing the seat may not know.
 // Pure: no node: imports, no model calls. The tool table (src/data/player-tools.js) shares the helpers below.
 //
-// The api: the slice 3 contract's src/game/api.js. Until it is on main, the backend (or a test) hands it in with
-// useApi(api) or as playerHeader's third argument; once it lands it is imported here directly.
-let API = null;
-export const useApi = api => {API = api; return api};
-const apiOr = api => {
-  const a = api || API;
-  if (!a) throw new Error('No game api: call useApi(api) first.');
-  return a;
-};
+// The api: src/game/api.js. A test may hand in another (a fake) with useApi(api) or as the last argument; useApi(null)
+// goes back to the game's.
+import * as gameApi from '../game/api.js';
+let API = gameApi;
+export const useApi = api => {API = api || gameApi; return API};
+const apiOr = api => api || API;
 
 // The seat index from an index or {index, name}.
 export const seatIndex = seat => (seat && typeof seat === 'object' ? seat.index : seat);
 
 // ---- what a seat has seen ----
-// The id of the last event each seat has read (read_talk advances it). Kept beside the game, not in it: handlers never
-// change the game except through the api. A restarted relay forgets it, and the seat sees the recent talk again.
+// The id of the last event each seat has read (read_talk advances it; -1 before any, as event ids start at 0). Kept
+// beside the game, not in it: handlers never change the game except through the api. A restarted relay forgets it, and
+// the seat sees the recent talk again.
 const SEEN = new WeakMap();
 const seenMap = game => {let m = SEEN.get(game); if (!m) {m = new Map(); SEEN.set(game, m)} return m};
-export const lastSeen = (game, seat) => seenMap(game).get(seatIndex(seat)) ?? 0;
+export const lastSeen = (game, seat) => seenMap(game).get(seatIndex(seat)) ?? -1;
 export const markSeen = (game, seat, id) => {
   const m = seenMap(game), i = seatIndex(seat);
-  if (Number.isFinite(id) && id > (m.get(i) ?? 0)) m.set(i, id);
+  if (Number.isFinite(id) && id > (m.get(i) ?? -1)) m.set(i, id);
 };
 
 // ---- names ----
@@ -38,19 +36,30 @@ export const listNames = names => names.length ? names.join(', ') : 'nobody';
 // ---- events: the only kinds and fields a seat is ever shown ----
 // Anything else the api might hand back (a ruling, a grimoire line, another seat's whisper or night information) is
 // dropped here, so a mistake on the game side still stops at this door.
-export const EVENT_KINDS = ['say', 'whisper', 'whisper-seen', 'dawn', 'nomination', 'vote-result', 'execution', 'narration', 'phase', 'told'];
+export const EVENT_KINDS = ['say', 'pass', 'whisper', 'whisper-seen', 'dawn', 'phase', 'narration', 'nomination', 'vote-result',
+  'vote-closed', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'death', 'win', 'told'];
+const DEATHS = ['execution', 'death', 'slayer-shot', 'virgin'];
 export function cleanEvent(view, me, e) {
   if (!e || typeof e !== 'object' || !EVENT_KINDS.includes(e.type)) return null;
-  const from = e.from ?? e.seat ?? e.by, to = e.to ?? e.target;
   const isMe = x => x === me || (x != null && x === view?.name);
-  if (e.type === 'whisper' && !isMe(from) && !isMe(to)) return null;
+  if (e.type === 'whisper' && !isMe(e.from) && !isMe(e.to)) return null;
   if (e.type === 'told' && e.seat != null && !isMe(e.seat)) return null;
+  const n = x => nameOf(view, x);
   const out = {id: e.id, type: e.type};
   if (e.day != null) out.day = e.day;
   if (e.night != null) out.night = e.night;
-  if (e.type === 'say') out.from = nameOf(view, from);
-  if (e.type === 'whisper' || e.type === 'whisper-seen') {out.from = nameOf(view, from); out.to = nameOf(view, to)}
-  if (e.type === 'nomination') {out.by = nameOf(view, e.by); out.target = nameOf(view, e.target)}
+  switch (e.type) {
+    case 'say': case 'pass': out.from = n(e.seat ?? e.from); break;
+    case 'whisper': case 'whisper-seen': out.from = n(e.from ?? e.seat); out.to = n(e.to); break;
+    case 'nomination': out.by = n(e.by); out.target = n(e.target); break;
+    case 'vote-result': out.by = n(e.by); out.target = n(e.target); if (Array.isArray(e.yes)) out.yes = e.yes.map(n);
+      if (e.tally != null) out.tally = e.tally; if (e.needed != null) out.needed = e.needed; break;
+    case 'dawn': if (Array.isArray(e.deaths)) out.died = e.deaths.map(n); break;
+    case 'phase': if (typeof e.what === 'string') out.what = e.what; break;
+    case 'execution': case 'death': out.who = n(e.seat ?? e.target); break;
+    case 'slayer-shot': case 'virgin': out.by = n(e.seat); out.target = n(e.target); break;
+    case 'win': if (typeof e.team === 'string') out.team = e.team; break;
+  }
   if (e.type === 'whisper-seen') out.text = `${out.from} whispered to ${out.to}.`;
   else if (typeof e.text === 'string') out.text = e.text;
   return out;
@@ -69,7 +78,7 @@ export function whatsNew(game, seat, since, api) {
   const said = evs.filter(e => e.type === 'say' && e.from !== view.name).length;
   const out = {since: from, last: evs.length ? evs[evs.length - 1].id : from, said,
     whispers: evs.filter(e => e.type === 'whisper' && e.from !== view.name).length, seen: n('whisper-seen'),
-    nominations: n('nomination'), votes: n('vote-result'), dawn: n('dawn'), deaths: n('execution'), narration: n('narration'),
+    nominations: n('nomination'), votes: n('vote-result'), dawn: n('dawn'), deaths: evs.filter(e => DEATHS.includes(e.type)).length, narration: n('narration'),
     told: n('told'), phase: n('phase')};
   out.total = said + out.whispers + out.seen + out.nominations + out.votes + out.dawn + out.deaths + out.narration + out.told + out.phase;
   return out;
@@ -83,7 +92,7 @@ export function newsLine(w) {
   add('nominations', 'nomination', 'nominations');
   add('votes', 'vote result', 'vote results');
   add('dawn', 'dawn report', 'dawn reports');
-  add('deaths', 'execution', 'executions');
+  add('deaths', 'death by day', 'deaths by day');
   add('narration', 'word from the Storyteller', 'words from the Storyteller');
   add('told', 'private word to you', 'private words to you');
   if (!parts.length && w.phase) parts.push('the phase changed');
@@ -106,7 +115,7 @@ export function askedOf(game, view, me, p) {
     const role = (p.role && p.role === view.role?.id ? view.role.name : optionLabel(game, view, p.role)) || view.role?.name || 'your role';
     const options = (p.options || []).map(o => optionLabel(game, view, o));
     const count = p.count || 1;
-    const what = String(p.question || '').replace(/^[^:]*:\s*/, '').replace(/[.?!\s]+$/, '') || 'make your choice';
+    const what = String(p.question || '').replace(/^[^:]*:\s*/, '').replace(/\(null\)/g, '("nobody")').replace(/[.?!\s]+$/, '') || 'make your choice';
     return {kind: 'choose', role, count, options, tool: 'night_choice',
       text: `As the ${role}: ${what}${/\?$/.test(String(p.question || '').trim()) ? '?' : '.'} Pick ${count === 1 ? 'one' : count} of: ${listNames(options)}.`};
   }
@@ -134,12 +143,13 @@ export function nominationTargets(view, me, p) {
 }
 
 // ---- the clock and the useful tools ----
-export function clockLine(v) {
+export function clockLine(v, me) {
   if (v.phase === 'night') return `Night ${v.night}. Nobody talks at night.`;
   if (v.phase === 'day') {
     const c = v.clock || {};
     const round = c.roundsBeforeNominations ? `round ${Math.min(c.round || 1, c.roundsBeforeNominations)} of ${c.roundsBeforeNominations}` : 'talking';
-    return `Day ${v.day}, ${round}; nominations ${c.nominationsOpen ? 'open' : 'not open yet'}.`;
+    const turn = c.nominationsOpen || me == null || v.alive === false || !Array.isArray(c.toSpeak) ? '' : c.toSpeak.includes(me) ? ' Your turn this round is still yours.' : ' You have had your turn this round.';
+    return `Day ${v.day}, ${round}; nominations ${c.nominationsOpen ? 'open' : 'not open yet'}.${turn}`;
   }
   if (v.phase === 'ended') return `The game is over${v.winner ? `: ${v.winner.team || v.winner} wins` : ''}.`;
   return 'The game is being set up.';
@@ -168,7 +178,7 @@ export function playerHeader(game, seat, api) {
   const asked = askedOf(game, v, me, a.pendingFor(game, me));
   const lines = [
     `You are ${v.name}, the ${role.name || 'unknown role'} (${role.team || '?'}, ${sideOf(role.team)}), ${life}.`,
-    clockLine(v),
+    clockLine(v, me),
     `Alive (${living.length}): ${listNames(living)}.${dead.length ? ` Dead: ${listNames(dead)}.` : ''}`,
     newsLine(news),
   ];

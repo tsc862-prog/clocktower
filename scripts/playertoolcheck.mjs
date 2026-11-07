@@ -12,6 +12,8 @@ import {fileURLToPath} from 'node:url';
 import {PLAYER_TOOLS, TOOL_NAMES, ATTEMPT_INVITE} from '../src/data/player-tools.js';
 import {PLAYER_TOOL_LINES, systemFor} from '../src/data/prompts.js';
 import {playerHeader, whatsNew, useApi} from '../src/seats/player.js';
+import * as api from '../src/game/api.js';
+import {newGame, createScripted} from '../src/game/index.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 let fails = 0, passes = 0;
@@ -22,7 +24,7 @@ const HEADER_CAP = 700;
 
 // ---- the fake api ----
 const NAMES = ['Odette', 'Bram', 'Ines', 'Corwin', 'Thea', 'Fitch', 'Yusuf'];
-class ApiError extends Error {}
+class ApiError extends Error {constructor(m) {super(`${m} You may look around.`); this.name = 'ApiError'}}
 const say = (by, text, day = 1) => ({type: 'say', seat: by, text, day, audience: 'all', role: 'SECRET-ROLE-of-speaker'});
 
 // A fake game in one of the usual states. me is seat 0 (Odette, the Fortune Teller).
@@ -30,7 +32,7 @@ function fakeGame(state) {
   const g = {state, phase: 'day', day: 1, night: 1, clock: {round: 2, roundsBeforeNominations: 3, nominationsOpen: false},
     seats: NAMES.map((name, index) => ({index, name, alive: true, ghostVote: true, role: index === 3 ? 'SECRET-ROLE-imp' : 'SECRET-ROLE-other'})),
     events: [], notes: {}, lines: {}, pending: {}, nominated: [], winner: null, calls: []};
-  const ev = e => g.events.push({id: g.events.length + 1, ...e});
+  const ev = e => g.events.push({id: g.events.length, ...e});
   ev({type: 'phase', night: 1, text: 'Night falls.'});
   ev({type: 'told', seat: 0, night: 1, text: 'You are the Fortune Teller.'});
   ev({type: 'told', seat: 3, night: 1, text: 'SECRET-TOLD-OTHER: you are the Imp; your minion is Bram.'});
@@ -83,7 +85,7 @@ const fakeApi = {
       dead: g.seats.filter(x => !x.alive).map(x => x.name), winner: g.winner, grimoire: 'SECRET-GRIMOIRE', bluffs: ['SECRET-BLUFF']};
   },
   pendingFor(g, seat) {g.calls.push('pendingFor'); return g.pending[seat] || null},
-  events(g, seat, since = 0) {g.calls.push('events'); return g.events.filter(e => e.id > since)},
+  events(g, seat, since = 0) {g.calls.push('events'); return g.events.filter(e => e.id > since)}, // ids from 0, like the api
   say(g, seat, text) {
     g.calls.push('say'); isDay(g);
     need(text && text.trim(), 'Say something: an empty line is not a line.');
@@ -91,11 +93,11 @@ const fakeApi = {
     const mine = g.lines[seat] || (g.lines[seat] = []);
     need(!mine.slice(-3).includes(text), 'You said that already; say something new or pass.');
     mine.push(text);
-    g.events.push({id: g.events.length + 1, type: 'say', seat, text, day: g.day, audience: 'all'});
+    g.events.push({id: g.events.length, type: 'say', seat, text, day: g.day, audience: 'all'});
   },
   whisper(g, seat, to, text) {
     g.calls.push('whisper'); isDay(g);
-    g.events.push({id: g.events.length + 1, type: 'whisper', from: seat, to, text, day: g.day, audience: [seat, to]});
+    g.events.push({id: g.events.length, type: 'whisper', from: seat, to, text, day: g.day, audience: [seat, to]});
   },
   pass(g) {g.calls.push('pass')},
   nominate(g, seat, target) {
@@ -169,7 +171,7 @@ for (const st of STATES) {
     const g = fakeGame(st);
     const r = run(g, t.name, SAMPLE[t.name]);
     ok(r && typeof r.ok === 'boolean', `${st}/${t.name}: answers {ok}`);
-    ok(r.ok || (typeof r.error === 'string' && /Open to you now|what_is_asked/.test(r.error)), `${st}/${t.name}: a refusal names what is open: ${r.error}`);
+    ok(r.ok || (typeof r.error === 'string' && /Open to you now|what_is_asked|You may/.test(r.error)), `${st}/${t.name}: a refusal names what is open: ${r.error}`);
     clean(r, `${st}/${t.name}`);
     ok(!g.calls.some(c => STORYTELLER_ONLY.includes(c)), `${st}/${t.name}: calls no Storyteller-only api function`);
   }
@@ -232,7 +234,7 @@ section('the acts, and refusals that name what is legal');
 {
   let g = fakeGame('night');
   let r = run(g, 'speak', {text: 'hello'});
-  ok(!r.ok && /night/.test(r.error) && /night_choice/.test(r.error), `speaking at night is refused with the night choice named: ${r.error}`);
+  ok(!r.ok && /night/.test(r.error) && /You may/.test(r.error), `speaking at night is refused by the game, its message passed through: ${r.error}`);
   r = run(g, 'vote', {yes: 'yes'});
   ok(!r.ok && /No vote is open/.test(r.error) && /Fortune Teller/.test(r.error), `vote with no vote open says what is open instead: ${r.error}`);
   r = run(g, 'night_choice', {pick: ['Bram']});
@@ -282,6 +284,100 @@ section('the acts, and refusals that name what is legal');
   r = run(g, 'nominate', {target: 'Corwin'});
   ok(!r.ok && /dead cannot nominate/.test(r.error), 'the dead cannot nominate');
 }
+
+// ---- one game through the real api ----
+section('integration: a real game through the real api, every seat with its own bound api');
+{
+  const STR = 'ST-REASON-SECRET', WHISPER = 'WHISPER-SECRET-for-one-ear-only';
+  const game = newGame({seed: 7, rounds: 1});
+  const answerer = createScripted(7);
+  const seats = game.seats.map(s => ({index: s.index, name: s.name}));
+  const ctxs = seats.map(seat => ({game, seat, api: api.forSeat(seat.index), log: () => {}}));
+  const out = seats.map(() => []); // everything each seat was shown
+  const call = (i, name, args = {}) => {const r = tool(name).handler(args, ctxs[i]); out[i].push(JSON.stringify(r)); return r};
+  const header = i => {const h = playerHeader(game, i); out[i].push(h); return h};
+  const done = {say: 0, repeat: 0, whisper: 0, pass: 0, nominate: 0, vote: 0, choice: 0, headers: 0, bad: []};
+  for (let step = 0; step < 2000 && !game.winner && game.day < 3; step++) {
+    const p = game.pending;
+    if (!p) break;
+    if (p.seat === 'storyteller') {api.answer(game, 'storyteller', answerer(game), STR); continue}
+    if (p.kind === 'choose') {
+      const i = p.seat, h = header(i); done.headers++;
+      if (!/WAITING ON YOU/.test(h)) done.bad.push(`no waiting line for a choice: ${h}`);
+      const a = call(i, 'what_is_asked');
+      const pick = a.options.includes('nobody') ? ['nobody'] : a.options.filter(o => o !== seats[i].name).slice(0, a.count || 1);
+      const r = call(i, 'night_choice', {pick});
+      if (r.ok) done.choice++; else done.bad.push(`night_choice ${JSON.stringify(pick)}: ${r.error}`);
+      continue;
+    }
+    if (p.kind === 'vote') {
+      for (const i of p.seats) {
+        if (api.pendingFor(game, i)?.mine != null) continue;
+        header(i); done.headers++;
+        const r = call(i, 'vote', {yes: i % 2 ? 'no' : 'yes'});
+        if (r.ok) done.vote++; else done.bad.push(`vote ${i}: ${r.error}`);
+        if (game.pending !== p) break;
+      }
+      continue;
+    }
+    const v = api.view(game, 0);
+    if (game.phase === 'day' && !v.clock.nominationsOpen) {
+      for (const i of v.clock.toSpeak) {
+        header(i); done.headers++;
+        if (i === v.clock.toSpeak[0] && game.day === 1) {
+          const line = `${seats[i].name} here; I have a hunch about the night.`;
+          if (call(i, 'speak', {text: line}).ok) done.say++;
+          if (/You said that already/.test(call(i, 'speak', {text: line}).error || '')) done.repeat++;
+          continue;
+        }
+        if (game.day === 1 && done.whisper === 0) {
+          const to = seats.find(s => s.index !== i);
+          if (call(i, 'whisper', {to: to.name, text: WHISPER}).ok) done.whisper++;
+          done.whisperTo = to.index; done.whisperFrom = i;
+        }
+        if (call(i, 'pass').ok) done.pass++;
+      }
+      continue;
+    }
+    if (p.kind === 'nomination') {
+      const asks = seats.map(s => ({i: s.index, q: api.pendingFor(game, s.index)})).filter(x => x.q?.kind === 'nomination');
+      if (!asks.length) break;
+      if (!game.today.nominators.length) {
+        const i = asks[0].i, a = call(i, 'what_is_asked');
+        const target = a.options.find(o => o !== seats[i].name);
+        const r = call(i, 'nominate', {target});
+        if (r.ok) done.nominate++; else {done.bad.push(`nominate: ${r.error}`); call(i, 'pass')}
+      } else for (const {i} of asks) {call(i, 'pass'); done.pass++; if (game.pending !== p) break}
+      continue;
+    }
+    break;
+  }
+  ok(!done.bad.length, `no tool refused a legal move: ${done.bad.join(' | ')}`);
+  ok(done.say >= 1 && done.repeat >= 1, `speak, and the no-repeating rule from the real api (${done.say} said, ${done.repeat} repeats refused)`);
+  ok(done.whisper === 1 && done.pass > 0 && done.nominate >= 1 && done.vote >= 3 && done.choice >= 1,
+    `the game was played through the tools: ${JSON.stringify({whisper: done.whisper, pass: done.pass, nominate: done.nominate, vote: done.vote, choice: done.choice, headers: done.headers})}`);
+  ok(game.day >= 2 || game.winner, `the game moved on (day ${game.day}${game.winner ? ', ' + game.winner.text : ''})`);
+  const heard = call(done.whisperTo, 'my_whispers');
+  ok(heard.whispers.some(w => w.text === WHISPER), 'the whisper reaches its listener');
+  for (const s of seats) {
+    if (s.index === done.whisperTo || s.index === done.whisperFrom) continue;
+    call(s.index, 'read_talk', {since: 0}); call(s.index, 'my_whispers'); header(s.index);
+    ok(!out[s.index].some(x => x.includes(WHISPER)), `${s.name} never sees the whisper between two others`);
+  }
+  for (const s of seats) ok(!out[s.index].some(x => x.includes(STR)), `${s.name} never sees a Storyteller reason`);
+  for (const s of seats) {
+    const h = header(s.index);
+    ok(h.length < HEADER_CAP && h.startsWith(`You are ${s.name}, the `), `${s.name}'s header in the real game is under ${HEADER_CAP} (${h.length})`);
+  }
+  const BOUND = /only as yourself|Only the Storyteller/;
+  const tryMsg = f => {try {f(); return null} catch (e) {return e.message}};
+  ok(BOUND.test(tryMsg(() => ctxs[0].api.notes(game, 1)) || ''), "a seat's bound api refuses another seat's notes");
+  ok(BOUND.test(tryMsg(() => ctxs[0].api.grimoire(game)) || ''), 'a seat has no grimoire');
+  const talk = call(0, 'read_talk', {since: 0});
+  console.log(`    | a real game, seed 7, to day ${game.day}: ${JSON.stringify({...done, bad: undefined})}; ${seats[0].name}'s header now:`);
+  console.log(header(0).split('\n').map(l => '    | ' + l).join('\n'));
+}
+
 
 section('nothing under src/ imports node: or scripts/');
 {

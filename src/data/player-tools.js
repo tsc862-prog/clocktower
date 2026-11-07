@@ -29,10 +29,14 @@ function refuse(ctx, error) {
   return {ok: false, error: `${error} ${openNow(ctx)}`.trim()};
 }
 const NO_GAME = {ok: true, phase: 'no game yet', seats: []};
-// A handler whose api refusals (an ApiError or any throw) come back as {ok: false, error} naming what is open.
+// A handler whose api refusals come back as {ok: false, error} naming what is open. The api's own refusals (ApiError)
+// already end with what is legal now and pass through as they are; anything else gets "Open to you now" added.
 const guarded = (fn, name) => (args, ctx = {}) => {
   if (!ctx.api || !ctx.game) return name === 'look' ? {...NO_GAME} : {ok: false, error: 'No game yet: wait for the Storyteller to deal.'};
-  try {return fn(args || {}, ctx)} catch (e) {return refuse(ctx, msg(e))}
+  try {return fn(args || {}, ctx)} catch (e) {
+    if (e && e.name === 'ApiError') {try {ctx.log?.('refusal', {seat: me(ctx), error: msg(e)})} catch {} return {ok: false, error: msg(e)}}
+    return refuse(ctx, msg(e));
+  }
 };
 
 // A seat named by a player: the exact name in any case, or the one name it begins.
@@ -56,11 +60,11 @@ const toList = x => (Array.isArray(x) ? x : x == null ? [] : String(x).split(','
 // ---- the reads ----
 function look(args, ctx) {
   const v = viewOf(ctx), seats = v.seats || [], t = v.today || {};
-  return {ok: true, phase: v.phase, day: v.day, night: v.night, clock: clockLine(v),
+  return {ok: true, phase: v.phase, day: v.day, night: v.night, clock: clockLine(v, me(ctx)),
     you: {name: v.name, alive: !!v.alive, ghostVote: !!v.ghostVote},
     seats: seats.map(s => ({name: s.name, alive: !!s.alive})),
     alive: seats.filter(s => s.alive).map(s => s.name), dead: seats.filter(s => !s.alive).map(s => s.name),
-    today: {nominations: (t.nominations || []).map(n => ({by: nameOf(v, n.by), target: nameOf(v, n.target), yes: n.yes, needed: n.needed, result: n.result})),
+    today: {nominations: (t.nominations || []).map(n => ({by: nameOf(v, n.by), target: nameOf(v, n.target), yes: Array.isArray(n.yes) ? n.yes.map(x => nameOf(v, x)) : n.yes, needed: n.needed, result: n.result})),
       executed: nameOf(v, t.executed) ?? null},
     ...(v.winner ? {winner: v.winner.team || String(v.winner)} : {})};
 }
@@ -73,7 +77,7 @@ function myRole(args, ctx) {
 function readTalk(args, ctx) {
   const v = viewOf(ctx), i = me(ctx);
   const given = args.since != null && args.since !== '' && Number.isFinite(Number(args.since));
-  const since = given ? Number(args.since) : lastSeen(ctx.game, i);
+  const since = given ? Math.max(-1, Number(args.since) || -1) : lastSeen(ctx.game, i); // 0 or less: from the start
   const all = cleanEvents(v, i, ctx.api.events(ctx.game, i, since));
   const shown = all.slice(-READ_CAP);
   const last = all.length ? all[all.length - 1].id : since;
@@ -84,7 +88,7 @@ function readTalk(args, ctx) {
 }
 function myWhispers(args, ctx) {
   const v = viewOf(ctx), i = me(ctx);
-  const list = cleanEvents(v, i, ctx.api.events(ctx.game, i, 0)).filter(e => e.type === 'whisper');
+  const list = cleanEvents(v, i, ctx.api.events(ctx.game, i, -1)).filter(e => e.type === 'whisper');
   return {ok: true, whispers: list.slice(-READ_CAP), ...(list.length ? {} : {note: 'No whispers to or from you yet.'})};
 }
 function myNotes(args, ctx) {
@@ -93,15 +97,16 @@ function myNotes(args, ctx) {
 }
 function whatIsAsked(args, ctx) {
   const v = viewOf(ctx), asked = askedOf(ctx.game, v, me(ctx), pendingOf(ctx));
-  if (!asked) return {ok: true, asked: null, text: `Nothing is asked of you right now. ${clockLine(v)}`, useful: usefulTools(v, null, null)};
+  if (!asked) return {ok: true, asked: null, text: `Nothing is asked of you right now. ${clockLine(v, me(ctx))}`, useful: usefulTools(v, null, null)};
   return {ok: true, asked: asked.kind, text: asked.text, ...(asked.options ? {options: asked.options} : {}),
     ...(asked.count > 1 ? {count: asked.count} : {}), tool: asked.tool};
 }
 function whoVoted(args, ctx) {
   const v = viewOf(ctx), p = pendingOf(ctx);
   if (!p || p.kind !== 'vote') return refuse(ctx, 'No vote is open now.');
-  const voters = Array.isArray(p.seats) ? p.seats : (v.seats || []).filter(s => s.alive).map(s => s.index);
   const voted = Array.isArray(p.voted) ? p.voted : [];
+  // the voters: the api's list when it gives one, else the living (the dead with a ghost vote may vote too)
+  const voters = Array.isArray(p.seats) ? p.seats : (v.seats || []).filter(s => s.alive || voted.includes(s.index)).map(s => s.index);
   // the hands raised so far are public at a real table; shown when the api gives them (see "Asked of the api")
   const b = p.ballots && typeof p.ballots === 'object' ? p.ballots : null;
   const hands = b ? {yes: Object.keys(b).filter(k => b[k] === true).map(k => nameOf(v, Number(k))), no: Object.keys(b).filter(k => b[k] === false).map(k => nameOf(v, Number(k)))} : {};
@@ -135,8 +140,14 @@ function note(args, ctx) {
 function nominate(args, ctx) {
   const v = viewOf(ctx), asked = askedOf(ctx.game, v, me(ctx), pendingOf(ctx));
   if (!asked || asked.kind !== 'nomination') {
-    const why = !v.alive ? 'The dead cannot nominate.' : v.phase !== 'day' ? 'Nominations happen by day.'
-      : !v.clock?.nominationsOpen ? 'Nominations are not open yet.' : 'You cannot nominate now (you may have nominated today already).';
+    // no nomination pending: a seat that passed on nominating may still change its mind; the game decides the rest
+    if (v.alive && v.phase === 'day' && v.clock?.nominationsOpen) {
+      const f = findSeat(v, args.target);
+      if (f.error) return refuse(ctx, f.error);
+      ctx.api.nominate(ctx.game, me(ctx), f.seat.index);
+      return {ok: true, nominated: f.seat.name};
+    }
+    const why = !v.alive ? 'The dead cannot nominate.' : v.phase !== 'day' ? 'Nominations happen by day.' : 'Nominations are not open yet.';
     return refuse(ctx, why);
   }
   const f = findSeat(v, args.target);
@@ -180,7 +191,7 @@ export const PLAYER_TOOLS = [
   T('look', false, 'The table now: phase, day, the clock, who is alive and dead in seat order, and today\'s nominations and votes.', {}, look),
   T('my_role', false, 'Your role, team and ability in plain words, and everything the Storyteller has told you in private.', {}, myRole),
   T('read_talk', false, 'What happened since your last read: lines said at the table, whispers to you, who was seen whispering, deaths, nominations, votes. Oldest first, with ids.',
-    {since: {type: 'integer', optional: true, desc: 'Show entries after this id (default: after the last one you read).'}}, readTalk),
+    {since: {type: 'integer', optional: true, desc: 'Show entries after this id; 0 shows everything (default: after the last one you read).'}}, readTalk),
   T('my_whispers', false, 'Every whisper you sent or received, oldest first.', {}, myWhispers),
   T('my_notes', false, 'Your own notes, oldest first. Nobody else can read them.', {}, myNotes),
   T('what_is_asked', false, 'The decision waiting on you, if any (a vote, a nomination, a night choice), with the legal answers.', {}, whatIsAsked),
