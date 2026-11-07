@@ -23,6 +23,7 @@
     "gamecheck": "node scripts/gamecheck.mjs",
     "edgecheck": "node scripts/edgecheck.mjs",
     "playertoolcheck": "node scripts/playertoolcheck.mjs",
+    "storytellertoolcheck": "node scripts/storytellertoolcheck.mjs",
     "apicheck": "node scripts/apicheck.mjs"
   },
   "devDependencies": {
