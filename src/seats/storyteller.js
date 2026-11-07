@@ -99,8 +99,16 @@ export function describePending(game, p, {max = 40} = {}) {
     pick: p.count ? `exactly ${p.count} different options` : 'one option',
     options: opts.length > max ? [...opts.slice(0, max), `... and ${opts.length - max} more of the same form`] : opts,
     count: opts.length,
+    offered: offeredWords(p),
     howToAnswer: howToAnswer(game, p),
   };
+}
+
+// The option count stated plainly, every time: "20 options offered, pick one" or "1 option offered: it is the only legal answer".
+export function offeredWords(p) {
+  const n = (p.options || []).length;
+  if (p.count) return `${n} options offered, pick exactly ${p.count}`;
+  return n === 1 ? '1 option offered: it is the only legal answer' : `${n} options offered, pick one`;
 }
 
 export function howToAnswer(game, p) {
@@ -177,6 +185,51 @@ export function clockWords(game) {
 }
 const stepWords = (game, step) => (roleIndex(game)[step] ? 'the ' + roleLabel(game, step) : String(step).replace(/-/g, ' '));
 
+// ---- the true clock, deaths and executions: what a narration may say ----
+export function nominationsWords(game) {
+  const c = game.clock || {};
+  if (phaseOf(game) !== 'day') return null;
+  const open = c.nominationsOpen ?? game.step === 'nominations';
+  return open ? 'nominations are OPEN' : `nominations are CLOSED (they open when round ${c.roundsBeforeNominations ?? '?'} is done${c.round != null ? `; it is round ${c.round}` : ''})`;
+}
+const diedNames = game => (game.diedTonight || []).map(i => seatLabel(game, i));
+export const diedWords = game => (diedNames(game).length ? `${diedNames(game).join(' and ')} died in the night` : 'nobody died in the night');
+const executedNames = game => (game.executed || []).map(e => seatLabel(game, e.seat));
+export const executedWords = game => (executedNames(game).length ? `executed so far: ${executedNames(game).join(', ')}` : 'nobody has been executed yet');
+
+// A narration against the game: an error naming the truth when it states a clock fact that is false, else null.
+export function narrationError(game, text) {
+  const ph = phaseOf(game), sentences = String(text).split(/(?<=[.!?])\s+/);
+  const names = sent => (game.seats || []).map(x => x.name).filter(n => new RegExp(`\\b${String(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(sent));
+  const dated = t => /\bday\s*\d|yesterday|last (?:day|night)/i.test(t);
+  for (const t of sentences) {
+    if (ph === 'day' && /nominat/i.test(t) && !/\b(not|n't|yet|until|before|once|when|after|will|soon|then|if)\b/i.test(t)) {
+      const claimsOpen = /\bopen/i.test(t) && !/\bclosed?\b/i.test(t), claimsShut = /\b(closed|shut)\b/i.test(t);
+      const open = game.clock?.nominationsOpen ?? game.step === 'nominations';
+      if ((claimsOpen && !open) || (claimsShut && open)) return `Not true: ${nominationsWords(game)}. Say that, or leave the clock out.`;
+    }
+    if (ph === 'day' && /\b(died|dies|dead|killed|perished)\b/i.test(t) && /\b(night|dawn|overnight|tonight)\b/i.test(t)) {
+      const nobody = /\b(nobody|no one|none)\b/i.test(t), who = names(t);
+      if (nobody && diedNames(game).length) return `Not true: ${diedWords(game)}. Say who died.`;
+      if (!nobody && who.length && !who.some(n => diedNames(game).includes(n))) return `Not true: ${diedWords(game)}; ${who.join(' and ')} did not die last night.`;
+    }
+    if (/\b(executed|hanged)\b/i.test(t) && !/\b(will|would|if|may|might|could|be executed)\b/i.test(t) && !dated(t)) {
+      const nobody = /\b(nobody|no one)\b/i.test(t), who = names(t);
+      if (nobody && game.today?.executed != null) return `Not true: ${seatLabel(game, game.today.executed)} was executed today.`;
+      if (!nobody && who.length && !who.some(n => executedNames(game).includes(n))) return `Not true: ${executedWords(game)}.`;
+    }
+  }
+  return null;
+}
+
+// The dawn of this day, when it has not been narrated: {deaths: [names]}; null when none is owed.
+export function dawnOwed(game, api = ST_API) {
+  if (phaseOf(game) !== 'day') return null;
+  const evs = tableEvents(game, api, 0), dawn = evs.filter(e => e.type === 'dawn' && e.day === game.day).at(-1);
+  if (!dawn || evs.some(e => e.type === 'narration' && e.id > dawn.id)) return null;
+  return {deaths: diedNames(game)};
+}
+
 // The table's open vote, when one is open: nominee, nominator, who has voted, how many are needed.
 export function openVote(game) {
   const p = game.pending;
@@ -198,12 +251,13 @@ export function waitingOn(game) {
 }
 
 // The tools that fit now, two or three.
-export function toolsNow(game, mine) {
+export function toolsNow(game, mine, dawn = false) {
   const ph = phaseOf(game);
   if (mine) return ['what_is_asked', 'decide', 'fallback'];
   if (ph === 'ended') return ['narrate', 'rulings'];
   if (ph === 'day') {
     if (game.pending?.kind === 'vote') return ['day_state', 'close_vote'];
+    if (dawn) return ['narrate', 'talk', 'open_nominations'];
     const c = game.clock || {};
     if (game.step === 'dawn' || (c.round === 1 && !c.nominationsOpen && !(c.spoke || []).length)) return ['narrate', 'talk', 'open_nominations'];
     return game.clock?.nominationsOpen ? ['day_state', 'end_day'] : ['talk', 'open_nominations', 'end_day'];
@@ -217,19 +271,22 @@ export function storytellerHeader(game, api = ST_API) {
   const lines = [], ph = phaseOf(game);
   const alive = (game.seats || []).filter(s => s.alive).length;
   lines.push(`Storyteller. ${clockWords(game)}. ${alive} of ${(game.seats || []).length} alive.`);
+  const nom = nominationsWords(game), owed = dawnOwed(game, api);
+  if (nom) lines.push(`Clock fact for narration: ${nom}. Announce nothing the clock does not say.`);
+  if (owed) lines.push(`DAWN NOT YET NARRATED: ${owed.deaths.length ? owed.deaths.join(' and ') + ' died in the night' : 'nobody died in the night'}. Narrate it in your own words with one line of Thistlewick colour.`);
   for (const r of grimoireRows(game, api)) lines.push('- ' + grimoireLine(game, r));
   const p = api.pendingFor(game, 'storyteller');
   if (p) {
     const d = describePending(game, p);
     const all = d.options.join('; ');
     const onlyTruth = p.kind === 'info' && !p.malfunctioning && Array.isArray(p.truth) && p.truth.length === d.count;
-    const opts = onlyTruth ? `the truth only, #1 to #${d.count}` : all.length <= 400 && d.count <= 16 ? all : `${d.count} options (what_is_asked lists them)`;
+    const opts = onlyTruth ? `the truth only, #1 to #${d.count}` : all.length <= 400 && d.count <= 16 ? all : 'what_is_asked lists them';
     lines.push(`**Waiting on you: ${d.what}${d.about ? ' for ' + d.about : ''}.** ${p.question}`);
     if (d.truth) {
       const ts = d.truth.split(' | '), truth = ts.length > 3 ? `${ts.slice(0, 3).join(' | ')} | and ${ts.length - 3} more true` : d.truth;
       lines.push(`Truth: ${truth}.${d.malfunctioning ? ' ' + malfunctionWords(game, p) + '.' : ''}`);
     }
-    lines.push(`Legal (${d.pick}): ${opts}`);
+    lines.push(`Legal (${d.offered}): ${opts}`);
   } else if (ph !== 'ended') {
     lines.push(`Waiting on ${waitingOn(game)}.`);
     const v = openVote(game);
@@ -242,7 +299,7 @@ export function storytellerHeader(game, api = ST_API) {
     lines.push(`Since your last turn: ${said} said, ${wh} whispers seen, ${other} other events.`);
     if (evs.length) markSeen(game, Math.max(...evs.map(e => e.id || 0)));
   }
-  lines.push(`Now: ${toolsNow(game, !!p).join(', ')}.`);
+  lines.push(`Now: ${toolsNow(game, !!p, !!owed).join(', ')}.`);
   let out = lines.join('\n');
   if (out.length > HEADER_CAP) out = out.slice(0, HEADER_CAP - 1) + '…';
   return out;

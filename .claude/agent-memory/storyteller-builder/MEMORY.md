@@ -22,3 +22,10 @@
 - closeVote/endDay(game, reason) log rulings with decision: null; endDay refuses while a vote is open or another decision waits.
 - storytellerHeader(game, api = forSeat('storyteller')).
 - The backend's --scripted mode answers a Storyteller decision unanswered for 2 s with the scripted default.
+
+## Game 1 fixes (#34, #35, #36)
+- `narrate` runs `narrationError(game, text)` (src/seats/storyteller.js): by day a sentence saying nominations are open/closed against `game.clock.nominationsOpen`, "X died in the night" against `game.diedTonight`, "executed" against `game.executed`/`game.today.executed` is refused with "Not true: <truth>". Sentences with not/yet/until/will/if or a Day N are skipped. The result carries `clock`.
+- `decide` and `fallback` run `reasonFactsError` (storyteller-tools.js): "only option" with more than one offered; "poisoned/drunk" when info works; "works/sober" when malfunctioning (info and register kinds only).
+- `offeredWords(p)` is the count line ("20 options offered, pick one"): in `what_is_asked.pending.offered` and the header's Legal line.
+- Header: "Clock fact for narration: nominations are CLOSED (...)" by day; "DAWN NOT YET NARRATED: ..." from `dawnOwed` (a `dawn` event of this day with no `narration` event after it in the log), which puts narrate first in "Now:" (toolsNow third arg). Fake api in the check has `_push` for log events.
+- Prompt: narrate every dawn with one line of Thistlewick colour, executions and the end; true reasons; spend turns acting.

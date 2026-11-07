@@ -6,7 +6,7 @@
 import {newGame, answer as engineAnswer, playOut, grimoire, createScripted} from '../src/game/index.js';
 import * as realApi from '../src/game/api.js';
 import {SCRIPT} from '../src/data/script.js';
-import {STORYTELLER_TOOLS, STORYTELLER_TOOL_NAMES, reasonError, resolveValue} from '../src/data/storyteller-tools.js';
+import {STORYTELLER_TOOLS, STORYTELLER_TOOL_NAMES, reasonError, reasonFactsError, resolveValue} from '../src/data/storyteller-tools.js';
 import {storytellerHeader, HEADER_CAP} from '../src/seats/storyteller.js';
 import {STORYTELLER_SYSTEM, systemFor} from '../src/data/prompts.js';
 
@@ -68,6 +68,7 @@ function fakeApi() {
       rulings.push({type: 'ruling', kind: 'end-day', reason});
     },
     rulings: () => rulings,
+    _push: push,
     _say: (g, seat, text) => push(g, {type: 'say', seat, text}),
     _whisper: (g, from, to, text) => {push(g, {type: 'whisper', from, to, text}); push(g, {type: 'whisper-seen', from, to})},
   };
@@ -316,7 +317,7 @@ section('the star pass');
   engineAnswer(C, 0);
   until(C, s => s.pending?.kind === 'star-pass');
   ok(C.pending?.kind === 'star-pass' && C.pending.options.length === 2, 'the Imp kills itself with two minions alive');
-  headerOk(C, api3, 'star-pass', ['which minion becomes the demon', 'Legal (one option): #1 Ines; #2 Corwin']);
+  headerOk(C, api3, 'star-pass', ['which minion becomes the demon', 'Legal (2 options offered, pick one): #1 Ines; #2 Corwin']);
   const r = call(C, api3, 'decide', {value: 'Thea', reason: REASON});
   ok(!r.ok, 'a townsfolk cannot take the star pass');
   const r2 = call(C, api3, 'decide', {value: 'Corwin', reason: 'The Spy as the demon keeps evil hidden longer.'});
@@ -446,6 +447,84 @@ section('integration: a real newGame through src/game/api.js');
   ok(rl.length >= 9 && rl.every(r => r.reason) && rl.some(r => r.kind === 'close-vote') && rl.some(r => r.kind === 'end-day'), `every call is a ruling with its reason (${rl.length})`);
   ok(rl.some(r => /^Scripted default: /.test(r.reason)), "the fallback's ruling says so");
   ok(!call(G, st, 'decide', {value: 'Bram', reason: REASON}).ok || G.pending?.seat === 'storyteller', 'decide is refused when nothing waits');
+}
+
+// ---- game 1 fixes (#34, #35, #36): the true clock, honest reasons, a narrated dawn ----
+section('narration against the clock (#34)');
+{
+  const api = fakeApi();
+  const D = newGame({seed: 7, roles: ['imp', 'mayor', 'poisoner', 'washerwoman', 'chef', 'empath', 'soldier']});
+  until(D, s => s.phase === 'day' && s.pending?.kind === 'nomination');
+  D.clock = {round: 2, roundsBeforeNominations: 3, nominationsOpen: false};
+  const h = header(D, api);
+  ok(/Clock fact for narration: nominations are CLOSED \(they open when round 3 is done; it is round 2\)/.test(h), `the header states the clock fact in words\n${h}`);
+  const n1 = call(D, api, 'narrate', {text: 'Day 2 breaks over the square. Nominations are open.'});
+  ok(!n1.ok && /CLOSED/.test(n1.error) && n1.error.length < 200, `"Nominations are open" while closed is refused, naming the truth (${n1.error})`);
+  ok(call(D, api, 'narrate', {text: 'The tower holds its breath; nominations are not open yet.'}).ok, 'a line that says they are not open yet passes');
+  D.clock.nominationsOpen = true;
+  const open = header(D, api);
+  ok(/nominations are OPEN/.test(open), 'the header says OPEN once they are');
+  ok(!call(D, api, 'narrate', {text: 'Nominations are closed for now.'}).ok, 'a "closed" line while open is refused');
+  ok(call(D, api, 'narrate', {text: 'The clerk opens the book: nominations are open.'}).ok, 'the true line passes');
+  ok(/nominations are OPEN/.test(call(D, api, 'narrate', {text: 'The hour hangs.'}).clock), 'the narrate result carries the clock');
+  // deaths and executions
+  D.diedTonight = [2]; D.today = {...(D.today || {}), executed: null}; D.executed = [];
+  const who = D.seats[2].name, other = D.seats[3].name;
+  const d1 = call(D, api, 'narrate', {text: `Dawn comes grey. ${other} died in the night.`});
+  ok(!d1.ok && d1.error.includes(who) && d1.error.length < 200, `a wrong death is refused, naming the truth (${d1.error})`);
+  const d2 = call(D, api, 'narrate', {text: 'Dawn comes grey. Nobody died in the night.'});
+  ok(!d2.ok && d2.error.includes(who), 'nobody died, when someone did, is refused');
+  ok(call(D, api, 'narrate', {text: `Dawn comes grey, and ${who} died in the night.`}).ok, 'the true death passes');
+  D.diedTonight = [];
+  ok(call(D, api, 'narrate', {text: 'Dawn comes grey. Nobody died in the night.'}).ok, 'nobody died passes when so');
+  D.executed = [{day: 1, seat: 3, role: 'chef', how: 'vote'}]; D.today = {...D.today, executed: 3};
+  ok(!call(D, api, 'narrate', {text: `${who} was executed at dusk.`}).ok, 'a wrong execution is refused');
+  ok(!call(D, api, 'narrate', {text: 'Nobody was executed at dusk.'}).ok, 'nobody executed, when someone was, is refused');
+  ok(call(D, api, 'narrate', {text: `${other} was executed at dusk; the tower did not strike.`}).ok, 'the true execution passes');
+}
+
+section('reasons against the facts (#35)');
+{
+  const api = fakeApi();
+  const W = newGame({seed: 7, roles: ['imp', 'mayor', 'poisoner', 'washerwoman', 'chef', 'empath', 'soldier']});
+  until(W, s => s.pending?.kind === 'info' && s.pending.role === 'washerwoman');
+  const p = W.pending;
+  ok(p.options.length > 1 && !p.malfunctioning, `the Washerwoman has ${p.options.length} true options`);
+  const h = header(W, api);
+  ok(h.includes(`Legal (${p.options.length} options offered, pick one)`), `the header's Legal line says the count\n${h}`);
+  ok(new RegExp(`${p.options.length} options offered`).test(call(W, api, 'what_is_asked').pending.offered), 'what_is_asked states the option count plainly');
+  const r = call(W, api, 'decide', {option: 3, reason: 'The ability works, and this is the only legal option offered.'});
+  ok(!r.ok && r.error.includes(`${p.options.length} options offered`), `"the only legal option" with several options is refused (${r.error})`);
+  const r2 = call(W, api, 'decide', {option: 3, reason: 'The ability is poisoned, so I pick this one to mislead.'});
+  ok(!r2.ok && /works/.test(r2.error), `"poisoned" when the ability works is refused (${r2.error})`);
+  ok(W.pending === p, 'a refused reason changes nothing');
+  const r3 = call(W, api, 'decide', {option: 3, reason: 'The ability works; this pair is a good decoy because Thea can bluff.'});
+  ok(r3.ok, 'an honest reason passes');
+  const one = {kind: 'info', options: ['x'], malfunctioning: false}, bad = {kind: 'info', options: ['x', 'y'], malfunctioning: true, subject: 3};
+  ok(reasonFactsError(W, one, 'The only legal option offered, and the truth.') === null, 'the only option claim is fine for one option');
+  ok(/works/.test(reasonFactsError(W, bad, 'The ability works so the truth is given.')), 'an "ability works" claim is refused when poisoned');
+  ok(reasonFactsError(W, bad, 'Poisoned, so a plausible lie hurts the town.') === null, 'a "poisoned" claim passes when poisoned');
+  ok(reasonFactsError(W, {kind: 'info', options: ['x', 'y'], malfunctioning: false}, 'The Empath is not poisoned, so the truth is given.') === null, '"not poisoned" passes when it works');
+  ok(/only option/.test(STORYTELLER_SYSTEM) && /never say "the only option"/.test(STORYTELLER_SYSTEM), 'the prompt asks for true reasons');
+}
+
+section('a narrated dawn (#36)');
+{
+  const api = fakeApi();
+  const D = newGame({seed: 7, roles: ['imp', 'mayor', 'poisoner', 'washerwoman', 'chef', 'empath', 'soldier']});
+  until(D, s => s.phase === 'day' && s.pending?.kind === 'nomination');
+  D.clock = {round: 1, roundsBeforeNominations: 3, nominationsOpen: false};
+  api._push(D, {type: 'dawn', deaths: []});
+  const h = header(D, api);
+  ok(/DAWN NOT YET NARRATED: nobody died in the night/.test(h) && /Thistlewick/.test(h), `the header flags a dawn not yet narrated\n${h}`);
+  ok(/Now: narrate,/.test(h), 'the Now line puts narrate first at dawn');
+  ok(h.length <= HEADER_CAP, `the dawn header is under the cap (${h.length})`);
+  api._say(D, 1, 'Good morning.');
+  ok(/DAWN NOT YET NARRATED/.test(header(D, api)), 'talk does not clear the flag');
+  ok(call(D, api, 'narrate', {text: 'Grey light on the square, and the tower keeps its silence. Everyone is breathing.'}).ok, 'the dawn is narrated');
+  const h2 = header(D, api);
+  ok(!/DAWN NOT YET NARRATED/.test(h2), 'the flag clears once narrated');
+  ok(/narrate/.test(STORYTELLER_SYSTEM) && /every dawn/.test(STORYTELLER_SYSTEM) && /Thistlewick/.test(STORYTELLER_SYSTEM) && /only reads/.test(STORYTELLER_SYSTEM), 'the prompt asks for a narrated dawn with colour and for acting turns');
 }
 
 // ---- the header's length over whole seeded games ----
