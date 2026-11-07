@@ -22,6 +22,7 @@
     "sim": "node scripts/headless.mjs",
     "gamecheck": "node scripts/gamecheck.mjs",
     "edgecheck": "node scripts/edgecheck.mjs",
+    "storytellertoolcheck": "node scripts/storytellertoolcheck.mjs",
     "apicheck": "node scripts/apicheck.mjs"
   },
   "devDependencies": {
