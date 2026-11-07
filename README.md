@@ -2,24 +2,24 @@
 
 Blood on the Clocktower, played entirely by AI agents. A Storyteller agent runs the game; every seat at the table is an agent; a human watches and never plays.
 
-Working title. The repo is public, so the roles, their names and every line of text are our own; only the mechanics follow the game. The official character names, art and text never enter the repo. A git-ignored overlay file may map our names to the official ones for the owner's private play, and every check passes without it. `docs/ROLES.md` is the canon.
+Working title. A fan project in the open: the first script is Trouble Brewing with its real role names. The game, its characters and its scripts belong to The Pandemonium Institute; this repo copies in no official art, logo, token image or rulebook text, writes every sentence in its own words, and sells nothing. `docs/ROLES.md` keeps a skin of our own names mapped to the official ones, should a swap ever be needed.
 
 ## Hard rules
 
 - **Watcher only.** The owner never holds a seat, never nominates, never votes, never whispers. The page shows everything (the grimoire included); it changes nothing.
 - **Every seat is an agent.** Players and the Storyteller alike. A seat whose runner is gone pauses the game and asks the owner; reflexes (a scripted vote, a scripted night choice) are a fallback only after the owner resumes.
 - **Private stays private.** A seat's tools, prompts and session carry only what that character would know: its own role, what the Storyteller told it, what was said in its hearing, its own notes. A check plants a secret in one seat and fails if any other seat's tool result, prompt or event carries it. Whispers reach their two parties and nobody else.
-- **The Storyteller is bound by the rules, free in its judgement.** The engine enforces the script (night order, who acts, what a poisoned ability returns); the Storyteller agent makes the calls the rules leave to it (who is drunk, which information to give, how hard a game to run) and every call is logged with its reason.
+- **The Storyteller is bound by the rules, free in its judgement.** The engine enforces the script (night order, who acts, what a poisoned ability returns); the Storyteller agent makes the calls the rules leave to it (the Drunk, which information to give the Washerwoman, how hard a game to run) and every call is logged with its reason.
 - **Seeded games replay identically** with the same agent answers, so a bug can be reproduced.
 - **Cost is the limit, not turns.** Budgets per seat and per game; no turn caps.
 
 ## The first game (milestone 1)
 
-Our first script (the mechanics of the beginner script, our own roles), 7 seats, text only, one page. A complete game that is fun to read from the first night to the final vote.
+Trouble Brewing, 7 seats, text only, one page. A complete game that is fun to read from the first night to the final vote.
 
 What it needs:
 
-1. **The engine**: the first script as data (roles, teams, night order, abilities), phases (first night, day, nominations, execution, night), the grimoire, death, the win conditions, drunk and poison, the demon's standby, the servant who votes with a master, the two roles that may register as the other team.
+1. **The engine**: the Trouble Brewing script as data (roles, teams, night order, abilities), phases (first night, day, nominations, execution, night), the grimoire, death, the win conditions, drunk and poison, the Scarlet Woman, the Butler, the Recluse and Spy registering.
 2. **The Storyteller seat**: tools to read the grimoire, give night information, pick the Drunk and the demon bluffs, rule on edge cases, narrate the day, and a scripted fallback for every wait.
 3. **The player seats**: tools to speak in the square, whisper to one player, take notes, nominate, vote, use a night ability when asked; a state header per turn (what you know, who is alive, what was said since your last turn, the day's clock).
 4. **The day conversation**: the one thing this game has that the earlier project did not. Open talk among seven voices, side whispers, and a day that ends. First version: rounds of speaking in seat order with a chance to pass, whispers between rounds, nominations after a set number of rounds. Measure how it reads; change it after.
