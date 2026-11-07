@@ -13,9 +13,12 @@
 ## Judgement guidance in the prompt
 - Engine keeps the rules and offers only legal answers; true information when the ability works; when it malfunctions choose what makes the best game (often plausible and misleading, sometimes true); keep the game close by free choices only; one-sentence reason per call; reach players only via decisions and narration; never name a role while the game runs; voice: a town clerk reading the minutes of a bad week.
 
-## Pending on the api (asked in the PR)
-- closeVote(game, reason) and endDay(game, reason) record the reason as a ruling.
-- grimoire tokens carry `by`; the header fills it from game.seats when missing.
-- nightOrder(game) -> [{role, seat|null, acted}].
-- the day clock at game.clock {round, roundsBeforeNominations, nominationsOpen}; the open ballot at game.ballot.
-- storytellerHeader takes the api as a second argument until the api lands; then default it to `import * as api from '../game/api.js'`.
+## The real api (PR #16) and how the tools meet it
+- ctx.api is forSeat('storyteller'): may read view/pendingFor/events for 'storyteller', never acts for a player or reads notes.
+- grimoire(game) returns {phase, night, day, seats, bluffs, pending, winner}; tokens carry `by`. grimoireRows accepts an array too (the check's fake).
+- nightOrder entries: {role, seat|null, acted, status done|now|to come, wakes, name, seatName, night, telling}; by day it is the coming night.
+- events(game, 'storyteller') returns every log entry with an audience except whispers: tableEvents keeps audience 'all' only.
+- game.clock {day, round, roundsBeforeNominations, nominationsOpen, spoke, passedNominating}; game.ballot {id, nominee, votes}.
+- closeVote/endDay(game, reason) log rulings with decision: null; endDay refuses while a vote is open or another decision waits.
+- storytellerHeader(game, api = forSeat('storyteller')).
+- The backend's --scripted mode answers a Storyteller decision unanswered for 2 s with the scripted default.

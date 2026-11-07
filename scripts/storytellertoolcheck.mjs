@@ -4,6 +4,7 @@
 // refused), information with the ability working (only the truth is legal), information while drunk and while poisoned,
 // a registering question, the Mayor's bounce, the star pass, a day with a vote open, and a game ended. Exit 1 on any failure.
 import {newGame, answer as engineAnswer, playOut, grimoire, createScripted} from '../src/game/index.js';
+import * as realApi from '../src/game/api.js';
 import {SCRIPT} from '../src/data/script.js';
 import {STORYTELLER_TOOLS, STORYTELLER_TOOL_NAMES, reasonError, resolveValue} from '../src/data/storyteller-tools.js';
 import {storytellerHeader, HEADER_CAP} from '../src/seats/storyteller.js';
@@ -56,7 +57,7 @@ function fakeApi() {
     closeVote(g, reason) {
       const p = g.pending;
       if (!p || p.kind !== 'vote') throw new ApiError('No vote is open.');
-      const ballot = g.ballot || {};
+      const ballot = g.ballot?.votes || {};
       toEngine(g, Object.fromEntries(p.seats.map(s => [s, ballot[s] === true])));
       g.ballot = {};
       rulings.push({type: 'ruling', kind: 'close-vote', reason});
@@ -191,7 +192,7 @@ section('first night: a player\'s own choice is not the Storyteller\'s');
   const f = call(A, api, 'fallback', {reason: REASON});
   ok(!f.ok && /Nothing waits on you/.test(f.error), 'fallback is refused too');
   const no = call(A, api, 'night_order');
-  ok(no.ok && no.order.length && no.order.find(o => o.next)?.role === 'Poisoner', 'night_order names who is next');
+  ok(no.ok && no.order.length && no.order.find(o => o.now)?.role === 'Poisoner', 'night_order names who is now');
   const g = call(A, api, 'grimoire');
   ok(g.ok && g.seats[1].role === 'Drunk' && g.seats[1].believes === 'Chef' && g.seats[3].tokens.some(t => t.token === 'red-herring'), 'grimoire shows true and believed roles and tokens');
   engineAnswer(A, 3); // Thea poisons Corwin, the Empath
@@ -317,11 +318,11 @@ section('a day: talk, nominations and a vote');
   ok(!call(D, api4, 'narrate', {text: 'x'.repeat(601)}).ok && !call(D, api4, 'narrate', {text: '  '}).ok, 'narration too long or empty is refused');
   ok(call(D, api4, 'open_nominations', {reason: 'The talk has gone round twice.'}).ok && D.clock.nominationsOpen, 'open_nominations opens them');
   ok(!call(D, api4, 'open_nominations').ok, 'opening twice is refused');
-  ok(!call(D, api4, 'night_order').ok, 'no night order by day');
+  ok(call(D, api4, 'night_order').ok, "by day the night order is the coming night's");
   ok(!call(D, api4, 'close_vote', {reason: REASON}).ok, 'close_vote with no vote open is refused');
   engineAnswer(D, {by: 1, target: 2});
   ok(D.pending?.kind === 'vote', 'a vote is open');
-  D.ballot = {0: true, 1: true};
+  D.ballot = {id: D.pending.id, nominee: 2, votes: {0: true, 1: true}};
   headerOk(D, api4, 'vote', ['Vote on Ines (by Bram): 2 of 7 voted, 2 yes, 4 needed', 'close_vote']);
   const ds = call(D, api4, 'day_state');
   ok(ds.ok && ds.voteOpen?.nominee === 'Ines' && ds.clock.nominationsOpen, 'day_state shows the open vote and the clock');
@@ -363,6 +364,59 @@ section('api refusals pass through');
   const gr = call(g, boom, 'grimoire');
   ok(!gr.ok && gr.error === 'The grimoire is closed.', 'an ApiError from a read comes back as {ok: false, error}');
   ok(resolveValue(g, g.pending, '[1,2]').error, 'raw JSON that is not an option is refused');
+}
+
+// ---- integration: a real game through the real api, bound to the Storyteller ----
+section('integration: a real newGame through src/game/api.js');
+{
+  const st = realApi.forSeat('storyteller');
+  const G = newGame({seed: 3, roles: ['imp', 'drunk', 'fortune-teller', 'empath', 'poisoner', 'investigator', 'recluse']});
+  const say = (r, what) => {ok(r && r.ok, `${what}${r && !r.ok ? ': ' + r.error : ''}`); return r};
+  const h0 = storytellerHeader(G);
+  ok(/Waiting on you: the Drunk's false role/.test(h0) && h0.length <= HEADER_CAP, 'the header with the real api (its default) names the decision');
+  ok(!call(G, st, 'decide', {value: 'Chef'}).ok, 'the real api path: decide refuses a missing reason');
+  say(call(G, st, 'decide', {value: 'Chef', reason: 'A Chef claim gives the Drunk something to share.'}), "the Drunk's false role through the real api");
+  say(call(G, st, 'decide', {value: 'Corwin', reason: 'Corwin as the red herring keeps the Fortune Teller guessing.'}), 'the red herring through the real api');
+  const blocked = call(G, st, 'decide', {value: 'Corwin', reason: REASON});
+  ok(!blocked.ok && /Thea/.test(blocked.error), "the Poisoner's choice is not the Storyteller's");
+  realApi.answer(G, 4, 3); // Thea poisons Corwin, as a player through the api
+  const bl = G.pending.options.slice(0, 3).map(id => SCRIPT.roles.find(r => r.id === id).name).join(', ');
+  say(call(G, st, 'decide', {value: bl, reason: 'Three plain townsfolk give the demon easy cover.'}), "the demon's bluffs through the real api");
+  ok(G.pending?.kind === 'register', 'the Recluse register question waits');
+  say(call(G, st, 'decide', {option: 1, reason: 'The Recluse registers as itself this time.'}), 'a registering answer by option number');
+  ok(G.pending?.kind === 'info' && G.pending.role === 'investigator', "the Investigator's information waits");
+  const wi = call(G, st, 'what_is_asked');
+  ok(wi.ok && wi.pending.truth && !wi.pending.malfunctioning, 'what_is_asked shows the truth through the real api');
+  say(call(G, st, 'decide', {option: 1, reason: 'A true ping for a working Investigator.'}), 'night information through the real api');
+  ok(G.log.some(e => e.type === 'told' && e.what === 'investigator'), 'the engine told the Investigator');
+  const no = call(G, st, 'night_order');
+  ok(no.ok && no.order.some(o => o.status === 'done') && no.order.some(o => o.now), 'night_order reads the real order with its status');
+  say(call(G, st, 'fallback', {reason: 'Nothing better for the Drunk tonight than the default.'}), 'the scripted fallback through the real api');
+  while (G.pending && G.phase !== 'day') {
+    if (G.pending.seat === 'storyteller') call(G, st, 'fallback', {reason: 'The rest of the first night runs on the default.'});
+    else realApi.answer(G, G.pending.seat, G.pending.count ? G.pending.options.filter(x => x !== G.pending.seat).slice(0, G.pending.count) : G.pending.options.find(x => x !== G.pending.seat));
+  }
+  ok(G.phase === 'day' && G.day === 1, 'day one breaks');
+  ok(!call(G, st, 'narrate', {text: 'The Empath slept badly.'}).ok, 'a dawn narration naming a role is refused');
+  say(call(G, st, 'narrate', {text: 'Dawn on the Square. Everyone woke up, which is more than can be said for most weeks.'}), 'narrate at dawn');
+  const hd = storytellerHeader(G);
+  ok(/Day 1, round 1 of 3, nominations closed/.test(hd) && hd.length <= HEADER_CAP, 'the day header has the clock');
+  const tk = call(G, st, 'talk');
+  ok(tk.ok && tk.events.some(e => e.type === 'narration') && !tk.events.some(e => ['told', 'ruling', 'wake'].includes(e.type)), 'talk shows what the table heard and nothing private');
+  say(call(G, st, 'open_nominations', {reason: 'A quiet table, so the vote comes early.'}), 'open_nominations');
+  ok(G.clock.nominationsOpen, 'nominations are open');
+  realApi.nominate(G, 0, 1); realApi.vote(G, 0, true); realApi.vote(G, 2, true);
+  ok(G.pending?.kind === 'vote', 'a vote is open with two of seven cast');
+  ok(/Vote on Bram \(by Odette\): 2 of 7 voted, 2 yes, 4 needed/.test(storytellerHeader(G)), 'the header counts the real ballot');
+  ok(!call(G, st, 'end_day', {reason: REASON}).ok, 'end_day is refused while the vote is open');
+  say(call(G, st, 'close_vote', {reason: 'Five players sat on their hands for too long.'}), 'close_vote');
+  ok(G.pending?.kind === 'nomination', 'the vote is counted and nominations go on');
+  say(call(G, st, 'end_day', {reason: 'Nobody else wants to nominate today.'}), 'end_day');
+  ok(G.phase === 'night' && G.night === 2, 'night two falls');
+  const rl = call(G, st, 'rulings').rulings;
+  ok(rl.length >= 9 && rl.every(r => r.reason) && rl.some(r => r.kind === 'close-vote') && rl.some(r => r.kind === 'end-day'), `every call is a ruling with its reason (${rl.length})`);
+  ok(rl.some(r => /^Scripted default: /.test(r.reason)), "the fallback's ruling says so");
+  ok(!call(G, st, 'decide', {value: 'Bram', reason: REASON}).ok || G.pending?.seat === 'storyteller', 'decide is refused when nothing waits');
 }
 
 // ---- the header's length over whole seeded games ----

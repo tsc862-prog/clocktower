@@ -146,14 +146,15 @@ const TOOLS = [
       })), lines: rows.map(r => grimoireLine(game, r)), bluffs: (game.bluffs || []).map(id => roleLabel(game, id))};
     })},
   {name: 'night_order', act: false, args: {},
-    desc: 'Tonight\'s waking order: each role in turn, the seat that wakes for it, who has already acted and who is next.',
+    desc: 'The night\'s waking order (tonight\'s, or by day the coming night\'s): each role in turn, the seat that wakes for it, whether it will wake, who has already acted and who is now.',
     handler: (args, {game, api}) => tryApi(() => {
-      if (phaseOf(game) !== 'night' && phaseOf(game) !== 'setup') return no(`There is no night order now; it is ${clockWords(game).toLowerCase()}.`);
+      if (phaseOf(game) === 'ended') return no(`There is no night order: ${clockWords(game).toLowerCase()}.`);
       const order = api.nightOrder(game) || [];
-      const next = order.find(o => !o.acted);
-      return {ok: true, night: game.night, order: order.map(o => ({
-        role: roleLabel(game, o.role ?? o.id), seat: o.seat != null ? seatLabel(game, o.seat) : null, acted: !!o.acted,
-        ...(o === next ? {next: true} : {}),
+      const now = order.find(o => o.status === 'now') || (phaseOf(game) === 'night' ? order.find(o => !o.acted) : null);
+      return {ok: true, night: order[0]?.night ?? game.night, order: order.map(o => ({
+        role: o.seat == null ? String(o.role ?? o.id).replace(/-/g, ' ') : roleLabel(game, o.role ?? o.id), seat: o.seat != null ? seatLabel(game, o.seat) : null,
+        status: o.status || (o.acted ? 'done' : 'to come'), ...(o.wakes === false ? {wakes: false} : {}),
+        ...(o === now ? {now: true} : {}),
       }))};
     })},
   {name: 'what_is_asked', act: false, args: {},

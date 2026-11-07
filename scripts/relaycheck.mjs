@@ -8,6 +8,8 @@
 //   4. GET /play/runner answers the page's origin (with CORS) and refuses any other origin; a local request gets no output lines.
 //      The page's WebSocket opens for the page's origin only.
 //   5. "stop" on stdin (the launcher's quit) stops it cleanly.
+//   6. --game --seed 3 --scripted serves a game: Odette's and the Storyteller's look answer, Odette's pace brief is her own
+//      header, and nothing Odette is given names another seat's role.
 // Waits go through scripts/ci-clock.mjs (CI_FAST).
 import {spawn} from 'node:child_process';
 import net from 'node:net';
@@ -120,7 +122,43 @@ async function main() {
     const t0 = Date.now(), ex = await Promise.race([R.stop(), sleep(ms(15000, 4000)).then(() => null)]);
     ok(ex && ex.code === 0, `"stop" on stdin quits cleanly (exit ${ex ? ex.code : 'none'} in ${Date.now() - t0} ms)`);
   } finally {try {R.child.kill()} catch {}}
+  await gameCase();
   console.log(fails ? `${fails} relay check(s) failed` : 'relay check: all ok');
   process.exit(fails ? 1 : 0);
 }
+// 6. a seeded game behind the relay (src/game/backend.js)
+async function gameCase() {
+  console.log('a game behind the relay');
+  const {newGame} = await import('../src/game/index.js');
+  const api = await import('../src/game/api.js');
+  const deal = newGame({seed: 3});
+  // What a seat may hear of roles: its own, and any named in what it was told (seed 3 deals Odette the Spy, who sees the
+  // grimoire, so Bram is checked too).
+  const foreign = (i, said) => deal.seats.filter(s => s.index !== i).map(s => deal.script.roles.find(r => r.id === s.role))
+    .filter(r => r.id !== deal.seats[i].role && !api.view(deal, i).told.some(t => t.text.includes(r.name)))
+    .filter(r => said.includes(r.name) || said.includes('"' + r.id + '"'));
+  const env = await quietEnv();
+  const R = await startRelayProcess(['--play-only', '--game', '--seed', '3', '--scripted'], env), {base} = R;
+  try {
+    ok(R.out.some(l => /serving a game: seed 3, scripted/.test(l)), 'the relay says it serves game seed 3 with the scripted Storyteller');
+    const h = await req(base, '/play/health');
+    ok(h.players && h.players.map(p => p.name).join(',') === deal.seats.map(s => s.name).join(','), "its seats are the game's seats");
+    const c = await req(base, '/play/claim', {method: 'POST', body: {player: 1, runner: 'G1'}});
+    const sc = await req(base, '/play/claim', {method: 'POST', body: {role: 'storyteller', runner: 'GS'}});
+    ok(c.status === 200 && sc.status === 200, 'a runner claims Odette and another the Storyteller');
+    const look = await req(base, '/play/call', {method: 'POST', body: {player: 1, runner: 'G1', tool: 'look', args: {}}});
+    const slook = await req(base, '/play/storyteller', {method: 'POST', body: {runner: 'GS', tool: 'look', args: {}}});
+    ok(look.status === 200 && look.ok !== false && slook.status === 200 && slook.ok !== false, 'look answers for Odette and for the Storyteller');
+    const brief = await req(base, '/play/pace', {method: 'POST', body: {player: 1, runner: 'G1', brief: true}});
+    ok(brief.status === 200 && brief.ok && /Odette/.test(JSON.stringify(brief.brief)), "pace {brief: true} answers with Odette's header");
+    const leaked = foreign(0, JSON.stringify([look, brief]));
+    ok(!leaked.length, "nothing Odette is given names another seat's role beyond what she was told" + (leaked.length ? ": " + leaked.map(r => r.name).join(", ") : ""));
+    const cb = await req(base, '/play/claim', {method: 'POST', body: {player: 2, runner: 'G2'}});
+    const blook = await req(base, '/play/call', {method: 'POST', body: {player: 2, runner: 'G2', tool: 'look', args: {}}});
+    const bbrief = await req(base, '/play/pace', {method: 'POST', body: {player: 2, runner: 'G2', brief: true}});
+    const bl = foreign(1, JSON.stringify([blook, bbrief]));
+    ok(cb.status === 200 && blook.status === 200 && bbrief.ok && !bl.length, "nor does anything Bram is given" + (bl.length ? ": " + bl.map(r => r.name).join(", ") : ""));
+  } finally {await Promise.race([R.stop(), sleep(ms(15000, 4000))]); try {R.child.kill()} catch {}}
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main().catch(e => {console.error(e); process.exit(1)});

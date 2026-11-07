@@ -18,6 +18,8 @@
 // no signal to send; --resume-runners restarts the last run's runners (logs/runners/active.json).
 // Behavior logs: logs/behavior/<game>/ for the watcher (npm run behavior-report); --no-behavior or RELAY_BEHAVIOR=0 turns them off.
 // Verbose: --verbose (or RELAY_VERBOSE=1) appends every tool call to logs/play.jsonl.
+// Game: --game serves a seeded game (src/game/backend.js) instead of the stub: --seed N (default 1), --rounds N (speaking rounds
+// before nominations, default 3), --scripted (a Storyteller decision nobody answers in time gets the scripted default).
 import http from 'node:http';
 import {readFileSync, existsSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
@@ -28,6 +30,7 @@ import {ttsFromEnv} from './providers/tts.mjs';
 import {behaviorLog} from './behavior-log.mjs';
 import {makeProviders, PROVIDERS, isLocal, DEFAULT_MODEL, PRICES, costOf} from './providers/index.mjs';
 import {makeLimiter, rateLimitOf} from './providers/limiter.mjs';
+import {gameBackend} from '../src/game/backend.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export {DEFAULT_MODEL, PRICES, costOf};
@@ -112,7 +115,11 @@ export function startRelay({env = loadEnv(), argv = process.argv, port = Number(
   const tts = /^(1|true|yes|on)$/i.test(env.RELAY_TTS || '') ? ttsFromEnv(env) : null; // the borrowed voice engine: off unless asked
   let play = null;
   const {server} = createRelay({providers, model, origin, limits, tts, seats: () => play ? play.backend.info() : {}});
-  play = attachPlay(server, {origin, verbose, behavior, log});
+  const flag = k => {const i = argv.indexOf(k); return i >= 0 && argv[i + 1] != null && !String(argv[i + 1]).startsWith('--') ? argv[i + 1] : null};
+  const backend = argv.includes('--game') ? gameBackend({seed: Number(flag('--seed') ?? 1), ...(flag('--rounds') != null ? {rounds: Number(flag('--rounds'))} : {}),
+    scripted: argv.includes('--scripted'), log, note: rec => {if (behavior) behavior.ingest('game', rec)}}) : null;
+  if (backend) log(`[relay] serving a game: seed ${Number(flag('--seed') ?? 1)}${argv.includes('--scripted') ? ', scripted Storyteller fallback' : ''}`);
+  play = attachPlay(server, {backend, origin, verbose, behavior, log});
   const runnersOn = argv.includes('--runners') || /^(1|true|yes)$/i.test(env.RELAY_RUNNERS || '');
   const sup = attachRunners(server, {play, enabled: runnersOn, origin, base: () => `http://127.0.0.1:${server.address() ? server.address().port : port}`, log, env});
   // Quit: every runner gets "stop" on its stdin and a moment to let go of its seat; exit kills the rest.

@@ -1,8 +1,12 @@
 // What the Storyteller sees each turn: the state header, and the plain-words helpers its tools share (role and seat
 // names, a decision and its options in words, the grimoire's tokens as short words). The Storyteller may know
 // everything; what it may say goes through the game only (night information by answering a decision, narration to
-// the whole table). Nothing here changes the game: every read goes through the api (src/game/api.js, slice 3).
+// the whole table). Nothing here changes the game: every read goes through the api (src/game/api.js), bound to the
+// Storyteller (forSeat), which may read any seat's view and pending but never a seat's notes or whispers.
 import {SCRIPT} from '../data/script.js';
+import {forSeat} from '../game/api.js';
+
+const ST_API = forSeat('storyteller');
 
 export const HEADER_CAP = 1200;
 
@@ -124,7 +128,7 @@ export function tokenWords(game, t) {
 
 // The api's grimoire with who placed each token (from the live seats when the api's copy leaves it out).
 export function grimoireRows(game, api) {
-  const g = api.grimoire(game) || [];
+  const got = api.grimoire(game) || [], g = Array.isArray(got) ? got : got.seats || [];
   return g.map(r => {
     const live = game.seats?.[r.seat]?.tokens || [];
     return {...r, tokens: (r.tokens || []).map((t, k) => (t.by === undefined && live[k] && live[k].token === t.token ? {...t, by: live[k].by} : t))};
@@ -139,8 +143,9 @@ export function grimoireLine(game, r) {
 }
 
 // ---- what was said: the Storyteller never reads a whisper's words ----
+// Only what the table heard (audience 'all'): the Storyteller's own rulings and the seats' private tellings stay out.
 export function tableEvents(game, api, since = 0) {
-  const evs = api.events(game, 'storyteller', since) || [];
+  const evs = (api.events(game, 'storyteller', since) || []).filter(e => e.audience === undefined || e.audience === 'all' || e.type === 'whisper');
   const marks = evs.some(e => e.type === 'whisper-seen');
   return evs.filter(e => !(marks && e.type === 'whisper'))
     .map(e => (e.type === 'whisper' ? {id: e.id, type: 'whisper-seen', day: e.day, night: e.night, from: e.from, to: e.to} : e));
@@ -176,7 +181,7 @@ const stepWords = (game, step) => (roleIndex(game)[step] ? 'the ' + roleLabel(ga
 export function openVote(game) {
   const p = game.pending;
   if (!p || p.kind !== 'vote') return null;
-  const ballot = game.ballot || {}, alive = (game.seats || []).filter(s => s.alive).length;
+  const ballot = game.ballot && 'votes' in game.ballot ? game.ballot.votes : game.ballot || {}, alive = (game.seats || []).filter(s => s.alive).length;
   return {nominee: seatLabel(game, p.nominee), nominator: seatLabel(game, p.nominator), voters: p.seats.length,
     voted: Object.keys(ballot).length, yes: Object.values(ballot).filter(Boolean).length, needed: Math.ceil(alive / 2)};
 }
@@ -199,7 +204,8 @@ export function toolsNow(game, mine) {
   if (ph === 'ended') return ['narrate', 'rulings'];
   if (ph === 'day') {
     if (game.pending?.kind === 'vote') return ['day_state', 'close_vote'];
-    if (game.step === 'dawn' || game.clock?.round === 0) return ['narrate', 'talk'];
+    const c = game.clock || {};
+    if (game.step === 'dawn' || (c.round === 1 && !c.nominationsOpen && !(c.spoke || []).length)) return ['narrate', 'talk', 'open_nominations'];
     return game.clock?.nominationsOpen ? ['day_state', 'end_day'] : ['talk', 'open_nominations', 'end_day'];
   }
   return ['night_order', 'grimoire'];
@@ -207,8 +213,7 @@ export function toolsNow(game, mine) {
 
 // The state header for one Storyteller turn. Short: the phase, the grimoire one line a seat, the decision waiting
 // (in bold), what was said since the last header (counted), the tools that fit now.
-export function storytellerHeader(game, api) {
-  if (!api) throw new Error('storytellerHeader needs the game api (src/game/api.js)');
+export function storytellerHeader(game, api = ST_API) {
   const lines = [], ph = phaseOf(game);
   const alive = (game.seats || []).filter(s => s.alive).length;
   lines.push(`Storyteller. ${clockWords(game)}. ${alive} of ${(game.seats || []).length} alive.`);

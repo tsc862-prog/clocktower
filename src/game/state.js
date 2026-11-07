@@ -25,8 +25,12 @@ export function deal(script, n, rng) {
 
 const hidden = (o, k, v) => Object.defineProperty(o, k, {value: v, enumerable: false, writable: true, configurable: true});
 
+// The day clock's default: speaking rounds before nominations open (src/game/api.js runs the clock).
+export const DEFAULT_ROUNDS = 3;
+
 // seats: an array of names or a count (default: the seven seat names). roles: a fixed deal, seat by seat (tests).
-export function createState({seed = 1, seats, script = SCRIPT, roles = null} = {}) {
+// rounds: the day's speaking rounds before nominations open.
+export function createState({seed = 1, seats, script = SCRIPT, roles = null, rounds = DEFAULT_ROUNDS} = {}) {
   const names = Array.isArray(seats) ? [...seats]
     : Array.from({length: typeof seats === 'number' ? seats : (roles ? roles.length : 7)}, (_, i) => SEAT_NAMES[i] || `Seat ${i + 1}`);
   const rng = createRng(seed);
@@ -35,7 +39,7 @@ export function createState({seed = 1, seats, script = SCRIPT, roles = null} = {
   if (dealt.length !== names.length) throw new Error(`${dealt.length} roles for ${names.length} seats`);
   for (const id of dealt) if (!roleIndex[id]) throw new Error(`unknown role ${id} in ${script.id}`);
   const state = {
-    config: {seed, seats: names, roles: roles ? [...roles] : null, script: script.id},
+    config: {seed, seats: names, roles: roles ? [...roles] : null, script: script.id, rounds},
     seats: names.map((name, i) => ({index: i, name, role: dealt[i], believed: dealt[i], team: roleIndex[dealt[i]].team, alive: true, ghostVote: true, tokens: []})),
     phase: 'setup', night: 0, day: 0, step: null,
     bluffs: [],
@@ -44,6 +48,10 @@ export function createState({seed = 1, seats, script = SCRIPT, roles = null} = {
     diedTonight: [],      // seats that died this night, announced at dawn
     lastDeath: null,      // {seat, role, cause, by, phase, night, day}: how the game ended, when a death ended it
     log: [], answers: [], pending: null, winner: null,
+    // the table's side of the game, kept by src/game/api.js so a plain copy restores: the day clock, the open ballot, each
+    // seat's notes, and every api call that changed the game (api.restore replays them)
+    clock: {day: 0, round: 1, roundsBeforeNominations: rounds, nominationsOpen: false, spoke: [], passedNominating: []},
+    ballot: null, notes: {}, actions: [],
   };
   hidden(state, 'script', script);
   hidden(state, 'roleIndex', roleIndex);
