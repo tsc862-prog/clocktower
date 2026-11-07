@@ -11,7 +11,7 @@ import {optionKey} from '../game/mechanics.js';
 import {createScripted} from '../game/scripted.js';
 import {
   describePending, valueWords, grimoireRows, grimoireLine, tableEvents, eventWords, clockWords, openVote, waitingOn,
-  roleFromWord, seatFromWord, roleLabel, seatLabel, phaseOf, toolsNow, KIND_WORDS,
+  roleFromWord, seatFromWord, roleLabel, seatLabel, phaseOf, toolsNow, KIND_WORDS, malfunctionWords, narrationError, nominationsWords, offeredWords,
 } from '../seats/storyteller.js';
 
 const ME = 'storyteller';
@@ -29,6 +29,22 @@ export function reasonError(reason) {
   const r = typeof reason === 'string' ? reason.trim() : '';
   if (!r) return 'Give a reason: one full sentence on why you make this call (the watcher reads it; no player does).';
   if (r.split(/\s+/).length < 4 || r.length < 15) return `"${r}" is too short for a reason: say in one full sentence why you make this call.`;
+  return null;
+}
+
+// A reason against the facts of the decision: an error naming the truth, or null.
+export function reasonFactsError(game, p, reason) {
+  const r = String(reason || ''), n = (p.options || []).length;
+  if (n > 1 && (!p.count || n > p.count) && /\bonly\s+(?:legal\s+|possible\s+|available\s+|valid\s+|offered\s+)?(?:option|choice|answer)\b|\bno other (?:option|choice)|\bsole (?:legal )?option|\bsingle (?:legal )?option/i.test(r)) {
+    return `Your reason says there is only one option, but ${offeredWords(p)}. Give the reason this pick helps the game.`;
+  }
+  if (p.kind === 'info' || p.kind === 'register') {
+    const says = /\b(?:(?:not|never|neither|nor|isn't|wasn't|aren't)\s+(?:\w+\s+)?)?(poisoned|drunk)\b/i.exec(r);
+    const saysBad = !!says && !/^(?:not|never|neither|nor|isn't|wasn't|aren't)\b/i.test(says[0]);
+    const saysWorks = /\b(?:ability|power) (?:works|is working|functions)\b|\bit works\b|\bnot (?:poisoned|drunk)\b|\bsober\b|\bhealthy\b|\bunpoisoned\b/i.test(r);
+    if (saysBad && !p.malfunctioning) return `Your reason says the ability is ${says[1].toLowerCase()}, but it works: ${offeredWords(p)} and the truth is legal.`;
+    if (saysWorks && !saysBad && p.malfunctioning) return `Your reason says the ability works, but ${malfunctionWords(game, p)}: any option is legal, so say why this one serves the game.`;
+  }
   return null;
 }
 
@@ -221,7 +237,7 @@ const TOOLS = [
     desc: 'Answer the decision waiting on you (the Drunk\'s false role, the red herring, the demon\'s bluffs, night information, how a role registers, the Mayor\'s bounce, the star pass). Only a legal option is accepted; night information reaches the seat through the game, never from you directly.',
     handler: ({value, option, reason}, {game, api, log}) => {
       const {p, refusal} = mine(game, api); if (refusal) return refusal;
-      const r = reasonError(reason); if (r) return no(r);
+      const r = reasonError(reason) || reasonFactsError(game, p, reason); if (r) return no(r);
       const v = resolveValue(game, p, value, option);
       if (v.error) return no(`${v.error} Legal for ${KIND_WORDS[p.kind] || p.kind}: ${legalList(game, p)}.`);
       const why = reasonOf(reason);
@@ -235,7 +251,7 @@ const TOOLS = [
     desc: 'Answer the decision waiting on you with the scripted default (true information, the plain choice), logged as a ruling that says so. For when you have no better call to make.',
     handler: ({reason}, {game, api, log}) => {
       const {p, refusal} = mine(game, api); if (refusal) return refusal;
-      const r = reasonError(reason); if (r) return no(r);
+      const r = reasonError(reason) || reasonFactsError(game, p, reason); if (r) return no(r);
       const v = tryApi(() => ({value: scriptedFor(game)(game)}));
       if (v.ok === false) return v;
       const why = `Scripted default: ${reasonOf(reason)}`;
@@ -247,7 +263,7 @@ const TOOLS = [
     }},
   {name: 'narrate', act: true,
     args: {text: {type: 'string', desc: `What the whole table hears from you, at most ${NARRATION_MAX} characters: the dawn's deaths, a vote's result, the end`}},
-    desc: 'Speak to the whole table as the Storyteller: who died in the night, how a vote went, who is executed, how the game ended. Plain and a little dry. While the game runs, never name a role in play: the table learns roles from the players, not from you.',
+    desc: 'Speak to the whole table as the Storyteller: who died in the night, how a vote went, who is executed, how the game ended. In your own words, with a line of Thistlewick colour; a line that states a false clock fact (nominations, who died, who was executed) is refused, naming the truth. While the game runs, never name a role in play: the table learns roles from the players, not from you.',
     handler: ({text}, {game, api, log}) => {
       const t = typeof text === 'string' ? text.trim() : '';
       if (!t) return no('Say something: narrate needs text.');
@@ -257,10 +273,11 @@ const TOOLS = [
         const named = [...inPlay].map(id => roleLabel(game, id)).filter(n => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(t));
         if (named.length) return no(`While the game runs the table learns roles only from the players: leave out ${named.join(', ')} and say what happened.`);
       }
+      const wrong = narrationError(game, t); if (wrong) return no(wrong);
       const res = tryApi(() => {api.narrate(game, t); return null});
       if (res) return res;
       log('storyteller-call', {tool: 'narrate', text: t});
-      return {ok: true, narrated: t};
+      return {ok: true, narrated: t, clock: nominationsWords(game) || clockWords(game)};
     }},
   {name: 'open_nominations', act: true, args: {reason: {...REASON, optional: true, desc: 'Why now, before the rounds are done (optional; logged)'}},
     desc: 'Open nominations now, before the day\'s speaking rounds are done (a slow day, a table ready to act).',
