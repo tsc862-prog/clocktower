@@ -1,0 +1,223 @@
+// The watcher page's smoke (npm run uismoke): index.html's body in a stubbed DOM (scripts/stubdom.mjs), the page's app
+// (src/ui/app.js) against a fake relay that answers from the recorded game (src/ui/fixtures/game.json, npm run uifixture) and the
+// recorded supervisor (src/ui/fixtures/runners.json). Checks:
+//   - without the watcher route the page says so and offers the recorded game; "No game yet" shows
+//   - every panel renders from the recording; the circle has seven seats in seat order
+//   - a vote shows the nominee and the nominator, each hand as cast (yes raised, no lowered, not yet blank) and the tally
+//   - whispers render as "A leaned in to B" with the text beneath, marked as unheard by the table; the Storyteller's narration and
+//     scripted rulings are marked
+//   - the talk keeps its scroll position and its rows when new lines arrive while scrolled up, and one click follows again
+//   - the agents panel renders a row per seat and the Storyteller with their states; the resume button only when paused
+//   - start, stop, stop all, start all and resume post to the supervisor's routes with the right bodies; an open "last turn" stays open
+//   - nothing on the page posts to a seat's routes (/play/call, /play/storyteller, /play/narrate, /mcp), at run time or in the code
+//   - the recorded game as the page's ?fixture mode sends nothing; a fresh recording from today's engine renders too
+import {readFileSync, readdirSync} from 'node:fs';
+import {dirname, join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {install} from './stubdom.mjs';
+import {record, FIXTURE_SEED} from './uifixture.mjs';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const HTML = readFileSync(join(ROOT, 'index.html'), 'utf8');
+const GAME = JSON.parse(readFileSync(join(ROOT, 'src/ui/fixtures/game.json'), 'utf8'));
+const RUN = JSON.parse(readFileSync(join(ROOT, 'src/ui/fixtures/runners.json'), 'utf8'));
+const {createApp} = await import('../src/ui/app.js');
+const {relayClient, ACTIONS, READS} = await import('../src/ui/relay.js');
+
+let fails = 0;
+const ok = (c, m) => {console.log(`  ${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) fails++};
+const copy = v => JSON.parse(JSON.stringify(v));
+const FORBIDDEN = /\/play\/call|\/play\/storyteller|\/play\/narrate|\/mcp\b/;
+const BASE = 'http://127.0.0.1:8787';
+
+// A fake relay: GET answers from the recordings, POST records the body. watch: the frame /play/watch serves (null: 404).
+function fakeRelay() {
+  const r = {calls: [], posts: [], watch: null, runners: copy(RUN.runners)};
+  r.fetch = async (url, opt = {}) => {
+    const path = String(url).replace(BASE, '').split('?')[0];
+    r.calls.push({path, method: opt.method || 'GET'});
+    const res = (status, body) => ({ok: status < 400, status, json: async () => copy(body)});
+    if ((opt.method || 'GET') === 'POST') {r.posts.push({path, body: JSON.parse(opt.body || '{}')}); return res(200, {ok: true})}
+    if (path === READS.health) return res(200, {ok: true});
+    if (path === READS.runners) return res(200, r.runners);
+    if (path === READS.watch) {
+      if (!r.watch) return res(404, {error: 'not found'});
+      const since = Number(new URL(url).searchParams.get('since') ?? -1);
+      return res(200, {...r.watch, events: r.watch.events.filter(e => e.id > since)});
+    }
+    return res(404, {error: 'not found'});
+  };
+  return r;
+}
+const $ = id => document.getElementById(id);
+const texts = nodes => nodes.map(n => n.textContent);
+
+// ---- live, the route missing ----
+console.log('live page, no watcher route yet');
+install(HTML);
+let relay = fakeRelay();
+let app = createApp({client: relayClient({base: BASE, fetchImpl: relay.fetch}), seed: 13});
+await app.pollHealth(); await app.pollWatch(); await app.pollRunners();
+ok(!$('empty').hidden && /No game yet/.test($('empty').textContent), '"No game yet" shows before a game arrives');
+ok(/does not send the game/.test($('source').textContent) && !!$('source').querySelector('a[href="?fixture"]'), 'the page says the relay does not send the game yet and links the recorded game');
+ok($('relay-state').dataset.state === 'connected', 'the relay state reads connected');
+ok($('seed').value === '13', 'the seed field shows the launcher seed');
+ok($('new-game').disabled && /asked of the backend/.test($('new-game').title), 'New game is off, with a tooltip, until the relay can start a game');
+
+// ---- the talk frame ----
+console.log('day 1, talking');
+relay.watch = GAME.frames.talk;
+await app.pollWatch();
+const w = GAME.frames.talk, names = w.grimoire.seats.map(s => s.name);
+ok($('empty').hidden, '"No game yet" hides once the game arrives');
+ok(/day \d+, round \d of 2/.test($('phase').textContent), `the game bar shows the phase and clock (${$('phase').textContent})`);
+const seats = document.querySelectorAll('#square .seat');
+ok(seats.length === 7, 'the circle has seven seats');
+ok(JSON.stringify(seats.map(s => s.querySelector('.name').textContent)) === JSON.stringify(names), 'the seats sit in seat order, clockwise from the top');
+ok(seats.every(s => /ST sees/.test(s.textContent) && s.querySelector('.role')), 'each seat shows its true role, marked as what the Storyteller sees');
+const drunk = w.grimoire.seats.find(s => s.role === 'drunk'), thinks = drunk && drunk.believed.replace(/-/g, ' ');
+ok(!!drunk && /drunk/.test(seats[drunk.seat].textContent) && new RegExp('thinks ' + thinks, 'i').test(seats[drunk.seat].textContent), 'the Drunk shows as drunk, with the role it thinks it is');
+const talk = $('talk').querySelector('.lines');
+const says = talk.querySelectorAll('.line.say'), sayEv = w.events.filter(e => e.type === 'say');
+ok(says.length === sayEv.length && says.length > 0, `every line said shows in the talk (${says.length})`);
+ok(says[0].querySelector('.who').textContent === names[sayEv[0].seat] && says[0].textContent.includes(sayEv[0].text), 'a line shows its speaker and its words');
+const wh = talk.querySelectorAll('.line.whisper'), whEv = w.events.filter(e => e.type === 'whisper');
+ok(wh.length === whEv.length && wh.length > 0, `whispers show inline (${wh.length})`);
+ok(wh.length > 0 && wh[0].querySelector('.lean').textContent.includes(`${names[whEv[0].from]} leaned in to ${names[whEv[0].to]}`) && wh[0].querySelector('.text').textContent === whEv[0].text && /did not hear/.test(wh[0].textContent),
+  'a whisper reads "A leaned in to B", its text beneath, marked as unheard by the table');
+ok(talk.querySelectorAll('.line.break').length >= 2 && talk.querySelectorAll('.line.narration').length >= 1, 'phase breaks and the Storyteller\'s narration show');
+ok(talk.querySelectorAll('.line.told').length > 0, 'what each seat was told shows, marked private');
+ok(talk.scrollTop === talk.scrollHeight && $('talk').querySelector('.follow').hidden, 'the talk follows the newest line');
+const grows = document.querySelectorAll('#grimoire .grim-row');
+ok(grows.length === 7 && new RegExp('believes ' + thinks, 'i').test(grows[drunk.seat].textContent) && /drunk/.test(grows[drunk.seat].textContent), 'the grimoire lists every seat, the believed role when it differs and the tokens');
+ok(/Demon's bluffs/.test($('grimoire').textContent) && w.grimoire.bluffs.every(b => new RegExp(b.replace(/-/g, ' '), 'i').test($('grimoire').querySelector('.grim-foot').textContent)), 'the grimoire shows the demon\'s bluffs');
+ok(/Waiting on/.test($('grimoire').textContent), 'the grimoire shows what the game waits on');
+const rul = $('rulings').querySelectorAll('.ruling');
+ok(rul.length === w.rulings.length && rul.length > 0, `every ruling shows in the Storyteller's log (${rul.length})`);
+ok(rul.filter(r => r.classList.contains('scripted')).length === w.rulings.filter(r => /^scripted default/.test(r.reason)).length && rul.some(r => r.classList.contains('scripted')), 'scripted-default rulings are marked');
+ok(rul[0].querySelector('.why').textContent === w.rulings[0].reason, 'a ruling shows its reason');
+
+// ---- the vote frame ----
+console.log('day 1, a vote');
+relay.watch = GAME.frames.vote;
+const talkFirst = talk.firstChild;
+await app.pollWatch();
+const v = GAME.frames.vote, votes = v.ballot.votes, p = v.pending;
+const sq = () => document.querySelectorAll('#square .seat');
+ok(sq()[p.nominee].querySelector('.mark.nominee') && sq()[p.nominator].querySelector('.mark.nominator'), `the nominee (${names[p.nominee]}) and the nominator (${names[p.nominator]}) are marked`);
+const yes = Object.values(votes).filter(Boolean).length, no = Object.values(votes).filter(x => !x).length, waiting = p.seats.length - Object.keys(votes).length;
+ok(document.querySelectorAll('#square .hand.up').length === yes && document.querySelectorAll('#square .hand.down').length === no && document.querySelectorAll('#square .hand.none').length === waiting,
+  `hands as cast: ${yes} raised, ${no} lowered, ${waiting} not yet`);
+for (const [i, x] of Object.entries(votes)) ok(!!sq()[i].querySelector(x ? '.hand.up' : '.hand.down'), `${names[i]}'s hand is ${x ? 'raised' : 'lowered'}`);
+const need = Math.ceil(v.grimoire.seats.filter(s => s.alive).length / 2);
+ok(new RegExp(`${yes}\\s*yes of\\s*${need}\\s*needed`).test($('square').querySelector('.centre').textContent.replace(/\s+/g, ' ')), `the tally reads ${yes} yes of ${need} needed`);
+ok(talk.firstChild === talkFirst, 'the talk kept its rows (appended, not rebuilt)');
+
+// ---- scrolled up while the game goes on ----
+console.log('the owner scrolls up; the game goes on');
+talk.scrollTop = 0; talk.dispatch('scroll');
+const btn = $('talk').querySelector('.follow');
+ok(!btn.hidden, 'scrolled up: the follow button shows');
+const before = talk.children.length, reading = talk.children[0];
+relay.watch = GAME.frames.end;
+await app.pollWatch();
+ok(talk.children.length > before && talk.scrollTop === 0 && talk.children[0] === reading, `new lines arrived (${talk.children.length - before}) and the talk stayed where the owner was reading`);
+ok(/new below/.test(btn.textContent), `the button counts what is new (${btn.textContent})`);
+btn.click();
+ok(talk.scrollTop === talk.scrollHeight && btn.hidden, 'one click follows the newest again');
+ok(talk.querySelectorAll('.line.win').length === 1 && !$('winner').hidden, 'the end: the winner shows in the talk and the game bar');
+ok(talk.querySelectorAll('.line.nomination').length === GAME.frames.end.events.filter(e => e.type === 'nomination').length, 'every nomination shows');
+
+// ---- asides from the socket ----
+app.onSocket({type: 'narrate', player: 2, text: 'Bram drums his fingers.'});
+ok(talk.lastChild.classList.contains('aside') && /Bram's aside, for you only/.test(talk.lastChild.textContent), 'a runner\'s narration shows as an aside, marked as the watcher\'s only');
+
+// ---- agents ----
+console.log('agents');
+app.onSocket(copy(RUN.links));
+await app.pollRunners();
+const rows = () => document.querySelectorAll('#agents .agent');
+const row = k => rows().find(r => r.dataset.key === k);
+ok(rows().length === 8 && rows()[0].dataset.key === 'storyteller', 'a row for the Storyteller and one per seat');
+const st = k => row(k).dataset.state;
+ok(st('storyteller') === 'playing' && st('player:1') === 'playing' && st('player:4') === 'claimed' && st('player:6') === 'gone' && st('player:5') === 'none',
+  `states: ${rows().map(r => r.dataset.key + '=' + r.dataset.state).join(' ')}`);
+ok(/\$0\.06 of \$0\.50/.test(row('player:1').textContent) && /33k ctx/.test(row('player:1').textContent) && /claude-haiku-4-5/.test(row('player:1').textContent), 'a row shows provider and model, cost of budget and the session size');
+ok(/Game budget/.test($('agents').querySelector('.pools').textContent) && /players \$0\.27 of \$3\.50/.test($('agents').querySelector('.pools').textContent), 'the game budget\'s two pools show');
+const det = row('player:1').querySelector('details');
+ok(/nominate/.test(det.textContent) && /You are Odette/.test(det.textContent), 'the last turn shows its header and tool calls');
+det.open = true; await app.pollRunners();
+ok(row('player:1').querySelector('details') === det && det.open, 'an open last turn stays open through updates');
+const resume = $('agents').querySelector('button[data-act="resume"]');
+ok(resume.hidden, 'no resume button while the game runs');
+relay.runners.paused = {why: "the Storyteller's runner ended (crashed)", at: '2026-11-07T14:20:00Z'};
+await app.pollRunners();
+ok(!resume.hidden && /paused/.test($('agents').querySelector('.agents-note').textContent), 'paused: the resume button shows, with why');
+relay.posts.length = 0;
+resume.click(); await new Promise(r => setTimeout(r, 0));
+ok(relay.posts.length === 1 && relay.posts[0].path === ACTIONS.resume && relay.posts[0].body.scripted === true, 'resume posts {scripted: true} to the supervisor');
+
+// the start controls, against the vote frame (everyone alive)
+relay.watch = null; app.state.watch = GAME.frames.vote; app.state.epoch++; app.render();
+relay.posts.length = 0;
+const thea = row('player:5');
+thea.querySelector('select[name="provider"]').value = 'ollama';
+thea.querySelector('input[name="model"]').value = 'qwen2.5:14b';
+thea.querySelector('button.start').click(); await new Promise(r => setTimeout(r, 0));
+ok(relay.posts[0] && relay.posts[0].path === ACTIONS.start && JSON.stringify(relay.posts[0].body) === JSON.stringify({kind: 'player', player: 5, provider: 'ollama', model: 'qwen2.5:14b', by: 'owner'}),
+  `start posts the seat, provider and model (${JSON.stringify(relay.posts[0] && relay.posts[0].body)})`);
+relay.posts.length = 0;
+row('player:7').querySelector('input[name="budget"]').value = '0.25';
+row('player:7').querySelector('button.start').click(); await new Promise(r => setTimeout(r, 0));
+ok(relay.posts[0] && JSON.stringify(relay.posts[0].body) === JSON.stringify({kind: 'player', player: 7, budget: 0.25, by: 'owner'}), `a budget typed in goes with the start (${JSON.stringify(relay.posts[0] && relay.posts[0].body)})`);
+relay.posts.length = 0;
+row('player:1').querySelector('button.stop').click(); row('storyteller').querySelector('button.stop').click(); await new Promise(r => setTimeout(r, 0));
+ok(relay.posts.length === 2 && relay.posts.every(x => x.path === ACTIONS.stop) && JSON.stringify(relay.posts.map(x => x.body)) === JSON.stringify([{kind: 'player', player: 1}, {kind: 'storyteller'}]), 'stop posts the runner to stop');
+ok(row('player:1').querySelector('button.start').disabled && row('player:5').querySelector('button.stop').disabled, 'a running runner cannot be started twice; a seat with none cannot be stopped');
+relay.posts.length = 0;
+$('agents').querySelector('button[data-act="stop-all"]').click(); await new Promise(r => setTimeout(r, 0));
+ok(relay.posts.length === 1 && relay.posts[0].path === ACTIONS.stopAll, 'stop all posts to stop-all');
+relay.posts.length = 0;
+relay.runners.runners = relay.runners.runners.filter(r => r.key !== 'storyteller'); await app.pollRunners(); relay.watch = null; app.state.watch = GAME.frames.vote; app.render();
+$('agents').querySelector('button[data-act="start-all"]').click(); await new Promise(r => setTimeout(r, 20));
+const started = relay.posts.filter(x => x.path === ACTIONS.start).map(x => x.body);
+ok(started.length >= 2 && started[0].kind === 'storyteller' && started.every(b => b.by === 'owner') && !started.some(b => b.player === 1 || b.player === 2),
+  `start all starts the Storyteller first and only seats with no runner (${started.map(b => b.kind === 'storyteller' ? 'ST' : b.player).join(', ')})`);
+
+// ---- nothing speaks for a seat ----
+console.log('watcher only');
+for (const b of document.querySelectorAll('button')) b.click();
+await new Promise(r => setTimeout(r, 20));
+const allowed = new Set([...Object.values(READS), ...Object.values(ACTIONS)]);
+ok(relay.calls.every(c => allowed.has(c.path)), 'every request the page made is to a listed route');
+ok(!relay.calls.some(c => FORBIDDEN.test(c.path)), 'no request went to a seat\'s routes');
+ok(![...Object.values(READS), ...Object.values(ACTIONS)].some(x => FORBIDDEN.test(x)), 'the page\'s route list has none of a seat\'s routes');
+const code = readdirSync(join(ROOT, 'src/ui')).filter(f => f.endsWith('.js')).map(f => [f, readFileSync(join(ROOT, 'src/ui', f), 'utf8').split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n')]);
+const bad = code.filter(([, t]) => /['"`]\/(mcp|play\/(call|storyteller|narrate))\b/.test(t)).map(([f]) => f);
+ok(bad.length === 0, `no code under src/ui names a seat's route${bad.length ? ': ' + bad.join(', ') : ''}`);
+ok(!/\b(nominate|vote|whisper|speak)\b/i.test(document.querySelectorAll('button').map(b => b.textContent).join(' ')), 'no button nominates, votes, whispers or speaks');
+
+// ---- the recorded game, as ?fixture shows it ----
+console.log('the recorded game (?fixture)');
+install(HTML);
+relay = fakeRelay();
+app = createApp({client: relayClient({base: BASE, fetchImpl: relay.fetch}), fixture: GAME, runnersFixture: RUN});
+ok(document.querySelectorAll('#square .seat').length === 7 && document.querySelectorAll('#talk .line').length > 50 && document.querySelectorAll('#agents .agent').length === 8, 'every panel renders from the recording');
+ok($('frames').options.length === 3 && !$('frames').hidden, 'a picker offers the three recorded moments');
+$('frames').value = 'talk'; $('frames').dispatch('change');
+ok(document.querySelectorAll('#talk .line.win').length === 0 && /round \d of 2/.test($('phase').textContent), 'picking an earlier moment shows that moment');
+for (const b of document.querySelectorAll('button')) b.click();
+await new Promise(r => setTimeout(r, 20));
+ok(relay.calls.length === 0, 'the recorded game sends nothing to the relay');
+
+// ---- today's engine still renders ----
+console.log("a fresh recording from today's engine");
+install(HTML);
+const fresh = record(FIXTURE_SEED);
+app = createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch}), fixture: fresh, runnersFixture: RUN});
+ok(document.querySelectorAll('#square .seat').length === 7 && document.querySelectorAll('#talk .line.say').length === fresh.frames.end.events.filter(e => e.type === 'say').length, 'a game recorded now renders the same way');
+const stale = JSON.stringify(fresh.frames.end.events.map(e => e.type)) !== JSON.stringify(GAME.frames.end.events.map(e => e.type));
+if (stale) console.log('  note the recorded game differs from today\'s engine: npm run uifixture writes a new one');
+
+console.log(fails ? `${fails} check(s) failed` : 'the page renders the game and changes nothing');
+process.exit(fails ? 1 : 0);
