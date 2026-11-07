@@ -50,6 +50,8 @@ jobs:
         run: npm run edgecheck
       - name: Seeded headless game (seed 1)
         run: npm run sim -- --seed 1
+      - name: Player tools (every tool and the header against a fake api with planted secrets)
+        run: npm run playertoolcheck
       - name: Quote the patch note on the PR
         if: github.event_name == 'pull_request'
         continue-on-error: true
