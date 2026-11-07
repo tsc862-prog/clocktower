@@ -7,7 +7,7 @@
 import {spawnSync} from 'node:child_process';
 import {readFileSync, writeFileSync} from 'node:fs';
 const argv = process.argv.slice(2), opt = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : d; };
-const FLAKY = ['upcheck', 'relaycheck', 'channelcheck'];
+const FLAKY = ['upcheck', 'relaycheck', 'channelcheck', 'mockgamecheck'];
 const RUNS = Math.max(1, Number(opt('runs', 5)));
 const pkg = JSON.parse(readFileSync('package.json', 'utf8')).scripts;
 const all = Object.keys(pkg).filter(k => /scripts\/\w+check\.mjs/.test(pkg[k]));

@@ -150,12 +150,15 @@ export async function runClaudeSeat({kind, opt, flag, env, base, runner, say, ct
       if (result) {
         u = usageDelta(sess, result); // before the cost baseline moves
         const tot = result.total_cost_usd || 0; cost = tot >= sess.lastTotal ? tot - sess.lastTotal : tot; sess.lastTotal = tot;
-      } else if (gs.reported() || tools) {const g = gs.cost(model, {sent: String(sess.system || '').length + prompt.length}); cost = g.usd; how = ` | ${g.how}`} // a cut turn sends no result: count what it spent
+      } else if (gs.reported() || tools) {const g = gs.cost(model, {sent: String(sess.system || '').length + prompt.length}); cost = g.usd; how = `, ${g.how} spend`} // a cut turn sends no result: count what it spent
       spent += cost; sess.costUsd = (sess.costUsd || 0) + cost;
-      say(`[turn ${sess.turns}] ${tools} tool calls, ${((Date.now() - t0) / 1000).toFixed(1)} s, ${result ? result.num_turns : '?'} model calls | in ${u.tokensIn ?? '?'} / cache read ${u.cacheRead ?? '?'} / cache write ${u.cacheWrite ?? '?'} / out ${u.tokensOut ?? '?'} | ${ctxText(sess.ctx)}${how} | turn ${money(cost)} | run ${money(spent)} | session ${money(sess.costUsd)}${result && result.subtype !== 'success' ? ' | ' + result.subtype : ''}`);
-      post('/play/behavior/turn', {rec: {turn: sess.turns, provider: 'anthropic', model, wake: w && w.wake ? {wake: w.wake, why: String(w.why || '').slice(0, 160)} : null,
+      // One shape for every turn line: the cost part first ("| ctx 23k | turn $x | run $y | session $z", what the supervisor and the
+      // checks read), then why a turn did not complete: "| failed: <error>" or "| cut: <why>, <how> spend" (no result came back).
+      const endNote = result ? (result.subtype !== 'success' ? ' | ' + result.subtype : '') : err ? ` | failed: ${err.slice(0, 160)}` : ` | cut: ${stopReq ? stopWhy || 'stopped' : 'no result'}${how}`;
+      say(`[turn ${sess.turns}] ${tools} tool calls, ${((Date.now() - t0) / 1000).toFixed(1)} s, ${result ? result.num_turns : '?'} model calls | in ${u.tokensIn ?? '?'} / cache read ${u.cacheRead ?? '?'} / cache write ${u.cacheWrite ?? '?'} / out ${u.tokensOut ?? '?'} | ${ctxText(sess.ctx)} | turn ${money(cost)} | run ${money(spent)} | session ${money(sess.costUsd)}${endNote}`);
+      await post('/play/behavior/turn', {rec: {turn: sess.turns, provider: 'anthropic', model, wake: w && w.wake ? {wake: w.wake, why: String(w.why || '').slice(0, 160)} : null,
         brief: {text: typeof b === 'string' ? b.slice(0, 2000) : b ? JSON.stringify(b).slice(0, 2000) : null}, tools: tc.tools, narration: tc.narration,
-        seconds: +((Date.now() - t0) / 1000).toFixed(1), ...u, cost, ...(sess.ctx != null ? {ctx: sess.ctx} : {}), flags: [...(rd ? ['session-rolled'] : []), ...(result && result.subtype !== 'success' ? [result.subtype] : [])], ...(err ? {error: err} : {})}}, 8000).catch(() => {});
+        seconds: +((Date.now() - t0) / 1000).toFixed(1), ...u, cost, ...(sess.ctx != null ? {ctx: sess.ctx} : {}), flags: [...(rd ? ['session-rolled'] : []), ...(result && result.subtype !== 'success' ? [result.subtype] : []), ...(result ? [] : [err ? 'failed' : 'cut'])], ...(err ? {error: err} : {})}}, 8000).catch(() => {}); // awaited: a stop right after the turn must not lose its line
       save();
       if (spent >= budget) {ended = 'budget reached'; break}
       if (fails.ok(!err && tools > 0) && !ended) ended = fails.why();
