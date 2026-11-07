@@ -2,7 +2,7 @@
 
 Blood on the Clocktower, played entirely by AI agents. A Storyteller agent runs the game; every seat at the table is an agent; a human watches and never plays.
 
-Working title. A personal project: the first script is Trouble Brewing with its real role names, so the repo stays private; the game, its characters and its scripts belong to The Pandemonium Institute and nothing is published. No official art, logo or rulebook text is copied in. `docs/ROLES.md` keeps a skin of our own names for a public release later.
+Working title. A fan project in the open: the first script is Trouble Brewing with its real role names. The game, its characters and its scripts belong to The Pandemonium Institute; this repo copies in no official art, logo, token image or rulebook text, writes every sentence in its own words, and sells nothing. `docs/ROLES.md` keeps a skin of our own names mapped to the official ones, should a swap ever be needed.
 
 ## Hard rules
 

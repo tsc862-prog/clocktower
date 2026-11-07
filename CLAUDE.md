@@ -5,13 +5,14 @@ Storyteller agent runs the game; every seat at the table is an agent; the owner 
 
 ## Hard rules
 
-- **Private repo, the real script.** A personal project: the first script is Trouble Brewing as the game
-  has it, with its official role names as the ids in code, so the agents can play the game they already
-  know. The characters and the script belong to The Pandemonium Institute, so the repo stays private and
-  nothing is published; no official art, logo or rulebook text is copied in, the ability text is ours in
-  our words. `docs/ROLES.md` keeps a skin of our own names (Thistlewick, The Stopped Hour) mapped to the
-  official ones, for a public release later; nothing depends on it today. The `lore-keeper` keeps the
-  skin, the seat names and the voice.
+- **A public fan project, the real script.** The first script is Trouble Brewing as the game has it,
+  with its official role names as the ids in code, so the agents can play the game they already know.
+  The repo is public (owner's decision, 2026-11-07, for free CI and in the open); the characters and the
+  script belong to The Pandemonium Institute, the owner carries that, and the repo keeps the line a fan
+  project keeps: no official art, logo, token image or rulebook text is copied in, the ability text and
+  every other sentence are ours in our words, and nothing is sold. `docs/ROLES.md` keeps a skin of our
+  own names (Thistlewick, The Stopped Hour) mapped to the official ones, should a swap ever be needed. The
+  `lore-keeper` keeps the skin, the seat names and the voice.
 - **Watcher only.** The owner never holds a seat, never nominates, never votes, never whispers. The page
   shows everything (the grimoire included); it changes nothing.
 - **Every seat is an agent.** Players and the Storyteller alike. A seat whose runner is gone pauses the
@@ -69,9 +70,10 @@ areas, plan it, hand each part to its owner, then have `lore-keeper` check every
   `git -C E:/clocktower status` shows none of their files.
 - **Small PRs, always green.** CI runs on every PR and on `main`; the one required check is **CI ok**.
   An open issue labelled `red-main` ("main is red") is a merge stop: nothing merges but the fix.
-- **Merging.** The repo is private on the free plan, so there is no branch protection: a PR labelled
-  `automerge` is merged by `.github/workflows/automerge.yml` once CI ok passes on its head. While GitHub
-  Actions does not run (issue #7), the manager runs every check locally and merges by hand on local green.
+- **Merging.** Main is protected: `CI ok` required and the branch up to date with main (merges are
+  serial). Briefs end with `gh pr merge <n> --auto --merge`; when main moves, a waiting PR is updated
+  (`gh pr update-branch <n>`) and CI re-runs before auto-merge fires. The manager owns the flow and
+  intervenes only on red CI or conflicts.
 - **Every PR carries its patch note.** `docs/patchnotes/<PR number>.md` (front matter `title`, `date`,
   `area`, `issues`, then 1-6 `- ` lines) written for the owner as a watcher: what he will see or can do
   now, in plain words, no file or function names, no hashes ("Nothing you will notice: ..." for CI and
@@ -165,7 +167,7 @@ input.
 - `src/ui/`: the page. `ui-designer`.
 - `scripts/`: relay, runners, providers, launcher, checks (`*check.mjs`), reports. `infra`.
 - `docs/`: `ROLES.md` (the skin and the seat names), `patchnotes/`, `handoff.md`, `first-issue.md`.
-- `.github/workflows/`: CI, red-main, automerge, nightly. `infra`.
+- `.github/workflows/`: CI, red-main, nightly. `infra`.
 - `logs/`: git-ignored: behavior logs, runner logs, `tmp/`.
 
 ## Known state
