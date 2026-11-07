@@ -12,8 +12,8 @@
 //   q  quit     (or Ctrl+C, or closing the window) runners stop cleanly first, then the relay, then Vite
 //
 // Terminals without raw mode (a pipe, some IDE consoles) take the word plus Enter: update, restart, status, notes, help, quit.
-// Options: --relay-port N (8787, or RELAY_PORT), --vite-port N (5173), --no-open, --repo DIR (the git checkout `u` pulls; default:
-// this one). Children are started with node and an argument array, never a shell. `npm run relay` and `npm run dev` in two
+// Options: --seed N (the game the relay serves, default 1, or CLOCKTOWER_SEED), --relay-port N (8787, or RELAY_PORT), --vite-port N
+// (5173), --no-open, --repo DIR (the git checkout `u` pulls; default: this one). Children are started with node and an argument array, never a shell. `npm run relay` and `npm run dev` in two
 // terminals still work.
 import {spawn} from 'node:child_process';
 import {watch, existsSync, readFileSync} from 'node:fs';
@@ -75,7 +75,9 @@ async function waitPortFree(port, ms = 8000) {const t0 = Date.now(); while (Date
 
 // ---- state ----
 let relay = null, vite = null, busy = '', quitting = false, codeChanged = false, quietUntil = 0, opened = false;
-const RELAY_ARGS = ['scripts/relay.mjs', '--runners', '--resume-runners', '--launcher'];
+// The relay serves a seeded game (--game) with the runner supervisor on; --seed N picks the game (default 1, or CLOCKTOWER_SEED).
+const SEED = String(Number.parseInt(opt('--seed', process.env.CLOCKTOWER_SEED || '1'), 10) || 1);
+const RELAY_ARGS = ['scripts/relay.mjs', '--runners', '--game', '--seed', SEED, '--resume-runners', '--launcher'];
 const relayEnv = () => ({RELAY_PORT: String(RELAY_PORT), RELAY_ORIGIN: `http://localhost:${VITE_PORT}`, CLOCKTOWER_LAUNCHER: '1'});
 
 function startRelay() {
@@ -88,7 +90,7 @@ function startRelay() {
 function startVite() {
   const viteBin = join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
   if (!existsSync(viteBin)) {up('vite is not installed (node_modules/vite). Run npm install once.'); return null}
-  vite = launch('vite', [viteBin, '--port', String(VITE_PORT), '--strictPort'], {env: {VITE_RELAY_URL: `http://127.0.0.1:${RELAY_PORT}`}, onLine: l => {if (!opened && /Local:|ready in/i.test(l)) openGame()}});
+  vite = launch('vite', [viteBin, '--port', String(VITE_PORT), '--strictPort'], {env: {VITE_RELAY_URL: `http://127.0.0.1:${RELAY_PORT}`, VITE_GAME_SEED: SEED}, onLine: l => {if (!opened && /Local:|ready in/i.test(l)) openGame()}});
   up(`vite started (pid ${vite.pid}) on http://localhost:${VITE_PORT}`);
   const mine = vite;
   mine.done.then(() => {if (!mine.expected && !quitting) up(`vite exited on its own (code ${mine.code ?? mine.sig}). Press u or r after fixing it, or q and start again.`)});
