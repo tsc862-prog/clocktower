@@ -21,7 +21,8 @@
     "upcheck": "node scripts/upcheck.mjs",
     "sim": "node scripts/headless.mjs",
     "gamecheck": "node scripts/gamecheck.mjs",
-    "edgecheck": "node scripts/edgecheck.mjs"
+    "edgecheck": "node scripts/edgecheck.mjs",
+    "storytellertoolcheck": "node scripts/storytellertoolcheck.mjs"
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.316",
