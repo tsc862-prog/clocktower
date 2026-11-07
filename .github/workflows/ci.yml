@@ -78,6 +78,7 @@ jobs:
       - {name: Relay seats and claims, run: npm run relaycheck}
       - {name: "Channel check (secrets stay in their seat; a whole game through the relay)", run: npm run channelcheck}
       - {name: Runners with budget stops, run: npm run runnercheck}
+      - {name: "Mock game (eight runners from the supervisor play seed 5 to a winner, no dollar spent)", run: npm run mockgamecheck}
       - {name: Providers against their mocks, run: npm run providercheck}
       - {name: The launcher starts the relay and the page, run: npm run upcheck}
 

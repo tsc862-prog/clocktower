@@ -8,8 +8,8 @@
 // and saves the seat's session (logs/agents/<id>.json).
 // Cost is the limit, not turns: a paid provider stops when the run's spend reaches --budget ("[agent] stopped after N turns
 // (budget reached)"); a local model costs nothing and plays until stopped. There is no turn cap unless --max-turns is given.
-// Claude seats play through the Claude Agent SDK in the player-builder's runner (slice 3 of issue #1); this runner says so and
-// exits. Keys come from the environment or .env and go to the provider adapter only: never printed, never in an argument.
+// Claude seats play through the Claude Agent SDK in scripts/agent-seat.mjs (the supervisor starts that one for them); this runner
+// says so and exits. Keys come from the environment or .env and go to the provider adapter only: never printed, never in an argument.
 import {hostname} from 'node:os';
 import {loadEnv} from './relay.mjs';
 import {ollamaAdapter, OLLAMA_URL, OLLAMA_MODEL, numCtxFrom} from './providers/ollama.mjs';
@@ -55,7 +55,7 @@ async function main() {
     if (o.note) say(`[agent] ${compatLabel(provider)}: ${o.note}`);
     chat = o.adapter.chat; model = o.model; paid = true; adapter = o.adapter;
   } else if (provider === 'anthropic') {
-    say('[agent] Claude seats are played through the Claude Agent SDK by the player runner of slice 3 (issue #1); not this runner. Use --provider ollama, openai, huggingface or google.');
+    say('[agent] Claude seats play through the Claude Agent SDK: node scripts/agent-seat.mjs --player ' + playerId + '. This runner plays ollama, openai, huggingface or google.');
     return 1;
   } else {say(`[agent] unknown provider ${provider}`); return 2}
   const budget = paid ? Number(opt('budget', 1)) : null, cap = turnCap(opt('max-turns', null)), pace = paceSettings(opt, env);
@@ -84,7 +84,7 @@ async function main() {
       if (st) {
         run += st.cost || 0; sess.cost = (sess.cost || 0) + (st.cost || 0);
         say(`[turn ${turns}] ${paid ? paidLine(st, model, provider, {run}) : localLine(st, model)}`);
-        post('/play/behavior/turn', {player: playerId, rec: {turn: sess.turns, provider, model, wake: w.wake || null, tools: st.calls, speech: st.narration || null, seconds: Math.round(st.ms / 100) / 10, tokensIn: st.in, tokensOut: st.out, cost: st.cost || 0}}).catch(() => {});
+        post('/play/behavior/turn', {player: playerId, rec: {turn: sess.turns, provider, model, wake: w.wake || null, brief: {text: typeof b === 'string' ? b.slice(0, 2000) : b ? JSON.stringify(b).slice(0, 2000) : null}, tools: st.calls, speech: st.narration || null, seconds: Math.round(st.ms / 100) / 10, tokensIn: st.in, tokensOut: st.out, cost: st.cost || 0}}).catch(() => {});
       } else say(`[turn ${turns}] failed | run $${run.toFixed(4)}`);
       saveSession(sess);
       if (budget != null && run >= budget) {say(`[agent] stopped after ${turns} turns (budget reached)`); return 0}

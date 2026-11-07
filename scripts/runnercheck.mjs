@@ -9,12 +9,14 @@
 //      the page ends it and lets go of the seat, and the end goes to the events log.
 //   4. A budget stop with a mock OpenAI (a paid mind): the runner stops itself when its spend reaches the dollar budget, the
 //      supervisor marks it spent and logs it, and resume() does not bring it back.
-//   5. The Storyteller runner is refused plainly until it exists.
+//   5. The game budget: a runner with no budget asked gets its share of GAME_BUDGET ($5: the Storyteller's 30% set apart, the
+//      players' 70% split seven ways); a Claude player seat runs scripts/agent-seat.mjs, any other mind scripts/seat-runner.mjs; the
+//      Storyteller runner is installed, and its scripted fallback has no budget.
 // Waits go through scripts/ci-clock.mjs (CI_FAST).
 import {readFileSync, existsSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {checkStart, runnerArgs, RUNNER_KINDS, MAX_RUNNERS} from './runners.mjs';
+import {checkStart, runnerArgs, RUNNER_KINDS, MAX_RUNNERS, gameShares, defaultBudgets} from './runners.mjs';
 import {turnCap} from './pacing.mjs';
 import {startMockOllama} from './mock-ollama.mjs';
 import {startMockOpenAI, KEY} from './mock-openai.mjs';
@@ -33,10 +35,10 @@ console.log('start requests');
 {
   const ps = [{id: 1, name: 'Odette', alive: true}, {id: 2, name: 'Bram', alive: false}];
   const c = checkStart({player: 1}, ps);
-  ok(c.req && c.req.key === 'player:1' && c.req.maxTurns === null && c.req.budget === 1, 'a player runner keeps $1.00 and no turn cap');
+  ok(c.req && c.req.key === 'player:1' && c.req.maxTurns === null && c.req.budget === 0.5, `a player runner keeps its share of the $5 game ($${c.req && c.req.budget}) and no turn cap`);
   const l = checkStart({player: '1', provider: 'ollama', model: 'qwen2.5:14b'}, ps);
   ok(l.req && l.req.budget === null && l.req.maxTurns === null, 'a local runner has no budget and no turn cap');
-  ok(checkStart({player: 1, provider: 'openai', model: 'gpt-6-luna'}, ps).req.budget === 1, 'an OpenAI runner is paid: it keeps a budget');
+  ok(checkStart({player: 1, provider: 'openai', model: 'gpt-6-luna'}, ps).req.budget === 0.5, 'an OpenAI runner is paid: it keeps a budget');
   ok(checkStart({player: 9}, ps).code === 404 && checkStart({player: 2}, ps).code === 409 && checkStart({}, ps).code === 400, 'unknown, out-of-the-game and missing seats are refused');
   ok(checkStart({player: 1, provider: 'x;rm'}, ps).code === 400 && checkStart({player: 1, model: '--env=x'}, ps).code === 400 && checkStart({player: 1, model: 'a b'}, ps).code === 400, 'providers from the list only; model names plain');
   ok(checkStart({player: 1, budget: 5.01}, ps).code === 400 && checkStart({player: 1, budget: 0}, ps).code === 400 && checkStart({player: 1, maxTurns: 1.5}, ps).code === 400, 'budgets and an asked turn cap are checked');
@@ -44,9 +46,15 @@ console.log('start requests');
   ok(checkStart({player: 1}, ps, {running: [{key: 'player:1'}]}).code === 409, 'one runner per seat');
   ok(MAX_RUNNERS === 8 && checkStart({player: 1}, ps, {running: Array.from({length: 8}, (_, i) => ({key: 'x' + i}))}).code === 429, 'at most eight runners: seven players and the Storyteller');
   const args = runnerArgs({...c.req, provider: 'openai', model: 'gpt-6-luna'}, 'http://127.0.0.1:8787');
-  ok(args.join(' ') === 'scripts/seat-runner.mjs --url http://127.0.0.1:8787 --player 1 --budget 1 --provider openai --model gpt-6-luna', 'the command line: script, url, seat, budget, provider, model; no key: ' + args.join(' '));
+  ok(args.join(' ') === 'scripts/seat-runner.mjs --url http://127.0.0.1:8787 --player 1 --budget 0.5 --provider openai --model gpt-6-luna', 'the command line: script, url, seat, budget, provider, model; no key: ' + args.join(' '));
   ok(runnerArgs({...l.req, maxTurns: 40}, 'u').join(' ').includes('--max-turns 40') && !args.includes('--max-turns'), 'a turn cap goes on the command line only when asked');
-  ok(checkStart({kind: 'storyteller'}, ps).code === 501, 'the Storyteller runner is refused plainly until it is installed: ' + checkStart({kind: 'storyteller'}, ps).error);
+  const g = gameShares(), sr = checkStart({kind: 'storyteller'}, ps).req;
+  ok(g.storyteller === 1.5 && g.player === 0.5 && sr && sr.budget === 1.5, `the game budget: $${g.total} with the Storyteller's $${g.storyteller} set apart, $${g.player} for each player`);
+  const b2 = defaultBudgets({GAME_BUDGET: '10'}), b3 = defaultBudgets({RUNNER_BUDGET: '0.2'});
+  ok(b2.storyteller === 3 && b2.player === 1 && b3.player === 0.2 && b3.storyteller === 0.2, 'GAME_BUDGET moves both shares; RUNNER_BUDGET sets every runner');
+  ok(runnerArgs({...c.req, claude: true}, 'u')[0] === 'scripts/agent-seat.mjs' && runnerArgs({...l.req}, 'u')[0] === 'scripts/seat-runner.mjs', 'a Claude seat runs the Agent SDK runner, a local one the local loop');
+  const sc = checkStart({kind: 'storyteller', scripted: true}, ps).req;
+  ok(sc && sc.budget === null && runnerArgs(sc, 'u').join(' ') === 'scripts/storyteller-runner.mjs --url u --scripted', 'the scripted Storyteller has no budget: ' + (sc ? runnerArgs(sc, 'u').join(' ') : ''));
 }
 
 console.log('no turn cap by default');
@@ -54,7 +62,7 @@ console.log('no turn cap by default');
   ok(Object.values(RUNNER_KINDS).every(K => K.defaults.maxTurns === null), 'every runner kind defaults to no turn cap');
   ok(turnCap(undefined) === Infinity && turnCap(null) === Infinity && turnCap('') === Infinity && turnCap('5') === 5, 'pacing: turnCap is Infinity unless --max-turns is given');
   const bad = [];
-  for (const f of ['runners.mjs', 'seat-runner.mjs', 'pacing.mjs', 'local-agent.mjs', 'relay.mjs']) {
+  for (const f of ['runners.mjs', 'seat-runner.mjs', 'pacing.mjs', 'local-agent.mjs', 'relay.mjs', 'claude-runner.mjs', 'agent-seat.mjs', 'storyteller-runner.mjs']) {
     const t = readFileSync(join(ROOT, 'scripts', f), 'utf8');
     if (/opt\(\s*['"]max-turns['"]\s*,\s*(?!null\b)[^)\s]/.test(t) || /['"]--max-turns['"]\s*,\s*['"]?\d/.test(t) || /defaults:\s*\{[^}]*maxTurns:\s*\d/.test(t)) bad.push(f);
   }
@@ -106,8 +114,9 @@ async function e2e() {
     ok(!R.out.concat(readFileSync(join(env.AGENT_LOGS, 'runners', 'player-4.log'), 'utf8').split('\n')).some(l => l.includes(KEY)), 'no key in the relay output or the runner log');
 
     console.log('the Storyteller');
-    const sr = await req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {kind: 'storyteller'}});
-    ok(sr.status === 501 && /not installed/.test(sr.error || ''), 'a Storyteller runner start says it is not installed yet');
+    const sr = await req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {kind: 'storyteller', provider: 'anthropic'}});
+    const ended = sr.status === 200 && await until(async () => {const r = await req(base, '/play/runner', {origin: PAGE}); const v = (r.runners || []).find(x => x.key === 'storyteller'); return v && v.state !== 'starting' && (v.state === 'crashed' || v.state === 'stopped') ? v : null}, ms(20000, 10000));
+    ok(!!ended && /No ANTHROPIC_API_KEY/.test(ended.error || ''), `with no key the Claude Storyteller runner starts and says plainly why it cannot play (${ended ? ended.error : sr.error})`);
   } finally {
     await Promise.race([R.stop(), sleep(8000)]); try {R.child.kill()} catch {}
     ol.close(); oa.close();
