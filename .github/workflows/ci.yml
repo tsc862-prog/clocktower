@@ -83,6 +83,14 @@ jobs:
       - {name: "Mock game (eight runners from the supervisor play seed 5 to a winner, no dollar spent)", run: npm run mockgamecheck}
       - {name: Providers against their mocks, run: npm run providercheck}
       - {name: The launcher starts the relay and the page, run: npm run upcheck}
+      - name: Keep the mock game's runner and behavior logs when a step failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mockgamecheck-logs
+          path: logs/mockgamecheck/
+          if-no-files-found: ignore
+          retention-days: 14
 
   ok:
     name: CI ok

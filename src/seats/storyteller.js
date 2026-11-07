@@ -238,7 +238,7 @@ export function storytellerHeader(game, api = ST_API) {
   if (ph !== 'setup') {
     const evs = tableEvents(game, api, lastSeen(game));
     const said = evs.filter(e => e.type === 'say').length, wh = evs.filter(e => e.type === 'whisper-seen').length;
-    const other = evs.length - said - wh;
+    const other = evs.filter(e => e.type !== 'say' && e.type !== 'whisper-seen' && !(ph === 'night' && e.type === 'phase')).length;
     lines.push(`Since your last turn: ${said} said, ${wh} whispers seen, ${other} other events.`);
     if (evs.length) markSeen(game, Math.max(...evs.map(e => e.id || 0)));
   }

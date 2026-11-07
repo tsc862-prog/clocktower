@@ -13,12 +13,20 @@
 //   - the behavior log has one line per turn, every line with its header;
 //   - the game reaches a winner.
 // Waits go through scripts/ci-clock.mjs (CI_FAST).
-import {readFileSync, existsSync, readdirSync} from 'node:fs';
-import {join} from 'node:path';
+import {readFileSync, existsSync, readdirSync, cpSync, rmSync, mkdirSync} from 'node:fs';
+import {join, dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {startMockOllama} from './mock-ollama.mjs';
 import {quietEnv, startRelayProcess, req} from './relaycheck.mjs';
 import {ms} from './ci-clock.mjs';
 
+// On a failure the runner logs, the events log and the behavior log are kept in logs/mockgamecheck/ (CI uploads it as an artifact).
+export const KEEP_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'logs', 'mockgamecheck');
+function keepLogs(env) {
+  try {rmSync(KEEP_DIR, {recursive: true, force: true}); mkdirSync(KEEP_DIR, {recursive: true});
+    for (const [from, to] of [[join(env.AGENT_LOGS, 'runners'), 'runners'], [env.BEHAVIOR_DIR, 'behavior']]) if (existsSync(from)) cpSync(from, join(KEEP_DIR, to), {recursive: true});
+    console.log(`  the runner and behavior logs are kept in ${KEEP_DIR}`)} catch (e) {console.log('  could not keep the logs: ' + e.message)}
+}
 const PAGE = 'http://localhost:5173', SEED = 5, OLLAMA_SEAT = 7, DEAR_SEAT = 4;
 let fails = 0;
 const ok = (c, m) => {console.log(`  ${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) fails++; return !!c};
@@ -31,6 +39,7 @@ async function main() {
   const ol = await startMockOllama();
   const env = await quietEnv({OLLAMA_URL: ol.url, CLOCKTOWER_FAKE_SDK: 'scripts/fake-agent-sdk.mjs', AGENT_PROVIDER: 'anthropic', AGENT_MIN_GAP: '2',
     AGENT_MAX_FAILS: '50', RUNNER_CLAUDE_MAX: '8', SESSION_ROLL_TOKENS: '6000', GAME_BUDGET: '5'});
+  let completed = false;
   const R = await startRelayProcess(['--play-only', '--runners', '--game', '--seed', String(SEED)], env), {base} = R;
   const start = body => req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body});
   const view = () => req(base, '/play/runner', {origin: PAGE});
@@ -82,13 +91,20 @@ async function main() {
     const logs = join(env.AGENT_LOGS, 'runners'), files = readdirSync(logs).filter(f => f.endsWith('.log'));
     const text = Object.fromEntries(files.map(f => [f, readFileSync(join(logs, f), 'utf8')]));
     const turnLines = Object.fromEntries(files.map(f => [f, text[f].split('\n').filter(l => /\[turn \d+\]/.test(l))]));
+    // A turn line is completed (its cost line: "| ctx 3k | turn $x | run $y", the local loop's "(local)" line) or says why it is
+    // not ("| cut: stopped, reported spend" when a stop ends a turn in flight, "| failed: <error>", the local loop's "failed").
+    // Completed turns must carry the cost; interrupted ones must say why; any other shape fails and is printed.
+    const COST = /\| ctx \d+k \| turn \$\d+\.\d+ \| run \$\d+\.\d+/, WHY = /\| (?:cut|failed): \S/;
+    const show = l => l.replace(/^\[[\d:]+\] /, '').slice(0, 220);
     for (let id = 1; id <= 7; id++) {const f = `player-${id}.log`, t = turnLines[f] || [];
-      ok(t.length > 0 && (id === OLLAMA_SEAT || t.every(l => /\| ctx \d+k \| turn \$\d+\.\d+ \| run \$\d+\.\d+/.test(l))), `seat #${id}: ${t.length} turns, each with its cost line${id === OLLAMA_SEAT ? ' (local)' : ' and the session size'}${t[0] ? ': ' + t[0].replace(/^\[[\d:]+\] /, '').slice(0, 140) : ''}`)}
+      const local = id === OLLAMA_SEAT, done = t.filter(l => local ? /\(local\)/.test(l) : !WHY.test(l)), cut = t.filter(l => !done.includes(l));
+      const bad = local ? cut.filter(l => !/\] failed \| run \$/.test(l)) : [...done.filter(l => !COST.test(l)), ...cut.filter(l => !COST.test(l))];
+      ok(done.length > 0 && !bad.length, `seat #${id}: ${done.length} completed turns, each with its cost line${local ? ' (local)' : ' and the session size'}${cut.length ? `; ${cut.length} cut short, each saying why (${cut.map(l => (l.match(/\| (?:cut|failed): [^|]*/) || ['failed'])[0].replace(/^\| /, '')).join('; ')})` : ''}${bad.length ? '\n         offending: ' + bad.map(show).join('\n         offending: ') : done[0] ? ': ' + show(done[0]).slice(0, 140) : ''}`)}
     const stTurns = turnLines['storyteller.log'] || [];
     ok(stTurns.some(l => /scripted/.test(l)) && stTurns.some(l => /\| ctx \d+k/.test(l)), `the Storyteller played turns with its mind and then scripted (${stTurns.length} turns)`);
     ok(Object.values(text).some(t => /\[session rolled/.test(t)), 'a session rolled before its price line');
     const turns = jsonl(join(env.BEHAVIOR_DIR, 'clocktower', 'turns.jsonl')), counted = v.runners.reduce((n, r) => n + r.turns, 0);
-    const allTurnLines = Object.values(turnLines).reduce((n, t) => n + t.length, 0);
+    const allTurnLines = Object.values(turnLines).reduce((n, t) => n + t.filter(l => !/\] failed \| run \$/.test(l)).length, 0); // the local loop writes no behavior line for a turn that failed outright
     ok(turns.length > 0 && turns.length === allTurnLines, `the behavior log has one line per turn (${turns.length} lines, ${allTurnLines} turn lines in the runner logs, ${counted} counted by the supervisor)`);
     const empty = turns.filter(t => !(t.brief && typeof t.brief.text === 'string' && t.brief.text.trim()));
     ok(!empty.length, `every turn played from a non-empty header${empty.length ? ': ' + empty.length + ' without' : ''}`);
@@ -96,9 +112,11 @@ async function main() {
     ok(ev.some(e => e.event === 'budget' && e.key === 'player:' + DEAR_SEAT) && ev.some(e => e.event === 'pause'), 'the events log has the budget stop and the pause');
     const sum = `mock game seed ${SEED}: ${look.winner || 'no winner'}; ${turns.length} turns, ${turns.filter(t => t.provider === 'anthropic').length} by Claude (fake), ${turns.filter(t => t.provider === 'ollama').length} by Ollama (mock), ${turns.filter(t => t.provider === 'scripted').length} scripted; $${(v.game.players.spent + v.game.storyteller.spent).toFixed(4)} counted, $0 spent`;
     console.log('\n' + sum);
+    completed = true;
   } finally {
     await Promise.race([R.stop(), sleep(10000)]); try {R.child.kill()} catch {}
     ol.close();
+    if (fails || !completed) keepLogs(env);
   }
   console.log(fails ? `${fails} mock game check(s) failed` : 'mock game check: all ok');
   process.exit(fails ? 1 : 0);
