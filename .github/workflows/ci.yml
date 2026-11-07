@@ -76,6 +76,7 @@ jobs:
         with: {node-version: 22, cache: npm}
       - run: npm ci
       - {name: Relay seats and claims, run: npm run relaycheck}
+      - {name: "Channel check (secrets stay in their seat; a whole game through the relay)", run: npm run channelcheck}
       - {name: Runners with budget stops, run: npm run runnercheck}
       - {name: Providers against their mocks, run: npm run providercheck}
       - {name: The launcher starts the relay and the page, run: npm run upcheck}
