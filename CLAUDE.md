@@ -5,15 +5,13 @@ Storyteller agent runs the game; every seat at the table is an agent; the owner 
 
 ## Hard rules
 
-- **Our own roles, in public.** The repo is public, so the roles, their names, their flavour and every
-  line of text are our own. The *mechanics* follow the game (teams, night order, what each ability does,
-  the win conditions); the official character names, script names, art, logos and rules text never enter
-  the repo, not in code, docs, tests, issues, PR text or commit messages. `docs/ROLES.md` is the canon:
-  each role has our name, its team and the mechanic it carries, written in our words. A git-ignored
-  `overlay.local.json` at the repo root may map our names to the official ones for the owner's private
-  play only; every check passes with the file absent, and `npm run rightscheck` uses it, when present,
-  as a blocklist over the tracked files (a tracked file that carries an official name fails). The
-  `lore-keeper` names things and holds this line.
+- **Private repo, the real script.** A personal project: the first script is Trouble Brewing as the game
+  has it, with its official role names as the ids in code, so the agents can play the game they already
+  know. The characters and the script belong to The Pandemonium Institute, so the repo stays private and
+  nothing is published; no official art, logo or rulebook text is copied in, the ability text is ours in
+  our words. `docs/ROLES.md` keeps a skin of our own names (Thistlewick, The Stopped Hour) mapped to the
+  official ones, for a public release later; nothing depends on it today. The `lore-keeper` keeps the
+  skin, the seat names and the voice.
 - **Watcher only.** The owner never holds a seat, never nominates, never votes, never whispers. The page
   shows everything (the grimoire included); it changes nothing.
 - **Every seat is an agent.** Players and the Storyteller alike. A seat whose runner is gone pauses the
@@ -26,7 +24,7 @@ Storyteller agent runs the game; every seat at the table is an agent; the owner 
   seat's tool result, prompt or event carries it. The watcher's page still sees everything.
 - **The Storyteller is bound by the rules, free in its judgement.** The engine enforces the script
   (night order, who acts, what a poisoned ability returns); the Storyteller agent makes the calls the
-  rules leave to it (who is drunk, which true or false information to give, how hard a game to run), and
+  rules leave to it (the Drunk, which information to give the Washerwoman, how hard a game to run), and
   every call is logged with its reason.
 - **Seeded games replay identically** with the same agent answers, so a bug can be reproduced. Game
   logic takes its randomness from the seeded RNG only, never `Math.random` or the clock.
@@ -50,7 +48,7 @@ Dedicated subagents live in `.claude/agents/`. Delegate to them by area:
 | `infra` | Relay, runners, providers, CI, the launcher, behavior logs | Sonnet |
 | `playtest-reviewer` | Reads game logs after play, files evidenced issues (no code) | Sonnet |
 | `pm` | Issues, labels, priority, briefs (no code, no merges) | Haiku |
-| `lore-keeper` | Names and flavour for anything of our own; `docs/ROLES.md`; the rights line | Sonnet |
+| `lore-keeper` | Seat names, flavour, the Storyteller's voice, the skin of our own names in `docs/ROLES.md` | Sonnet |
 
 Models are set in each agent's frontmatter. Escalate one task by overriding `model` on the Agent call (the
 first runtime port ran `infra` on Opus); run at most three Opus agents at once. For a feature that spans
@@ -71,18 +69,17 @@ areas, plan it, hand each part to its owner, then have `lore-keeper` check every
   `git -C E:/clocktower status` shows none of their files.
 - **Small PRs, always green.** CI runs on every PR and on `main`; the one required check is **CI ok**.
   An open issue labelled `red-main` ("main is red") is a merge stop: nothing merges but the fix.
-- **Merging.** While the repo is private on the free plan there is no branch protection: a PR labelled
-  `automerge` is merged by `.github/workflows/automerge.yml` once CI ok passes on its head. Once the
-  repo is public, main requires CI ok and up-to-date branches, and briefs end with
-  `gh pr merge <n> --auto --merge` instead. The manager owns both.
+- **Merging.** The repo is private on the free plan, so there is no branch protection: a PR labelled
+  `automerge` is merged by `.github/workflows/automerge.yml` once CI ok passes on its head. While GitHub
+  Actions does not run (issue #7), the manager runs every check locally and merges by hand on local green.
 - **Every PR carries its patch note.** `docs/patchnotes/<PR number>.md` (front matter `title`, `date`,
   `area`, `issues`, then 1-6 `- ` lines) written for the owner as a watcher: what he will see or can do
   now, in plain words, no file or function names, no hashes ("Nothing you will notice: ..." for CI and
   tests). `npm run rulescheck` fails a PR without it unless the PR has the label `no-notes`; the
   launcher and `npm run notes` show them.
-- **Names go through lore.** Anything newly named (a role, a team, a script, a town) is added to
-  `docs/ROLES.md` in the same PR and `lore-keeper` checks it before merge. Role ids in code are our
-  names in kebab-case, never an official one.
+- **Names go through lore.** Role ids in code are the official names in kebab-case (`fortune-teller`,
+  `scarlet-woman`). Anything we name ourselves (seats, the town, narration) goes through `lore-keeper`
+  and `docs/ROLES.md` in the same PR.
 - **Numbers and rules go through the rules-keeper.** A change to a role's mechanic, the night order or
   a win condition carries a test in `npm run sim` or a rules check, and the seeded sim summary in the PR.
 - **Issues are the queue.** Work is tracked as GitHub issues labelled `area:<area>`; `agent-ready`
@@ -99,31 +96,29 @@ areas, plan it, hand each part to its owner, then have `lore-keeper` check every
   calls fail with a clear message). `GET /health` lists the providers it can reach.
 - `npm run sim [-- --seed N]` (slice 2): a seeded headless game with scripted seats, start to finish,
   printing the grimoire per night, each day's nominations and votes, and the winner.
-- `npm run channelcheck` (slice 3), `npm run rulescheck`, `npm run rightscheck`, `npm run notes`.
+- `npm run channelcheck` (slice 3), `npm run rulescheck`, `npm run notes`.
 - Local models: install Ollama, `ollama pull qwen2.5:14b`; `OLLAMA_URL` and `OLLAMA_MODEL` in `.env`.
 - `.env` keys, all optional: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `HF_TOKEN`,
   `OLLAMA_URL`. Copy `.env.example`.
 
 ## The game (milestone 1)
 
-Seven seats, text only, one page, the first script (our own, with the mechanics of the beginner script:
-thirteen town roles, four outsiders, four minions, one demon, as `docs/ROLES.md` names them). A complete
-game, fun to read from the first night to the final vote. The slices of issue #1, in order: scaffold,
+Trouble Brewing, seven seats, text only, one page: thirteen townsfolk, four outsiders, four minions, one
+demon. A complete game, fun to read from the first night to the final vote. The slices of issue #1, in order: scaffold,
 engine as data, seat tools and the channel check, runners play it, the day conversation, the page,
 measures. Not in milestone 1: other scripts, travellers, voice, art, more than one table.
 
 - **The engine (slice 2, `rules-keeper`).** `src/data/script.js` holds the script as data: roles with
   team, night order (first night and other nights), ability text as the engine reads it, setup changes
   (a role that adds or removes outsiders). `src/game/` holds phases (first night, day, nominations,
-  execution, night), the grimoire, death, drunk and poison, registering (an outsider or minion that may
-  register as the other team), the demon's standby, the servant who votes with a master, the win
-  conditions. Every rule with an edge case has a test. Scripted seats pick with the seeded RNG so the
+  execution, night), the grimoire, death, drunk and poison, registering (the Recluse and the Spy), the Scarlet
+  Woman, the Butler, the win conditions. Every rule with an edge case has a test. Scripted seats pick with the seeded RNG so the
   sim ends.
 - **Seats (slice 3).** `src/data/player-tools.js` and `src/data/storyteller-tools.js` are tool tables
   with `act` flags (an acting tool spends the turn; a reading tool does not). Each seat gets a state
   header per turn: what you know, who is alive, what was said since your last turn, the day's clock,
   the useful next tools. The Storyteller's tools read the grimoire, give night information, pick the
-  drunk and the demon's bluffs, rule on edge cases and narrate; every judgement call carries a reason.
+  Drunk and the demon's bluffs, rule on edge cases and narrate; every judgement call carries a reason.
   Decisions wait for a live agent; everyone-at-once scenes (a vote) force an answer from each seat.
 - **The day (slice 5).** Rounds of speaking in seat order with a chance to pass, whispers between
   rounds, nominations after a set number of rounds, a clock in the header. Measured, then changed.
@@ -169,7 +164,7 @@ input.
   `player-builder` and `storyteller-builder`.
 - `src/ui/`: the page. `ui-designer`.
 - `scripts/`: relay, runners, providers, launcher, checks (`*check.mjs`), reports. `infra`.
-- `docs/`: `ROLES.md` (lore), `patchnotes/`, `handoff.md`, `first-issue.md`.
+- `docs/`: `ROLES.md` (the skin and the seat names), `patchnotes/`, `handoff.md`, `first-issue.md`.
 - `.github/workflows/`: CI, red-main, automerge, nightly. `infra`.
 - `logs/`: git-ignored: behavior logs, runner logs, `tmp/`.
 
