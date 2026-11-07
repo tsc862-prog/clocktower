@@ -202,7 +202,7 @@ export function pendingFor(game, seat) {
   if (p.kind === 'choose' && p.seat === seat) return {kind: 'choose', role: p.role, question: p.question, options: copy(p.options), ...(p.count ? {count: p.count} : {})};
   if (p.kind === 'vote' && p.seats.includes(seat)) {
     const votes = game.ballot?.votes || {};
-    return {kind: 'vote', nominee: p.nominee, nominator: p.nominator, voted: Object.keys(votes).map(Number), ballots: copy(votes), mine: votes[seat] ?? null,
+    return {kind: 'vote', nominee: p.nominee, nominator: p.nominator, seats: [...p.seats], voted: Object.keys(votes).map(Number), ballots: copy(votes), mine: votes[seat] ?? null,
       question: `${nameOf(game, p.nominator)} nominates ${nameOf(game, p.nominee)}: do you vote to execute?${s.alive ? '' : ' (You are dead: a yes spends your one ghost vote.)'}`};
   }
   if (p.kind === 'nomination' && game.clock.nominationsOpen && s.alive && !game.today.nominators.includes(seat) && !game.clock.passedNominating.includes(seat)) {

@@ -150,10 +150,14 @@ section('night 2 and day 2: the dead, ghost votes, closeVote, the day ending its
   api.say(g, 0, 'From beyond: I was the Washerwoman.');
   ok(api.events(g, 1).some(e => e.type === 'say' && e.seat === 0), 'the dead still speak');
   api.nominate(g, 4, 6);
+  const pg = api.pendingFor(g, 1);
+  ok(Array.isArray(pg.seats) && pg.seats.includes(0) && g.seats.every(x => pg.seats.includes(x.index) === (x.alive || x.ghostVote)), 'the vote pending lists every seat that may vote, the dead with a ghost vote among them');
+  ok(Array.isArray(pg.voted) && typeof pg.ballots === 'object' && pg.mine === null, 'the vote pending keeps voted, ballots and mine');
   api.vote(g, 0, true);
   for (const i of [1, 2, 3, 4, 5, 6]) api.vote(g, i, false);
   ok(!g.seats[0].ghostVote && !api.view(g, 0).ghostVote, "Odette's yes spends her ghost vote");
   api.nominate(g, 5, 3);
+  ok(!api.pendingFor(g, 1).seats.includes(0), 'a dead seat with a spent ghost vote is not in the pending seats');
   ok(throws(() => api.vote(g, 0, true), /ghost vote is spent/), 'a vote from a seat not in the ballot is refused');
   ok(api.pendingFor(g, 0) === null, 'and it gets no vote pending');
   api.vote(g, 1, true);
