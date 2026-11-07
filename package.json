@@ -13,7 +13,6 @@
     "notes": "node scripts/patchnotes.mjs",
     "rulescheck": "node scripts/rulescheck.mjs",
     "flakehunt": "node scripts/flakehunt.mjs",
-    "rightscheck": "node scripts/rightscheck.mjs",
     "relaycheck": "node scripts/relaycheck.mjs",
     "runnercheck": "node scripts/runnercheck.mjs",
     "providercheck": "node scripts/providercheck.mjs",

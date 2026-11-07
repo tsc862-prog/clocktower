@@ -1,7 +1,10 @@
-# Roles: the canon
+# Roles: the skin, the seats and the voice
 
-Every name and word here is ours. The mechanics follow the genre; the words do not. If a name is added or
-changed anywhere, it is changed here in the same PR.
+The game is played as Trouble Brewing with its official role names (the ids in code are those names in
+kebab-case). This file keeps three things: a skin of our own names for every role, mapped to the official
+ones below, ready for a public release that would need it; the seven seat names; and the voice. The
+mechanics column is ours in our words and is what the engine's ability text follows. If a seat name or a
+flavour line changes anywhere, it changes here in the same PR.
 
 ## The setting
 
@@ -103,17 +106,35 @@ woken only if its role is in play. Roles marked "never" are not woken.
 The characters at the table, as the watcher sees them: **Odette, Bram, Ines, Corwin, Thea, Fitch, Yusuf**.
 Roles are dealt to seats at random; a name belongs to a character, not to a role.
 
-## The overlay
+## The official names
 
-For the owner's private play only. `overlay.local.json` at the repo root is git-ignored and maps our ids
-to the names of the game we are shaped after:
+The ids in code and the names the agents and the page use today are the official ones. The skin above
+maps onto them as follows; a public release would swap the right column for the left.
 
-```json
-{ "our-id": "the official name" }
-```
-
-Every check passes with the file absent. `npm run rightscheck` uses its values, when present, as a
-blocklist over the tracked files. The file and its values never enter the repo, an issue, a PR or a commit.
+| Ours | Official | Team |
+| --- | --- | --- |
+| Gossip | Washerwoman | townsfolk |
+| Almoner | Librarian | townsfolk |
+| Tipster | Investigator | townsfolk |
+| Busybody | Chef | townsfolk |
+| Watchman | Empath | townsfolk |
+| Dowser | Fortune Teller | townsfolk |
+| Gravedigger | Undertaker | townsfolk |
+| Warden | Monk | townsfolk |
+| Confessor | Ravenkeeper | townsfolk |
+| Magistrate | Virgin | townsfolk |
+| Sharpshooter | Slayer | townsfolk |
+| Tanner | Soldier | townsfolk |
+| Reeve | Mayor | townsfolk |
+| Apprentice | Butler | outsider |
+| Tippler | Drunk | outsider |
+| Misfit | Recluse | outsider |
+| Blameless | Saint | outsider |
+| Brewer | Poisoner | minion |
+| Eavesdropper | Spy | minion |
+| Understudy | Scarlet Woman | minion |
+| Landlord | Baron | minion |
+| Thirteenth Stroke | Imp | demon |
 
 ## Voice
 

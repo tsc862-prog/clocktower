@@ -43,7 +43,6 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           GH_TOKEN: ${{ github.token }}
-      - {name: Rights (no official name in a tracked file), run: npm run rightscheck}
       - {name: Build the page, run: npm run build}
       - name: Quote the patch note on the PR
         if: github.event_name == 'pull_request'

@@ -1,15 +1,15 @@
-# Epic: the first game (our first script, 7 seats, text only, watcher only)
+# Epic: the first game (Trouble Brewing, 7 seats, text only, watcher only)
 
-Owner decisions (2026-11-07): the owner is a watcher only; this is a new repo, not a mode of Eldmoor; the repo is public, so the roles and their names are our own from day one (the mechanics follow the game, the official names, art and text never enter the repo).
+Owner decisions (2026-11-07): the owner is a watcher only; this is a new repo, not a mode of Eldmoor; the normal Trouble Brewing with its real role names, since this is a personal project; the repo is public, as a fan project, for free CI (both decided 2026-11-07, afternoon).
 
 ## Done when
 
-One complete 7-player game of our first script (the mechanics of the beginner script, our own roles) runs from first night to the final vote with seven agent players and an agent Storyteller, readable on one page, seeded and replayable, with zero leaks in the channel check, and a behavior report that gives the win, the cost per seat and the leak count.
+One complete 7-player Trouble Brewing game runs from first night to the final vote with seven agent players and an agent Storyteller, readable on one page, seeded and replayable, with zero leaks in the channel check, and a behavior report that gives the win, the cost per seat and the leak count.
 
 ## Slices, in order
 
 1. **Scaffold** (infra): copy the borrowed layers from Eldmoor as README lists them, rename hero to player and dm to storyteller, make `npm run up` start the relay and the page, CI green on an empty game. No game logic.
-2. **Engine as data** (rules): `src/data/script.js` for the first script (roles, teams, night order, ability text as the engine reads it; ids are our own names from `docs/ROLES.md`), `src/game/` for phases, the grimoire, death, drunk and poison, registering (the outsider and the minion that may register as the other team), the demon's standby, the servant who votes with a master, the win conditions. A seeded headless game with scripted seats (`npm run sim`) plays to an end. Tests for every rule the script has an edge case for.
+2. **Engine as data** (rules): `src/data/script.js` for Trouble Brewing (roles, teams, night order, ability text as the engine reads it; ids are the official names in kebab-case), `src/game/` for phases, the grimoire, death, drunk and poison, registering (Recluse, Spy), the Scarlet Woman, the Butler, the win conditions. A seeded headless game with scripted seats (`npm run sim`) plays to an end. Tests for every rule the script has an edge case for.
 3. **Seat tools and the channel check**: the player tool table and the Storyteller tool table; the state header per seat; the check that plants a secret in one seat and reads every other seat's tool results, prompts and events.
 4. **Runners play it**: a mock-mind game end to end on the copied runners; then one paid game.
 5. **The day conversation, v1**: rounds in seat order with pass, whispers between rounds, nominations after N rounds, the clock in the header. Measured, then changed.
@@ -31,4 +31,4 @@ One complete 7-player game of our first script (the mechanics of the beginner sc
 
 ## Rights
 
-Public repo, our own roles. Only the mechanics follow the game; no name, art, text or logo of the official game is copied in. A git-ignored overlay file may map our names to the official ones for the owner's private play, and every check passes without it.
+Public fan project. The official script and character names are used; no art, logo, token image or rulebook text of the game is copied in, every sentence is ours, nothing is sold. `docs/ROLES.md` keeps a skin of our own names mapped to the official ones, should a swap ever be needed.
