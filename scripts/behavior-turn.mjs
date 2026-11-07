@@ -22,7 +22,7 @@ const brief = b => b ? {state: b.state, doing: b.doing || null, hp: b.hp, level:
 export function turnCollector() {
   const tools = [], ids = new Map(); let narr = [];
   return {
-    tool(name, id) {const t = {name: String(name || '').replace(/^mcp__clocktower__/, ''), ok: true}; tools.push(t); if (id) ids.set(id, t)},
+    tool(name, id, args) {const t = {name: String(name || '').replace(/^mcp__clocktower__/, ''), ok: true, ...(args && typeof args === 'object' ? {args} : {})}; tools.push(t); if (id) ids.set(id, t)},
     result(id, content, isError) {const t = ids.get(id) || tools[tools.length - 1]; if (!t) return; const r = resultOf(content); if (isError && r.ok) {r.ok = false; r.error = cut(content, 140)} Object.assign(t, r)},
     text(s) {if (s && String(s).trim()) narr.push(String(s).trim())},
     get tools() {return tools},

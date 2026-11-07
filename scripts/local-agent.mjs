@@ -338,7 +338,7 @@ export async function localTurn({chat, call, sess, prompt, model, toolTurns = 12
     const text0 = typeof r === 'string' ? r : JSON.stringify(r);
     const text = r && typeof r === 'object' && r.ok === false && typeof r.error === 'string' ? JSON.stringify({...r, error: r.error + TOOL_NOTE}) : text0;
     on('result', text0);
-    stat.calls.push(r && typeof r === 'object' && r.ok === false ? {name, ok: false, error: String(r.error || 'error').slice(0, 140), ...(r.refused ? {refused: true} : {})} : {name, ok: true}); // the behavior log's turn line
+    stat.calls.push(r && typeof r === 'object' && r.ok === false ? {name, args: c.args || rawArgs || {}, ok: false, error: String(r.error || 'error').slice(0, 140), ...(r.refused ? {refused: true} : {})} : {name, args: c.args || rawArgs || {}, ok: true}); // the behavior log's turn line (args reach the supervisor's last turn, not the log)
     if (r && typeof r === 'object' && r.ok === false && (r.offline || /did not answer in time|page went away|game is not connected|paused or reloading/i.test(String(r.error || '')))) stat.gameDown = (stat.gameDown || 0) + 1; // the page was away, not the model's mistake
     if (/"dead":true/.test(text)) stat.dead = true;
     if (name === 'scene_act' && r && r.ok !== false && Number.isFinite(r.waited_s)) (stat.sceneS = stat.sceneS || []).push(r.waited_s); // the table's wait when it answered
