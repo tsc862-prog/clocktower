@@ -1,0 +1,120 @@
+/* The watcher's page: one wide screen (3440x1440) in four columns, two on a laptop, one on a phone. Plain and readable for a long
+   watch: no decoration that does not carry information. Colours mark meaning only: evil roles, the dead, private lines, votes. */
+:root {
+  --bg: #14121a; --panel: #1b1922; --line: #2c2935; --ink: #e8e2d4; --dim: #9a937f; --faint: #6d6758;
+  --good: #8fb6d8; --evil: #d88f8f; --ok: #7fbf7f; --off: #c97b6b; --gold: #d8c27a; --private: #b59ad8; --st: #c8b48a;
+  --serif: Georgia, 'Times New Roman', serif; --sans: system-ui, 'Segoe UI', sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--serif); }
+button, input, select { font: 14px var(--sans); color: var(--ink); background: #262330; border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; }
+button:not(:disabled) { cursor: pointer; } button:not(:disabled):hover { border-color: var(--dim); }
+button:disabled { color: var(--faint); }
+.dim { color: var(--dim); } small { color: var(--dim); font-weight: normal; font-size: .8em; }
+a { color: var(--gold); }
+
+#gamebar { display: flex; flex-direction: row; flex-wrap: wrap; border-radius: 0; align-items: center; gap: .4rem 1.2rem; padding: .5rem 1rem; border-bottom: 1px solid var(--line); background: var(--panel); }
+.bar h1 { margin: 0; font-size: 1.5rem; font-weight: normal; letter-spacing: .08em; }
+.bar .phase { font-size: 1.15rem; color: var(--gold); }
+.bar .winner { font-size: 1.15rem; color: var(--bg); background: var(--gold); padding: 0 .6rem; border-radius: 3px; }
+.bar .empty { margin: 0; color: var(--dim); }
+.bar .field { font: 14px var(--sans); color: var(--dim); }
+.bar .source { font: 14px var(--sans); color: var(--dim); }
+.bar .grow { flex: 1; }
+.relay { font: 13px var(--sans); color: var(--off); } .relay[data-state="connected"] { color: var(--ok); }
+
+#board { display: grid; gap: 10px; padding: 10px; height: calc(100vh - 52px);
+  grid-template-columns: minmax(520px, .95fr) minmax(560px, 1.35fr) minmax(420px, .85fr) minmax(560px, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "square talk rulings agents" "grimoire talk rulings agents"; }
+#square { grid-area: square; } #grimoire { grid-area: grimoire; } #talk { grid-area: talk; } #rulings { grid-area: rulings; } #agents { grid-area: agents; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.panel h2 { margin: 0; padding: .45rem .8rem; font-size: 1.05rem; font-weight: normal; letter-spacing: .04em; border-bottom: 1px solid var(--line); color: var(--st); }
+.panel h2 .opt { float: right; margin-left: 1rem; font: 12px var(--sans); color: var(--dim); letter-spacing: 0; }
+#grimoire, #agents { overflow: auto; }
+
+/* the square */
+.ring { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 64vh; margin: 0 auto; }
+.seat { position: absolute; transform: translate(-50%, -50%); width: 27%; text-align: center; padding: .3rem .2rem; border: 1px solid var(--line); border-radius: 8px; background: #211e29; font-size: .95rem; line-height: 1.3; }
+.seat .name { font-size: 1.15rem; }
+.seat .life { font: 12px var(--sans); color: var(--dim); }
+.seat.dead { opacity: .7; border-style: dashed; } .seat.dead .name { text-decoration: line-through; text-decoration-color: var(--faint); }
+.ghost.unspent { color: var(--ink); } .ghost.spent { color: var(--faint); }
+.seat.is-nominee { border-color: var(--evil); box-shadow: 0 0 0 1px var(--evil); }
+.seat.is-nominator { border-color: var(--gold); }
+.mark { font: 11px var(--sans); padding: 0 .3rem; border-radius: 3px; }
+.mark.nominee { background: var(--evil); color: var(--bg); } .mark.nominator { background: var(--gold); color: var(--bg); }
+.hand { font: 600 13px var(--sans); } .hand.up { color: var(--ok); } .hand.down { color: var(--off); } .hand.none { color: var(--faint); }
+.seat .st { margin-top: .2rem; padding-top: .2rem; border-top: 1px dotted var(--line); font: 12px var(--sans); }
+.sees { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+.role.team-townsfolk, .role.team-outsider { color: var(--good); } .role.team-minion, .role.team-demon { color: var(--evil); }
+.believed { color: var(--dim); }
+.tok { display: inline-block; font: 11px var(--sans); padding: 0 .3rem; margin: 1px; border: 1px solid var(--line); border-radius: 3px; color: var(--private); }
+.tok.off { color: var(--faint); text-decoration: line-through; }
+.centre { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 38%; text-align: center; }
+.centre .quiet { color: var(--dim); font-size: 1.2rem; }
+.vote .what { font-size: 1rem; } .vote .tally { font-size: 1.6rem; color: var(--gold); } .vote .bar, .vote .left { font: 12px var(--sans); color: var(--dim); }
+
+/* grimoire */
+.grim-row { display: grid; grid-template-columns: 1.6rem 5.5rem 9rem 9rem 9rem 1fr; gap: .4rem; padding: .3rem .8rem; border-bottom: 1px solid var(--line); font-size: .95rem; align-items: baseline; }
+.grim-row[data-alive="no"] { color: var(--dim); }
+.grim-row .n { color: var(--faint); font: 12px var(--sans); } .grim-row .life, .grim-row .believed { font: 12px var(--sans); }
+.grim-foot { padding: .5rem .8rem; font-size: .95rem; display: grid; gap: .3rem; }
+.wake { font: 12px var(--sans); } .wake.done { color: var(--faint); } .wake.now { color: var(--gold); } .wake.skip { text-decoration: line-through; }
+
+/* talk and the Storyteller's log */
+.log .lines { flex: 1; overflow-y: auto; padding: .4rem .9rem 2.5rem; overflow-anchor: none; }
+.log .follow { position: absolute; bottom: .7rem; left: 50%; transform: translateX(-50%); background: var(--gold); color: var(--bg); border: 0; }
+.line { padding: .15rem 0; }
+.line .who { color: var(--gold); font-weight: normal; }
+.line.pass { font-size: .9rem; }
+.line.break { margin: .7rem 0 .3rem; padding: .2rem .5rem; color: var(--st); border-top: 1px solid var(--line); font: 13px var(--sans); text-transform: uppercase; letter-spacing: .05em; }
+.line.break.night { color: #9aa3d8; }
+.line.narration { color: var(--st); font-style: italic; padding-left: 1rem; border-left: 2px solid var(--st); margin: .3rem 0; }
+.line .st-name { font: normal 11px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--faint); }
+.line.whisper { margin: .3rem 0 .3rem 1.5rem; padding: .2rem .6rem; border-left: 2px dashed var(--private); color: var(--private); }
+.line.whisper .lean { font: 13px var(--sans); } .line.whisper .text { font-style: italic; }
+.unheard { font: 10px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--faint); margin-left: .4rem; }
+.line.nomination { color: var(--evil); } .line.vote-result { color: var(--gold); font-size: .95rem; }
+.line.event { font-weight: bold; } .line.win { margin-top: .6rem; font-size: 1.2rem; color: var(--gold); }
+.line.private { font: 13px var(--sans); color: var(--private); opacity: .85; }
+.seen-by { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); margin-right: .3rem; }
+#talk[data-hide-told="yes"] .line.told, #talk[data-hide-told="yes"] .line.private.death { display: none; }
+#talk[data-hide-asides="yes"] .line.aside { display: none; }
+.ruling { padding: .4rem 0; border-bottom: 1px solid var(--line); font-size: .95rem; }
+.ruling .head { font: 12px var(--sans); color: var(--dim); } .ruling .kind { color: var(--st); }
+.ruling .q { color: var(--dim); } .ruling .why { margin-top: .15rem; }
+.ruling.scripted .why { color: var(--dim); font-style: italic; }
+.flag { font: 10px var(--sans); text-transform: uppercase; padding: 0 .3rem; border: 1px solid var(--off); color: var(--off); border-radius: 3px; }
+
+/* agents */
+.agents-top { padding: .5rem .8rem; border-bottom: 1px solid var(--line); display: grid; gap: .4rem; }
+.pools { font: 13px var(--sans); display: flex; flex-wrap: wrap; gap: .3rem 1rem; }
+.agents-buttons { display: flex; gap: .5rem; flex-wrap: wrap; } .resume { background: var(--gold); color: var(--bg); border: 0; }
+.agents-note { margin: 0; font: 13px var(--sans); color: var(--off); } .agents-note:empty { display: none; }
+.agent { padding: .45rem .8rem; border-bottom: 1px solid var(--line); }
+.agent-head { display: flex; flex-wrap: wrap; gap: .2rem .8rem; align-items: baseline; font: 13px var(--sans); }
+.agent-head .who { font: 1.05rem var(--serif); min-width: 6.5rem; }
+.state { padding: 0 .4rem; border-radius: 3px; border: 1px solid var(--line); color: var(--dim); }
+.s-playing { color: var(--ok); border-color: var(--ok); } .s-ready { color: var(--good); border-color: var(--good); }
+.s-warming, .s-claimed, .s-stopping { color: var(--gold); border-color: var(--gold); } .s-gone { color: var(--off); border-color: var(--off); }
+.agent-head .why { color: var(--off); flex-basis: 100%; }
+.agent-ctl { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .3rem; }
+.agent-ctl input[name="model"] { width: 12rem; } .agent-ctl input[name="budget"] { width: 6.5rem; }
+.last-turn summary { font: 12px var(--sans); color: var(--dim); cursor: pointer; margin-top: .2rem; }
+.last-turn pre { white-space: pre-wrap; font: 12px/1.4 ui-monospace, Consolas, monospace; color: var(--dim); margin: .3rem 0; max-height: 18rem; overflow: auto; }
+.last-turn .tools { font: 12px var(--sans); margin: .2rem 0; padding-left: 1.4rem; } .err { color: var(--off); }
+
+/* a laptop: two columns */
+@media (max-width: 1900px) {
+  #board { height: auto; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto auto auto;
+    grid-template-areas: "square talk" "grimoire talk" "rulings agents"; }
+  #talk { height: 80vh; } #rulings, #agents { height: 60vh; }
+}
+/* a phone: one column, in reading order */
+@media (max-width: 900px) {
+  #board { grid-template-columns: minmax(0, 1fr); grid-template-areas: "square" "talk" "grimoire" "rulings" "agents"; }
+  .seat { width: 31%; font-size: .8rem; } .seat .name { font-size: 1rem; }
+  .grim-row { grid-template-columns: 1.4rem 5rem 1fr; } .grim-row .believed, .grim-row .life { grid-column: 3; } .grim-row .tokens { grid-column: 1 / -1; }
+  .panel h2 .opt { float: none; display: block; margin: 0; }
+}

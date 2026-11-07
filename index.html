@@ -4,23 +4,60 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Clocktower</title>
-  <style>
-    :root { --bg: #14121a; --ink: #e8e2d4; --dim: #9a937f; --ok: #7fbf7f; --off: #c97b6b; }
-    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 16px/1.5 Georgia, 'Times New Roman', serif; }
-    main { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .5rem; }
-    h1 { margin: 0; font-size: clamp(2.5rem, 6vw, 5rem); font-weight: normal; letter-spacing: .08em; }
-    #empty { margin: 0; color: var(--dim); font-size: 1.25rem; }
-    #health { position: fixed; top: 1rem; right: 1.25rem; font: 13px/1.4 system-ui, sans-serif; color: var(--dim); text-align: right; }
-    #health b { font-weight: 600; }
-    #health .ok { color: var(--ok); } #health .off { color: var(--off); }
-  </style>
+  <link rel="stylesheet" href="/styles/page.css">
 </head>
 <body>
-  <main>
+  <header id="gamebar" class="panel bar">
     <h1>Clocktower</h1>
-    <p id="empty">No game yet</p>
+    <label class="field" title="The seed of the next game; New game deals with it">seed <input id="seed" name="seed" size="6" inputmode="numeric"></label>
+    <span id="rounds" class="dim"></span>
+    <span id="phase" class="phase"></span>
+    <span id="winner" class="winner" hidden></span>
+    <p id="empty" class="empty">No game yet</p>
+    <select id="frames" hidden title="Which moment of the recorded game"></select>
+    <span id="source" class="source"></span>
+    <span class="grow"></span>
+    <span id="act-msg" class="dim" aria-live="polite"></span>
+    <button id="new-game" disabled title="Needs the relay to start a new game over the wire">New game</button>
+    <span id="relay-state" class="relay" data-state="not-connected">relay: checking...</span>
+  </header>
+  <main id="board">
+    <section id="square" class="panel" aria-label="The town square">
+      <h2>The Square</h2>
+      <div class="ring"><div class="centre"></div></div>
+    </section>
+    <section id="grimoire" class="panel" aria-label="The grimoire">
+      <h2>Grimoire <small>as the Storyteller sees it</small></h2>
+      <div class="seats"></div>
+      <div class="grim-foot"></div>
+    </section>
+    <section id="talk" class="panel log" aria-label="The day's talk">
+      <h2>The day's talk
+        <label class="opt"><input type="checkbox" name="told" checked> what each seat is told</label>
+        <label class="opt"><input type="checkbox" name="asides" checked> runners' asides</label>
+      </h2>
+      <div class="lines" tabindex="0"></div>
+      <button class="follow" hidden>Follow the newest</button>
+    </section>
+    <section id="rulings" class="panel log" aria-label="The Storyteller's log">
+      <h2>Storyteller's log <small>every call and its reason</small></h2>
+      <div class="lines" tabindex="0"></div>
+      <button class="follow" hidden>Follow the newest</button>
+    </section>
+    <section id="agents" class="panel" aria-label="Agents">
+      <h2>Agents</h2>
+      <div class="agents-top">
+        <div class="pools"></div>
+        <div class="agents-buttons">
+          <button data-act="start-all">Start all</button>
+          <button data-act="stop-all">Stop all</button>
+          <button data-act="resume" class="resume" hidden title="The Storyteller's runner is gone: let the scripted Storyteller answer from here on">Resume the game</button>
+        </div>
+        <p class="agents-note"></p>
+      </div>
+      <div class="agent-rows"></div>
+    </section>
   </main>
-  <aside id="health" aria-live="polite">relay: checking...</aside>
   <script type="module" src="/src/ui/main.js"></script>
 </body>
 </html>
