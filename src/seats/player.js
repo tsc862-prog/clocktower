@@ -155,6 +155,8 @@ export function clockLine(v, me) {
   return 'The game is being set up.';
 }
 export function usefulTools(v, asked, news) {
+  // the dead are never in toSpeak: pass means nothing to them; they may still speak and whisper
+  if (v.alive === false && v.phase === 'day' && asked?.kind !== 'vote' && asked?.tool !== 'night_choice') return news?.total ? ['read_talk', 'speak', 'whisper'] : ['speak', 'whisper', 'read_talk'];
   if (asked?.tool === 'night_choice') return ['night_choice', 'what_is_asked', 'my_role'];
   if (asked?.kind === 'vote' && !asked.done) return ['vote', 'who_voted', 'read_talk'];
   if (asked?.kind === 'nomination') return ['nominate', 'pass', 'read_talk'];
@@ -184,5 +186,6 @@ export function playerHeader(game, seat, api) {
   ];
   if (asked && !asked.done) lines.push(`**WAITING ON YOU: ${asked.text}**`);
   lines.push(`Useful now: ${usefulTools(v, asked, news).join(', ')}.`);
+  if (v.alive === false && v.phase === 'day') lines.push(`You are dead: you may still speak and whisper${v.ghostVote ? ', and vote once with your ghost vote' : ''}; there is nothing to pass.`);
   return lines.join('\n');
 }
