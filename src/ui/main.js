@@ -1,6 +1,7 @@
 // The page's entry: connects to the relay (the launcher, npm run up, tells Vite its address as VITE_RELAY_URL; without it the
-// default port 8787) and drives src/ui/app.js on timers: the game every second and a half, the runners every two seconds, the
-// relay's health every five, the WebSocket /play as it pushes (reconnecting by itself). ?fixture shows the recorded game instead
+// default port 8787) and drives src/ui/app.js: the WebSocket /play pushes the game as it happens (reconnecting by itself; the page
+// reads the game route when the socket opens or reopens, and every second and a half only while it is down), the runners every two
+// seconds, the relay's health every five. ?fixture shows the recorded game instead
 // (src/ui/fixtures/game.json), with nothing sent to the relay.
 import {createApp} from './app.js';
 import {relayClient} from './relay.js';
@@ -20,12 +21,13 @@ async function boot() {
   const app = createApp({client, seed: SEED});
   window.clocktower = app;
   const every = (ms, f) => {f(); setInterval(f, ms)};
-  every(1500, app.pollWatch); every(2000, app.pollRunners); every(5000, app.pollHealth);
+  every(1500, app.tickWatch); every(2000, app.pollRunners); every(5000, app.pollHealth);
   const connect = () => {
     let ws;
     try {ws = new WebSocket(client.socketUrl())} catch {setTimeout(connect, 3000); return}
-    ws.onmessage = m => {try {app.onSocket(JSON.parse(m.data))} catch {}};
-    ws.onclose = () => setTimeout(connect, 3000);
+    ws.onopen = () => app.onSocketOpen();
+    ws.onmessage = m => {let msg; try {msg = JSON.parse(m.data)} catch {return} app.onSocket(msg)};
+    ws.onclose = () => {app.onSocketClose(); setTimeout(connect, 3000)};
   };
   connect();
 }
