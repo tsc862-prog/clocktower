@@ -1,6 +1,6 @@
 # Epic: the first game (Trouble Brewing, 7 seats, text only, watcher only)
 
-Owner decisions (2026-11-07): the owner is a watcher only; this is a new repo, not a mode of Eldmoor; the normal Trouble Brewing with its real role names, since this is a personal project, so the repo stays private (decided 2026-11-07, afternoon).
+Owner decisions (2026-11-07): the owner is a watcher only; this is a new repo, not a mode of Eldmoor; the normal Trouble Brewing with its real role names, since this is a personal project; the repo is public, as a fan project, for free CI (both decided 2026-11-07, afternoon).
 
 ## Done when
 
@@ -31,4 +31,4 @@ One complete 7-player Trouble Brewing game runs from first night to the final vo
 
 ## Rights
 
-Private repo. The official script and characters are used for private play only. Nothing is published, and no art, logo or rulebook text of the game is copied in; ability text is written in our words. `docs/ROLES.md` keeps a skin of our own names (mapped to the official ones) for a public release later.
+Public fan project. The official script and character names are used; no art, logo, token image or rulebook text of the game is copied in, every sentence is ours, nothing is sold. `docs/ROLES.md` keeps a skin of our own names mapped to the official ones, should a swap ever be needed.
