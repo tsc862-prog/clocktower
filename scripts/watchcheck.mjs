@@ -8,6 +8,8 @@
 //      `since` past the end of the game (a new game began) reads from the start.
 //   3. A new game over the wire: POST /play/game/new {seed, rounds} replaces the game (seed, rounds and events from id 0 in the watch),
 //      every seat claim stays with its runner, a claimed runner plays on and a stranger is still refused.
+//   2b. The live push: the page's WebSocket gets {type: 'watch', seed, last, events, clock, pending, ballot, phase, day, night, winner}
+//      within a second of a seat's line said through the relay, with that line among its events, in the watch body's shapes.
 //   4. A runner's last turn: the supervisor (--runners) starts a Claude seat on the fake Agent SDK; its runner view carries
 //      lastTurn {wake, at, cost, header, tools: [{tool, args, ok}]} for the page's origin and none for a local request.
 // Waits go through scripts/ci-clock.mjs (CI_FAST).
@@ -17,6 +19,7 @@ import {fileURLToPath} from 'node:url';
 import {relayGame, table} from './channelcheck.mjs';
 import {quietEnv, startRelayProcess, req} from './relaycheck.mjs';
 import {ms} from './ci-clock.mjs';
+import WebSocket from 'ws';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PAGE = 'http://localhost:5173', EVIL = 'http://evil.example';
@@ -66,6 +69,22 @@ async function watcher() {
     ok(wl.events.length === 0 && wl.last === w.last, 'since the last id: nothing new');
     const wf = await get(`/play/watch?since=${w.last + 1000}`, PAGE);
     ok(wf.events.length === w.events.length && wf.events[0].id === 0, 'a since past the end of the game reads from the start');
+
+    console.log('the live push');
+    const sock = new WebSocket(base.replace(/^http/, 'ws') + '/play', {origin: PAGE}), got = [];
+    await new Promise((res, rej) => {sock.once('open', res); sock.once('error', rej)});
+    sock.on('message', d => {try {const m = JSON.parse(String(d)); if (m.type === 'watch') got.push({m, at: Date.now()})} catch {}});
+    const gg = backend.game, who = gg.seats.find(x => x.alive && !gg.clock.spoke.includes(x.index)).index, line = 'Pushmark: the square hears this at once.';
+    const t0 = Date.now(), said = await T.call(who, 'speak', {text: line});
+    ok(said.ok, `${gg.seats[who].name} says a line through the relay`);
+    const hit = await until(async () => got.find(x => x.m.events.some(e => e.type === 'say' && e.text === line)), 1500, 20);
+    ok(!!hit && hit.at - t0 <= 1000, `the page's socket gets the line within a second (${hit ? hit.at - t0 + ' ms' : 'not at all'})`);
+    if (hit) {
+      const m = hit.m, wb = await get(`/play/watch?since=${m.events[0].id - 1}`, PAGE), keys = ['seed', 'last', 'events', 'clock', 'pending', 'ballot', 'phase', 'day', 'night', 'winner'];
+      ok(keys.every(k => k in m) && keys.every(k => typeOf(m[k]) === typeOf(wb[k])), `the push carries ${keys.join(', ')}, in the watch body's types`);
+      ok(JSON.stringify(m.events) === JSON.stringify(wb.events.filter(e => e.id <= m.last)) && m.last === Math.max(...m.events.map(e => e.id)), "its events are the watch body's events, the same shapes");
+    }
+    sock.close();
 
     console.log('a new game over the wire');
     const before = await get('/play/health');
