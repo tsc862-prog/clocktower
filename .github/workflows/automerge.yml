@@ -1,0 +1,57 @@
+name: Auto-merge
+
+# While the repo is private on the free plan there is no branch protection and no native auto-merge, so this does it: a PR
+# labelled "automerge" is merged as soon as "CI ok" passes on its latest commit, unless an issue "main is red" is open.
+# Labelling a PR whose CI already passed merges it at once. Retire this file for gh pr merge --auto once the repo is public.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+  checks: read
+  statuses: read
+  issues: read
+
+concurrency:
+  group: automerge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'automerge')
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      EVENT: ${{ github.event_name }}
+      RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+      PR_NUM: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Merge when labelled and green
+        run: |
+          if [ "$EVENT" = workflow_run ]; then
+            pr=$(gh pr list -R "$REPO" --state open --json number,headRefOid --jq ".[] | select(.headRefOid == \"$RUN_SHA\") | .number" | head -1)
+          else
+            pr="$PR_NUM"
+          fi
+          if [ -z "$pr" ]; then echo "no open PR for this run"; exit 0; fi
+          red=$(gh issue list -R "$REPO" --state open --label red-main --json number --jq 'length')
+          if [ "$red" != 0 ]; then echo "main is red: merge stop"; exit 0; fi
+          info=$(gh pr view "$pr" -R "$REPO" --json labels,isDraft,headRefOid)
+          echo "$info"
+          if ! echo "$info" | jq -e '.labels | map(.name) | index("automerge")' >/dev/null; then echo "#$pr has no automerge label"; exit 0; fi
+          if [ "$(echo "$info" | jq -r .isDraft)" != false ]; then echo "#$pr is a draft"; exit 0; fi
+          head=$(echo "$info" | jq -r .headRefOid)
+          ok=$(gh api "repos/$REPO/commits/$head/check-runs?check_name=CI%20ok" --jq '.check_runs | sort_by(.completed_at) | last | .conclusion')
+          if [ "$ok" != success ]; then echo "#$pr: CI ok is '$ok' on $head, waiting"; exit 0; fi
+          gh pr merge "$pr" -R "$REPO" --merge --delete-branch
+          # a merge made with GITHUB_TOKEN starts no push workflow, so run CI on main explicitly
+          gh workflow run ci.yml -R "$REPO" --ref main || true
