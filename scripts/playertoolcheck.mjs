@@ -479,7 +479,7 @@ section("the Slayer's standing shot: an honest header line, slay, night_choice's
   const toDay = (game, sc) => {
     for (let n = 0; n < 500 && !(game.phase === 'day' && game.step === 'nominations' && game.pending?.kind === 'nomination'); n++) {
       const p = game.pending;
-      if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game));
+      if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(game, i, ''); else api.answer(game, p.seat, sc(game));
     }
   };
   const real = (seed = 7) => {
@@ -559,6 +559,7 @@ section('integration: a real game through the real api, every seat with its own 
     const p = game.pending;
     if (!p) break;
     if (p.seat === 'storyteller') {api.answer(game, 'storyteller', answerer(game), STR); continue}
+    if (p.kind === 'thoughts') {for (const i of p.seats) api.think(game, i, ''); continue} // the night's thoughts (#111): the think tool is the player-builder's
     if (p.kind === 'choose') {
       const i = p.seat, h = header(i); done.headers++;
       if (!/WAITING ON YOU/.test(h)) done.bad.push(`no waiting line for a choice: ${h}`);
@@ -725,7 +726,7 @@ section('rooms in a real game: a line in a room stays in the room, the moves are
   const header = i => {const h = playerHeader(game, i); out[i].push(h); return h};
   for (let n = 0; n < 500 && !(game.phase === 'day' && api.roomsOpen(game)); n++) {
     const p = game.pending;
-    if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game));
+    if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(game, i, ''); else api.answer(game, p.seat, sc(game));
   }
   const nm = i => game.seats[i].name, [O, T, I] = [0, 4, 2], PARLOUR = api.where(game, 0).rooms.find(x => x.id === 'parlour').name; // the lore-keeper's name for it
   ok(api.roomsOpen(game) && game.seats.every(s => s.alive), `seed 7, day 1: the talk has begun and the rooms are open (${game.seats.map(s => s.name).join(', ')})`);
@@ -882,7 +883,7 @@ section('game 3 fixes: claims checked before repeated (#67), a reason to use a r
   const game = newGame({seed: 23, rounds: 1}), sc = createScripted(23);
   const ctx = i => ({game, seat: {index: i, name: game.seats[i].name}, api: api.forSeat(i), log: () => {}});
   const call = (i, name, args = {}) => tool(name).handler(args, ctx(i));
-  const step = () => {const p = game.pending; if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game))};
+  const step = () => {const p = game.pending; if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(game, i, ''); else api.answer(game, p.seat, sc(game))};
   for (let n = 0; n < 500 && !(game.phase === 'day' && api.roomsOpen(game)); n++) step();
   const SW = game.seats.findIndex(s => s.role === 'scarlet-woman'), IMP = game.seats.findIndex(s => s.role === 'imp'), nm = i => game.seats[i].name;
   ok(SW >= 0 && IMP >= 0, `seed 23 deals a Scarlet Woman (${nm(SW)}) and an Imp (${nm(IMP)})`);
@@ -1026,7 +1027,7 @@ section("game 4 fixes: no dodge on day 1 (#87), the Poisoner's targets (#88), th
   // carry the poison line and never offer the demon; every header stays under the cap.
   const first = newGame({seed: 31}), sc = createScripted(31);
   for (let n = 0; n < 500 && !(first.phase === 'day' && api.roomsOpen(first)); n++) {
-    const p = first.pending; if (p.seat === api.ST) api.answer(first, api.ST, sc(first), 'scripted'); else api.answer(first, p.seat, sc(first));
+    const p = first.pending; if (p.seat === api.ST) api.answer(first, api.ST, sc(first), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(first, i, ''); else api.answer(first, p.seat, sc(first));
   }
   const monk = first.seats.findIndex(s => s.role === 'monk');
   ok(monk >= 0 && /First day: the Monk first acts on night 2, so you have nothing to tell yet/.test(playerHeader(first, monk)), `the Monk's day 1 header: ${monk >= 0 ? playerHeader(first, monk) : 'no Monk'}`);

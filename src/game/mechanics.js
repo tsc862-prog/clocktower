@@ -5,11 +5,11 @@ import {roleOf, roleName, teamOf, alive, aliveCount, addToken, hasToken, removeT
 import {HOOKS} from './abilities.js';
 
 // Every kind of decision the engine can wait for. scripted.js answers each one.
-export const PENDING_KINDS = ['believed-role', 'red-herring', 'demon-bluffs', 'choose', 'info', 'register', 'mayor-bounce', 'star-pass', 'nomination', 'vote'];
+export const PENDING_KINDS = ['believed-role', 'red-herring', 'demon-bluffs', 'choose', 'info', 'register', 'mayor-bounce', 'star-pass', 'nomination', 'vote', 'thoughts'];
 
 // pending = {id, kind, seat, question, options, count?, seats?, role?, subject?, truth?, malfunctioning?, ...}
-//   seat: a seat index (that seat answers), 'storyteller', or 'table' (the table's turn: a nomination, a vote)
-//   options: the legal answers; count: pick that many distinct options (an array); seats: who answers a vote
+//   seat: a seat index (that seat answers), 'storyteller', or 'table' (the table's turn: a nomination, a vote, the night's thoughts)
+//   options: the legal answers; count: pick that many distinct options (an array); seats: who answers a vote or the thoughts
 export function ask(state, spec) {
   return {id: state.answers.length, phase: state.phase, night: state.night, day: state.day, ...spec};
 }

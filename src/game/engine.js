@@ -8,6 +8,13 @@ import {createState} from './state.js';
 
 const live = new WeakMap();
 
+// The thoughts scene (#111): at the end of every night, after the last wake and before dawn, every living seat may say what it
+// is thinking. The answer is {seat: text}; each non-empty text is logged as a 'thought' for the watcher alone (audience 'watcher':
+// no seat and not the Storyteller ever reads it). A text is trimmed and cut to THOUGHT_MAX; anything that is not a string is no thought.
+export const THOUGHT_MAX = 400;
+export const THOUGHTS_QUESTION = 'The night is ending. In a sentence or two, what are you thinking?';
+export const thoughtText = v => typeof v === 'string' ? v.trim().slice(0, THOUGHT_MAX).trim() : '';
+
 // Start a fresh state's game; it runs to the first decision.
 export function start(state) {
   const gen = run(state);
@@ -24,7 +31,8 @@ function settle(state, r) {
 }
 
 // Answer the pending decision. The value must be one of pending.options (or, with pending.count, an array of that
-// many distinct options; for a vote, {seat: true|false} for every seat in pending.seats). Throws on anything else.
+// many distinct options; for a vote, {seat: true|false} for every seat in pending.seats; for the thoughts, {seat: text}, never
+// refused: a missing or bad text is no thought). Throws on anything else.
 // Returns the live state: the same object, unless the state was copied (JSON) and had to be replayed.
 export function answer(state, value) {
   if (!state.pending) throw new Error(state.winner ? 'the game is over' : 'no decision is pending');
@@ -43,6 +51,11 @@ export function replay(copy, script) {
 }
 
 export function validate(p, value) {
+  if (p.kind === 'thoughts') {
+    const out = {};
+    for (const s of p.seats) {const t = thoughtText(value && typeof value === 'object' ? value[s] : undefined); if (t) out[s] = t}
+    return out;
+  }
   if (p.kind === 'vote') {
     if (!value || typeof value !== 'object') throw new Error('a vote is {seat: true|false} for every voter');
     const out = {};
@@ -129,6 +142,12 @@ function* night(state) {
       if (state.winner) return;
     }
   }
+  // the night's thoughts: every living seat at once, like a vote; then dawn
+  state.step = 'thoughts';
+  const seats = alive(state).map(s => s.index);
+  if (!seats.length) return;
+  const thoughts = yield ask(state, {kind: 'thoughts', seat: 'table', seats, question: THOUGHTS_QUESTION});
+  for (const i of seats) if (thoughts[i]) log(state, 'thought', {seat: i, text: thoughts[i], audience: 'watcher'});
 }
 
 function* day(state) {

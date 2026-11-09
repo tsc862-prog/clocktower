@@ -31,7 +31,7 @@ import * as api from './api.js';
 import {PLAYER_TOOLS, ATTEMPT_INVITE} from '../data/player-tools.js';
 import {STORYTELLER_TOOLS} from '../data/storyteller-tools.js';
 import {playerHeader} from '../seats/player.js';
-import {STORYTELLER_SPOKEN} from '../data/spoken.js';
+import {STORYTELLER_SPOKEN, SEAT_SPOKEN} from '../data/spoken.js';
 import {storytellerHeader} from '../seats/storyteller.js';
 import * as stSeat from '../seats/storyteller.js'; // storytellerDue (PR #74), read behind a guard: the backend runs without it
 
@@ -39,7 +39,7 @@ export const SCRIPTED_GRACE_MS = 2000, PACE_MAX_MS = 30000, PUSH_MS = 250;
 // The voice's clock (issue #50): a page that reported within HEARD_FRESH_MS with its voice on, and more than one spoken line ahead
 // of what it has heard, makes a soft wake wait (HOLD_MS per poll), never longer than HOLD_CAP_MS for one seat.
 export const HEARD_FRESH_MS = 90000, HOLD_MS = 1500, HOLD_CAP_MS = 30000;
-const SPOKEN = new Set(STORYTELLER_SPOKEN); // the list the page reads too (src/data/spoken.js)
+const SPOKEN = new Set(STORYTELLER_SPOKEN), SEAT_SAYS = new Set(SEAT_SPOKEN); // the lists the page reads too (src/data/spoken.js)
 export const SCRIPTED_REASON = 'scripted default: no Storyteller answered in time';
 const ST = api.ST;
 
@@ -71,10 +71,11 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
   // Clips (the relay's voice hook: {clip(name, text) -> Promise<{id, ms}>}) and the page's heard mark.
   let voice = null, heard = null;
   const clips = new Map(), asked = new Set(), holdSince = {};
-  // What a public log entry says aloud: {name, text} or null (whispers and night deaths are silent).
+  // What a public log entry says aloud: {name, text} or null (whispers and night deaths are silent). A seat's line and its night
+  // thought (#111, the watcher's alone) are in the seat's own voice.
   const spoken = e => {
     if (!e || typeof e.text !== 'string' || !e.text.trim()) return null;
-    if (e.type === 'say' && Number.isInteger(e.seat) && game.seats[e.seat]) return {name: game.seats[e.seat].name, text: e.text};
+    if (SEAT_SAYS.has(e.type) && Number.isInteger(e.seat) && game.seats[e.seat]) return {name: game.seats[e.seat].name, text: e.text};
     if (e.type === 'death' ? e.phase === 'day' : SPOKEN.has(e.type)) return {name: 'Storyteller', text: e.text};
     return null;
   };
@@ -109,15 +110,16 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     return a;
   })());
 
-  // The watcher's events after `from`: the Storyteller's view plus the whispers and room talk it never hears.
+  // The watcher's events after `from`: the Storyteller's view plus the whispers and room talk it never hears, and the entries for
+  // the watcher alone (audience 'watcher': the seats' night thoughts, #111).
   function watchEvents(from) {
     const copy = v => v == null ? v : JSON.parse(JSON.stringify(v));
-    const told = api.events(game, ST, from), whispers = game.log.filter(e => (e.type === 'whisper' || e.type === 'say' && e.room != null) && e.id > from).map(({n, ...e}) => copy(e));
+    const told = api.events(game, ST, from), whispers = game.log.filter(e => (e.type === 'whisper' || e.type === 'say' && e.room != null || e.audience === 'watcher') && e.id > from).map(({n, ...e}) => copy(e));
     return [...told, ...whispers].sort((a, b) => a.id - b.id);
   }
   // The game's public events for the behavior log (#100), once each: every log entry after the watermark, as it happens (changed() runs
   // after every act), seats as names. Only the types the table sees (not what the Storyteller was told or ruled); the grimoire is left out.
-  const LOGGED = new Set(['night', 'dawn', 'phase', 'say', 'pass', 'whisper', 'move', 'nomination', 'vote', 'vote-closed', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'death', 'win']);
+  const LOGGED = new Set(['night', 'dawn', 'phase', 'say', 'pass', 'whisper', 'move', 'nomination', 'vote', 'vote-closed', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'death', 'win', 'thought']);
   let emitted = -1;
   function emitEvents() {
     let evs; try {evs = watchEvents(emitted)} catch {return}
@@ -130,14 +132,24 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
       const r = {src: 'event', id: e.id, type: e.type === 'vote' ? 'vote-result' : e.type, phase: e.phase, day: e.day, night: e.night};
       for (const k of ['what', 'round', 'text', 'team', 'reason', 'cause', 'how', 'tally', 'needed', 'need']) if (e[k] != null) r[k] = e[k];
       if (e.room != null) {r.room = e.room; if (rooms.has(e.room)) r.roomName = rooms.get(e.room)}
-      for (const k of ['seat', 'by', 'from', 'to', 'target', 'nominator']) if (typeof e[k] === 'number') r[k === 'seat' && ['say', 'pass', 'death', 'execution'].includes(e.type) ? 'who' : k] = nm(e[k]);
+      for (const k of ['seat', 'by', 'from', 'to', 'target', 'nominator']) if (typeof e[k] === 'number') r[k === 'seat' && ['say', 'pass', 'death', 'execution', 'thought'].includes(e.type) ? 'who' : k] = nm(e[k]);
       for (const k of ['seats', 'yes', 'missing', 'deaths']) if (Array.isArray(e[k])) r[k] = nms(e[k]);
       if (e.block) r.block = {seat: e.block.seat == null ? null : nm(e.block.seat), votes: e.block.votes};
       try {onEvent(r)} catch {}
     }
   }
 
+  // The thoughts scene (#111) waits on the seats only when they have a tool to answer it (the player's `think`); a table without one
+  // has no thought to give, so the scene is answered empty for every living seat at once and nothing is logged.
+  const seatsThink = players.some(t => t && t.name === 'think');
+  function noThoughts() {
+    const p = game.pending;
+    if (seatsThink || !p || p.kind !== 'thoughts') return;
+    for (const i of p.seats) if (game.pending === p && api.pendingFor(game, i)?.mine === null) api.think(game, i, '');
+  }
+
   function changed() {
+    try {noThoughts()} catch (e) {log(`[game] the empty thoughts failed: ${e.message}`)}
     const p = game.pending, id = p ? p.id : null, fresh = id !== pendingId;
     pendingId = id;
     if (!nominating()) stag = null; else if (!stag) stag = newStag(); // the stagger starts when the nomination decision opens (again)
