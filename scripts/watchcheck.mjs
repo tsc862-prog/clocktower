@@ -90,7 +90,11 @@ async function watcher() {
     const before = await get('/play/health');
     const ng = await req(base, '/play/game/new', {method: 'POST', body: {seed: 7, rounds: 2}, origin: PAGE});
     ok(ng.status === 200 && ng.ok && ng.seed === 7 && ng.rounds === 2, `POST /play/game/new {seed: 7, rounds: 2}: ${ng.status}`);
-    const nw = await get('/play/watch', PAGE);
+    const nw = await get('/play/watch', PAGE), h7 = await get('/play/health');
+    ok(typeof before.gameId === 'string' && /^5-\d{8}T\d{6}Z/.test(before.gameId) && w.gameId === before.gameId, `the game id in /play/health and the watch body: ${before.gameId}`);
+    ok(typeof ng.gameId === 'string' && /^7-\d{8}T\d{6}Z/.test(ng.gameId) && ng.gameId !== before.gameId && nw.gameId === ng.gameId && h7.gameId === ng.gameId, `a new game deals a new id (${ng.gameId}), in the answer, the watch body and /play/health`);
+    const ng2 = await req(base, '/play/game/new', {method: 'POST', body: {seed: 7, rounds: 2}, origin: PAGE});
+    ok(ng2.gameId && ng2.gameId !== ng.gameId, `the same seed dealt again in the same second is still a new id (${ng2.gameId})`);
     ok(nw.seed === 7 && nw.rounds === 2 && nw.events[0].id === 0 && nw.day === 0 && !nw.events.some(e => e.type === 'whisper'), 'the watch serves the new game from its first event');
     const after = await get('/play/health');
     ok(after.players.every(p => p.claimed) && after.storyteller.claimed && JSON.stringify(before.players.map(p => p.id)) === JSON.stringify(after.players.map(p => p.id)), 'every seat claim stays');
@@ -118,8 +122,52 @@ async function lastTurn() {
   } finally {await Promise.race([R.stop(), sleep(10000)]); try {R.child.kill()} catch {}}
 }
 
+// #69: when nominations open the seats that may nominate are woken one at a time in seat order (the stagger), a seat that passes
+// moves the next one up, a vote wakes every voter at once, and once the game is over every pace answers {ok: false, gone: true}.
+async function nominationPace() {
+  console.log('nominations in seat order, nothing after the end');
+  const {gameBackend} = await import('../src/game/backend.js');
+  const tools = [
+    {name: 'speak', act: true, desc: 'speak', args: {}, handler: (a, ctx) => ({ok: true, ...ctx.api.say(ctx.game, ctx.seat.index, a.text)})},
+    {name: 'pass', act: true, desc: 'pass', args: {}, handler: (a, ctx) => ({ok: true, ...ctx.api.pass(ctx.game, ctx.seat.index)})},
+    {name: 'nominate', act: true, desc: 'nominate', args: {}, handler: (a, ctx) => ({ok: true, ...ctx.api.nominate(ctx.game, ctx.seat.index, a.target)})},
+  ];
+  let t = 1e12; const STAG = 5000;
+  const be = gameBackend({seed: 3, players: tools, storyteller: [], scripted: true, grace: 5, now: () => t, stagger: STAG});
+  try {
+    let day = null; const t0 = Date.now();
+    while (be.game.phase !== 'day' && Date.now() - t0 < 8000) day = await be.call(1, 'pace', {realMs: 200, wake: 'all'});
+    ok(be.game.phase === 'day', `the scripted Storyteller carries the game to day 1 (${day && day.clock}, pending ${JSON.stringify(be.game.pending && be.game.pending.kind)})`);
+    for (const r of [1, 2, 3]) for (let i = 1; i <= 7; i++) await be.call(i, 'speak', {text: `Round ${r} from seat ${i}.`});
+    ok(be.game.clock.nominationsOpen && be.game.pending && be.game.pending.kind === 'nomination', 'after three rounds nominations open');
+    const paceAll = async () => {const out = []; for (let i = 1; i <= 7; i++) out.push((await be.call(i, 'pace', {realMs: 20, wake: 'now'})).wake); return out};
+    const w0 = await paceAll();
+    ok(w0[0] === 'now' && w0.slice(1).every(w => w === null), `at the opening only the first seat wakes (${w0.join(', ')})`);
+    const hb = await be.call(3, 'pace', {realMs: 20, wake: 'all'});
+    ok(hb.ok && hb.wake === null, `a later seat gets no heartbeat or soft wake while it waits its moment (${hb.wake}: ${hb.why})`);
+    t += STAG;
+    const w1 = await paceAll();
+    ok(w1[0] === 'now' && w1[1] === 'now' && w1.slice(2).every(w => w === null), `${STAG / 1000} s on the next seat wakes too (${w1.join(', ')})`);
+    ok((await be.call(1, 'pass', {})).ok, 'the first seat passes on nominating');
+    const w2 = await paceAll();
+    ok(w2[0] === null && w2[1] === 'now' && w2[2] === 'now' && w2.slice(3).every(w => w === null), `a pass moves the next seat up (${w2.join(', ')})`);
+    const target = be.game.seats[4].name, nom = await be.call(2, 'nominate', {target: 4});
+    ok(nom.ok && be.game.pending && be.game.pending.kind === 'vote', `the second seat nominates ${target}: a vote opens${nom.ok ? '' : ' (' + nom.error + ')'}`);
+    const w3 = await paceAll();
+    ok(w3.every(w => w === 'now'), `a vote wakes every voter at once (${w3.join(', ')})`);
+    be.game.winner = {team: 'good', text: 'good wins (the check ends the game)'};
+    const ends = [], stEnd = await be.pace('storyteller', {realMs: 20, wake: 'all'});
+    for (let i = 1; i <= 7; i++) ends.push(await be.call(i, 'pace', {realMs: 20, wake: 'all'}));
+    ok(ends.every(r => r.ok === false && r.gone === true) && stEnd.ok === false && stEnd.gone === true, "once the game is over every pace, the Storyteller's too, answers {ok: false, gone: true} at once, with unseen events");
+    const off = gameBackend({seed: 3, players: tools, storyteller: [], scripted: true, grace: 5});
+    ok(off.gameId && off.gameId !== be.gameId && /^3-19700101T000000Z/.test(off.gameId), `a backend with no clock still deals an id (${off.gameId})`);
+    off.close();
+  } finally {be.close()}
+}
+
 async function main() {
   console.log('\nClocktower watch check: the routes the page reads\n');
+  await nominationPace();
   await watcher();
   await lastTurn();
   console.log(fails ? `\n${fails} watch check(s) failed` : '\nwatch check: all ok');

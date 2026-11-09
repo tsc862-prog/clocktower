@@ -268,17 +268,19 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
 
   // The running runners, kept in logs/runners/active.json so `npm run up` can bring them back after a relay restart
   // (--resume-runners). A stop from the page, a crash or a runner that finished leaves the list; a host shutdown does not.
+  // the game the relay deals now (#66): the active list carries it, and a resume onto another game says its runners start fresh
+  const gameIdNow = () => {try {return (play && play.backend && play.backend.info().gameId) || null} catch {return null}};
   function saveActive() {
     if (closing || !enabled) return;
-    const rs = running().filter(r => !r.stopping && !r.budgetOut && !r.fresh).map(r => ({kind: r.kind, player: r.player ?? null, name: r.name, provider: r.provider || null, model: r.model || null, maxTurns: r.maxTurns ?? null, budget: r.budget ?? null, ...paceSaved(r)}));
-    try {mkdirSync(dir, {recursive: true}); const tmp = activeFile + '.tmp'; writeFileSync(tmp, JSON.stringify({saved: new Date(now()).toISOString(), runners: rs, ...(spentOut.size ? {spent: [...spentOut.values()]} : {})}, null, 1)); renameSync(tmp, activeFile)} catch {}
+    const rs = running().filter(r => !r.stopping && !r.budgetOut && !r.fresh).map(r => ({kind: r.kind, player: r.player ?? null, name: r.name, provider: r.provider || null, model: r.model || null, maxTurns: r.maxTurns ?? null, budget: r.budget ?? null, gameId: r.gameId ?? null, ...paceSaved(r)}));
+    try {mkdirSync(dir, {recursive: true}); const tmp = activeFile + '.tmp'; writeFileSync(tmp, JSON.stringify({saved: new Date(now()).toISOString(), gameId: gameIdNow(), runners: rs, ...(spentOut.size ? {spent: [...spentOut.values()]} : {})}, null, 1)); renameSync(tmp, activeFile)} catch {}
   }
 
   function start(req) {
     const args = runnerArgs(req, base());
     mkdirSync(dir, {recursive: true});
     const logFile = join(dir, req.key.replace(/[^A-Za-z0-9_-]+/g, '-') + '.log');
-    const r = {...req, started: now(), turns: 0, cost: 0, lines: [], logFile, done: false};
+    const r = {...req, started: now(), turns: 0, cost: 0, lines: [], logFile, done: false, gameId: gameIdNow()};
     const write = line => {try {appendFileSync(logFile, line + '\n')} catch {}};
     write(`=== ${new Date().toISOString()} start ${req.kind} ${req.name} | node ${args.join(' ')} | by ${req.by || 'local'}`);
     let child;
@@ -432,11 +434,15 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
   }
 
   // Bring back the runners of the last run (logs/runners/active.json; `npm run up` passes --resume-runners): each saved runner whose
-  // seat is still the same seat at the table (same id and name). Skipped ones leave the list. -> {resumed: [key], skipped: [{what, why}]}
+  // seat is still the same seat at the table (same id and name). Skipped ones leave the list. The list carries the game id it was
+  // saved under; a runner keeps its model session only on the same game id (#66), so a resume onto a new deal starts fresh.
+  // -> {resumed: [key], skipped: [{what, why}], gameId, lastGameId}
   async function resume() {
     const out = {resumed: [], skipped: []};
     if (!enabled) return out;
-    let saved, spent = []; try {const j = JSON.parse(readFileSync(activeFile, 'utf8')); saved = j.runners; spent = Array.isArray(j.spent) ? j.spent : []} catch {return out}
+    let saved, spent = [], was = null; try {const j = JSON.parse(readFileSync(activeFile, 'utf8')); saved = j.runners; spent = Array.isArray(j.spent) ? j.spent : []; was = j.gameId || null} catch {return out}
+    const cur = gameIdNow(); out.gameId = cur; out.lastGameId = was;
+    if (cur && was !== cur && Array.isArray(saved) && saved.length) log(`[runners] resume: game ${cur} is a new deal (the last run played ${was || 'an unknown game'}): every runner starts a fresh session`);
     saved = (Array.isArray(saved) ? saved : []).filter(x => x && typeof x === 'object' && RUNNER_KINDS[x.kind]);
     // Runners that ended on their budget stay ended across the restart: back on the page as stopped, and nothing below starts them.
     for (const x of spent.filter(x => x && typeof x === 'object' && RUNNER_KINDS[x.kind] && typeof x.key === 'string')) {if (table.has(x.key)) continue; spentOut.set(x.key, x); const at = Date.parse(x.at) || now(), why = x.why || 'budget reached';

@@ -4,6 +4,9 @@
 // discards a conversation. Player ids restart with a new game, so a file whose player name differs
 // from the player now behind that id belongs to an older game: it is moved to logs/agents/old/
 // rather than overwritten.
+// A session belongs to one dealt game (#66): the file carries the relay's gameId (/play/health), and a runner on another game id
+// sets the file aside and starts a fresh session ("new game <id>: fresh session"), so no seat plays on a memory of another table.
+// The same game id (a runner restarted mid-game) resumes. A relay with no game id (the stub) matches on the seat alone.
 // Plain Node, no SDK import.
 import {existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, rmSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
@@ -30,14 +33,17 @@ function writeAtomic(f, obj) {
 function archive(f, s, logs) {const to = join(sessionDir(logs), 'old', `${s.playerId}-${safe(s.playerName)}-${Date.now()}.json`); mkdirSync(dirname(to), {recursive: true}); renameSync(f, to); return to}
 
 // The session for this player, or a fresh one. fresh: the new session object to start.
-// Returns {sess, note}; note says when an older game's file was set aside.
-export function loadSession(playerId, playerName, fresh, {logs = LOGS, startNew = false} = {}) {
+// Returns {sess, note, newGame}; note says when an older game's file was set aside; newGame: the file was another game's.
+// gameId: the game the relay deals now (undefined: no game id, the seat alone decides).
+export const sameGame = (s, gameId) => gameId == null || s.gameId === gameId;
+export function loadSession(playerId, playerName, fresh, {logs = LOGS, startNew = false, gameId} = {}) {
   const f = sessionPath(playerId, logs), s = readJson(f);
-  if (s && s.playerId === playerId && s.playerName === playerName && !startNew) return {sess: s, note: null};
-  let note = null;
-  if (s && (s.playerName !== playerName || startNew)) note = 'earlier session kept at ' + archive(f, s, logs);
-  const sess = fresh(); if (s && s.playerName === playerName && s.runner) sess.runner = s.runner; // --new starts the conversation over, not the player's mind
-  return {sess, note};
+  if (s && s.playerId === playerId && s.playerName === playerName && sameGame(s, gameId) && !startNew) return {sess: s, note: null, newGame: false};
+  let note = null; const other = !!s && !sameGame(s, gameId);
+  if (s) note = (other ? `new game ${gameId}: fresh session (the last one was game ${s.gameId || 'unknown'}); ` : '') + 'earlier session kept at ' + archive(f, s, logs);
+  const sess = fresh(); if (gameId != null) sess.gameId = gameId;
+  if (s && s.playerName === playerName && s.runner) sess.runner = s.runner; // a new game or --new starts the conversation over, not the player's mind
+  return {sess, note, newGame: other};
 }
 // A roll (scripts/session-roll.mjs): the file goes where --new puts it, and the runner saves on under the same path.
 export function setAside(sess, logs = LOGS) {const f = sessionPath(sess.playerId, logs); return existsSync(f) ? archive(f, sess, logs) : null}
@@ -82,13 +88,14 @@ export function saveSession(sess, extra = {}, logs = LOGS) {writeAtomic(sessionP
 // The file carries the game tag the game reports; a file from another game, or
 // the old one on --new, is moved to logs/agents/old/ rather than overwritten, like a player's.
 export const storytellerSessionPath = (logs = LOGS) => join(sessionDir(logs), 'storyteller.json');
-export function loadStorytellerSession(game, fresh, {logs = LOGS, startNew = false} = {}) {
+export function loadStorytellerSession(game, fresh, {logs = LOGS, startNew = false, gameId} = {}) {
   const f = storytellerSessionPath(logs), s = readJson(f);
-  if (s && s.game === game && !startNew) return {sess: s, note: null};
-  let note = null;
-  if (s) note = 'earlier Storyteller session kept at ' + setAsideStoryteller(s, logs);
-  const sess = fresh(); if (s && s.game === game && s.runner) sess.runner = s.runner; // --new keeps the seat's mind
-  return {sess, note};
+  if (s && s.game === game && sameGame(s, gameId) && !startNew) return {sess: s, note: null, newGame: false};
+  let note = null; const other = !!s && s.game === game && !sameGame(s, gameId);
+  if (s) note = (other ? `new game ${gameId}: fresh session (the last one was game ${s.gameId || 'unknown'}); ` : '') + 'earlier Storyteller session kept at ' + setAsideStoryteller(s, logs);
+  const sess = fresh(); if (gameId != null) sess.gameId = gameId;
+  if (s && s.game === game && s.runner) sess.runner = s.runner; // a new game or --new keeps the seat's mind
+  return {sess, note, newGame: other};
 }
 export function setAsideStoryteller(sess, logs = LOGS) {const f = storytellerSessionPath(logs); if (!existsSync(f)) return null; const to = join(sessionDir(logs), 'old', `storyteller-${safe(sess.game)}-${Date.now()}.json`); mkdirSync(dirname(to), {recursive: true}); renameSync(f, to); return to}
 export function saveStorytellerSession(sess, extra = {}, logs = LOGS) {writeAtomic(storytellerSessionPath(logs), {...sess, ...extra, updated: new Date().toISOString()})}

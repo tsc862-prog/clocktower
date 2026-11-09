@@ -154,6 +154,60 @@ async function e2e() {
     ol.close(); oa.close();
   }
 }
+// #66: a seat's model session belongs to one dealt game. On one relay (--game, fake Agent SDK whose sessions outlive the process):
+// the same game restarted resumes its session (the context carries on); a new game (POST /play/game/new) starts every runner on a
+// fresh session id at a small context, its log says "new game <id>: fresh session", and the active list carries the game id; a
+// runner left running across a new deal rolls to a fresh session at its next wake.
+async function sessions() {
+  console.log('one session per dealt game');
+  const env = await quietEnv({CLOCKTOWER_FAKE_SDK: 'scripts/fake-agent-sdk.mjs', AGENT_PROVIDER: 'anthropic', AGENT_MIN_GAP: '1', AGENT_POLL_MS: String(ms(1000, 300))});
+  const R = await startRelayProcess(['--play-only', '--runners', '--game', '--seed', '5'], env), {base} = R;
+  const log1 = join(env.AGENT_LOGS, 'runners', 'player-1.log'), sessFile = join(env.AGENT_LOGS, 'agents', '1.json');
+  const text = () => existsSync(log1) ? readFileSync(log1, 'utf8') : '';
+  const turnCtx = t => [...t.matchAll(/\[turn \d+\][^\n]*\| ctx (\d+)k/g)].map(m => Number(m[1]));
+  const sess = () => JSON.parse(readFileSync(sessFile, 'utf8'));
+  const view = () => req(base, '/play/runner', {origin: PAGE}).then(r => (r.runners || []).find(x => x.key === 'player:1'));
+  const start = () => req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 1}});
+  const stopIt = async () => {await req(base, '/play/runner/stop', {method: 'POST', origin: PAGE, body: {player: 1}}); return until(async () => {const v = await view(); return v && v.state === 'stopped' ? v : null}, ms(15000, 8000))};
+  // the log after text offset `from`, once it has n turn lines
+  const turnsAfter = (from, n) => until(async () => {const t = text().slice(from); return turnCtx(t).length >= n ? t : null}, ms(40000, 20000));
+  try {
+    const g1 = (await req(base, '/play/health')).gameId;
+    ok(typeof g1 === 'string' && /^5-\d{8}T\d{6}Z$/.test(g1), `the relay deals game ${g1}`);
+    ok((await start()).status === 200, 'Odette starts on Claude (fake SDK)');
+    const run1 = await turnsAfter(0, 3);
+    const s1 = run1 && sess();
+    ok(!!run1 && /new session \(game /.test(run1) && s1.sessionId && s1.gameId === g1, `she plays on a new session ${s1 && s1.sessionId} for game ${s1 && s1.gameId}`);
+    const c1 = turnCtx(run1 || '');
+    ok(c1.length >= 3 && c1.at(-1) > c1[0], `her context grows as she plays (${c1.join('k, ')}k)`);
+    ok(!!(await stopIt()), 'stopped');
+
+    const at2 = text().length;
+    ok((await start()).status === 200, 'started again on the same game');
+    const run2 = await turnsAfter(at2, 1), c2 = turnCtx(run2 || '');
+    ok(!!run2 && run2.includes('resuming session ' + s1.sessionId) && sess().sessionId === s1.sessionId, 'the same game id resumes her session');
+    ok(c2.length && c2[0] > c1[0], `and the context carries on (${c2[0]}k against ${c1[0]}k at her first turn)`);
+    ok(!!(await stopIt()), 'stopped');
+
+    const ng = await req(base, '/play/game/new', {method: 'POST', origin: PAGE, body: {seed: 6}}), g2 = (await req(base, '/play/health')).gameId;
+    ok(ng.status === 200 && g2 === ng.gameId && g2 !== g1 && /^6-/.test(g2), `a new game: ${g2}`);
+    const at3 = text().length;
+    ok((await start()).status === 200, 'Odette starts on the new game');
+    const run3 = await turnsAfter(at3, 1), c3 = turnCtx(run3 || ''), s3 = sess();
+    ok(!!run3 && run3.includes(`new game ${g2}: fresh session`) && /new session \(game /.test(run3) && !run3.includes('resuming session'), `her log says "new game ${g2}: fresh session" and starts a new session`);
+    ok(s3.sessionId && s3.sessionId !== s1.sessionId && s3.gameId === g2, `a fresh session id (${s3.sessionId}, not ${s1.sessionId}) kept under game ${s3.gameId}`);
+    ok(c3.length && c3[0] <= c1[0], `at a small context again (${c3[0]}k, as her first turn of the first game: ${c1[0]}k)`);
+    const active = JSON.parse(readFileSync(join(env.AGENT_LOGS, 'runners', 'active.json'), 'utf8'));
+    ok(active.gameId === g2 && (active.runners || []).some(x => x.player === 1 && x.gameId === g2), `the active list carries the game id (${active.gameId})`);
+
+    const at4 = text().length, ng3 = await req(base, '/play/game/new', {method: 'POST', origin: PAGE, body: {seed: 7}});
+    const run4 = await until(async () => {const t = text().slice(at4); return t.includes(`new game ${ng3.gameId}: fresh session`) && turnCtx(t).length >= 1 ? t : null}, ms(40000, 20000));
+    ok(!!run4 && sess().gameId === ng3.gameId && sess().sessionId !== s3.sessionId, `a runner left running across a new deal rolls to a fresh session at its next wake (game ${ng3.gameId})`);
+    await stopIt();
+  } finally {await Promise.race([R.stop(), sleep(8000)]); try {R.child.kill()} catch {}}
+}
+
 await e2e().catch(e => {console.error(e); fails++});
+await sessions().catch(e => {console.error(e); fails++});
 console.log(fails ? `${fails} runner check(s) failed` : 'runner check: all ok');
 process.exit(fails ? 1 : 0);

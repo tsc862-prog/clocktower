@@ -161,8 +161,8 @@ export function startRelay({env = loadEnv(), argv = process.argv, port = Number(
   const {server} = createRelay({providers, model, origin, limits, tts, seats: () => play ? play.backend.info() : {}});
   const flag = k => {const i = argv.indexOf(k); return i >= 0 && argv[i + 1] != null && !String(argv[i + 1]).startsWith('--') ? argv[i + 1] : null};
   const backend = argv.includes('--game') ? gameBackend({seed: Number(flag('--seed') ?? 1), ...(flag('--rounds') != null ? {rounds: Number(flag('--rounds'))} : {}),
-    scripted: argv.includes('--scripted'), log, now: () => Date.now(), note: rec => {if (behavior) behavior.ingest('game', rec)}}) : null;
-  if (backend) log(`[relay] serving a game: seed ${Number(flag('--seed') ?? 1)}${argv.includes('--scripted') ? ', scripted Storyteller fallback' : ''}`);
+    scripted: argv.includes('--scripted'), log, now: () => Date.now(), stagger: nominationStagger(env), note: rec => {if (behavior) behavior.ingest('game', rec)}}) : null;
+  if (backend) log(`[relay] serving a game: seed ${Number(flag('--seed') ?? 1)}, game ${backend.gameId}${argv.includes('--scripted') ? ', scripted Storyteller fallback' : ''}`);
   play = attachPlay(server, {backend, origin, verbose, behavior, log});
   if (backend && tts) {backend.setVoice({clip: (name, text) => tts.clip(name, text)}); tts.extra = () => ({heard: backend.heardMark()})}
   const runnersOn = argv.includes('--runners') || /^(1|true|yes)$/i.test(env.RELAY_RUNNERS || '');
@@ -183,6 +183,10 @@ export function startRelay({env = loadEnv(), argv = process.argv, port = Number(
   });
   return {server, play, sup, quit, ready, providers};
 }
+
+// The nomination stagger (#69): ms between two seats' wakes when nominations open. NOMINATION_STAGGER_MS (0 to 60000), default 5 s.
+export const NOMINATION_STAGGER_MS = 5000;
+export function nominationStagger(env = {}) {const v = Number(env.NOMINATION_STAGGER_MS); return env.NOMINATION_STAGGER_MS != null && env.NOMINATION_STAGGER_MS !== '' && Number.isFinite(v) ? Math.min(60000, Math.max(0, Math.round(v))) : NOMINATION_STAGGER_MS}
 
 // ---- run as a script ----
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

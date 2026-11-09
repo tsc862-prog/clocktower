@@ -31,7 +31,7 @@ export async function quietEnv(extra = {}) {
   for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'HF_TOKEN', 'RELAY_RUNNERS', 'RELAY_TTS', 'AGENT_PROVIDER']) delete env[k];
   const logs = mkTmp('relaycheck-');
   if (!extra.TTS_URL) extra = {...extra, TTS_URL: 'http://127.0.0.1:' + await freePort()}; // never the real engine on this PC
-  return {...env, OLLAMA_URL: 'http://127.0.0.1:' + await freePort(), AGENT_LOGS: logs, BEHAVIOR_DIR: join(logs, 'behavior'), ...extra};
+  return {...env, OLLAMA_URL: 'http://127.0.0.1:' + await freePort(), AGENT_LOGS: logs, BEHAVIOR_DIR: join(logs, 'behavior'), NOMINATION_STAGGER_MS: '500', ...extra}; // a short nomination stagger: the path runs, the checks stay quick
 }
 // Start the relay script; resolves once it listens. -> {child, base, out: [lines], stop()}
 export async function startRelayProcess(args = [], env = {}) {
