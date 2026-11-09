@@ -14,6 +14,7 @@
 //                                game is over and the seat has seen the end: {ok: false, gone: true}.
 //   scripted: true               a Storyteller decision nobody answers within `grace` ms (counted from the decision or the
 //                                Storyteller's last call) is answered by the scripted default, with that as its reason.
+// now: the clock, given from outside (the relay passes its own clock); the engine folder reads none.
 // No node: import; timers only, so it runs in a browser too.
 import {newGame} from './state.js';
 import {createScripted} from './scripted.js';
@@ -32,7 +33,7 @@ export const SCRIPTED_REASON = 'scripted default: no Storyteller answered in tim
 const ST = api.ST;
 
 export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = SCRIPTED_GRACE_MS, players = PLAYER_TOOLS,
-  storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}, now = () => Date.now()} = {}) {
+  storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}, now = () => 0} = {}) {
   let game = newGame({seed, ...(seats ? {seats} : {}), ...(rounds != null ? {rounds} : {})});
   let answerer = scripted ? createScripted(seed) : null;
   const heardWaiters = new Set();
