@@ -21,6 +21,7 @@
     "cost-report": "node scripts/cost-report.mjs",
     "upcheck": "node scripts/upcheck.mjs",
     "ttscheck": "node scripts/ttscheck.mjs",
+    "voicetimingcheck": "node scripts/voicetimingcheck.mjs",
     "artcheck": "node scripts/artcheck.mjs",
     "art:portraits": "node scripts/art/portraits.mjs",
     "art:accept": "node scripts/art/accept.mjs",

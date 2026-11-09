@@ -21,6 +21,8 @@
 //                        (scripts/behavior-log.mjs); only from the runner that holds the seat. 404 when the host keeps none.
 //   GET  /play/health    {ok, connected, phase, players: [{id, name, alive, link, claimed, runner?, ready}], storyteller: {...}, calls}; local tools and
 //                        the page's origin (CORS)
+//   POST /play/heard     {last, voice} (the page's origin only): the newest event id the page finished playing and whether its voice
+//                        is on; while it lags more than one spoken line, backend.pace holds soft wakes ({wake: null, holdMs}, capped)
 //   GET  /play/watch?since=N the watcher's whole view (the page's origin only): backend.watch(since), src/game/backend.js
 //   POST /play/game/new  {seed?, rounds?} (the page's origin only): the backend's game replaced by a fresh seeded one; claims stay
 //
@@ -210,7 +212,7 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
     if (!(path === '/mcp' || path.startsWith('/play/')) || path === '/play/runner' || path.startsWith('/play/runner/')) {for (const f of prior) f.call(server, req, res); return}
     // The watcher's routes (/play/watch, /play/game/new) answer the page's origin only; /play/health answers local tools and the page.
     // Every other route refuses any Origin: a web page never drives a seat.
-    const o = req.headers.origin, page = !!o && o === origin, watcher = path === '/play/watch' || path === '/play/game/new';
+    const o = req.headers.origin, page = !!o && o === origin, watcher = path === '/play/watch' || path === '/play/game/new' || path === '/play/heard';
     const cors = page ? {'access-control-allow-origin': origin, vary: 'origin'} : {};
     const send = (code, obj) => {res.writeHead(code, {'content-type': 'application/json', ...cors}); res.end(JSON.stringify(obj))};
     if (!localHost(req.headers.host)) return send(403, {error: 'host not allowed'});
@@ -230,6 +232,12 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
         if (!be.watch) return send(404, {error: 'this relay serves no game (start it with --game)'});
         const s = q.get('since'), since = s == null || s === '' || !Number.isFinite(Number(s)) ? -1 : Math.floor(Number(s));
         return send(200, be.watch(since))}
+      if (path === '/play/heard') { // the page's ear: the newest event id it finished playing, and whether its voice is on
+        if (req.method !== 'POST') return send(405, {error: 'POST only'});
+        if (!be.heard) return send(404, {error: 'this relay serves no game (start it with --game)'});
+        const b = await readBody(req) || {}, last = Number(b.last);
+        if (!Number.isFinite(last)) return send(400, {ok: false, error: 'last is the newest event id the page has finished playing'});
+        const h = be.heard({last, voice: b.voice === true}); return send(200, {ok: true, heard: h})}
       if (path === '/play/game/new') {
         if (req.method !== 'POST') return send(405, {error: 'POST only'});
         if (!be.newGame) return send(404, {error: 'this relay serves no game (start it with --game)'});
