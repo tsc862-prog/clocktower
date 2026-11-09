@@ -118,6 +118,16 @@ const fakeApi = {
     need(p && p.kind === 'choose', 'Nothing is asked of you.');
     g.answered = value; delete g.pending[seat];
   },
+  // the Slayer's standing shot (#37): g.shot[seat] while unspent
+  dayActionFor(g, seat) {g.calls.push('dayActionFor'); return g.phase === 'day' && g.shot?.[seat] ? {...g.shot[seat]} : null},
+  dayAction(g, seat, target) {
+    g.calls.push('dayAction');
+    need(g.shot?.[seat], 'You have no ability to use by day.');
+    if (target === null) return {kept: true};
+    delete g.shot[seat]; g.shotAt = target;
+    g.events.push({id: g.events.length, type: 'slayer-shot', seat, target, day: g.day, audience: 'all', text: `${NAMES[seat]} claims the Slayer and shoots ${NAMES[target]}.`, truth: 'SECRET-TRUTH-not-the-demon'});
+    return {used: 'slayer', target};
+  },
   note(g, seat, text) {g.calls.push('note'); const n = g.notes[seat] || (g.notes[seat] = []); n.push({text, secret: 'SECRET-never-mind'}); if (n.length > 50) n.shift()},
   notes(g, seat) {g.calls.push('notes'); return [...(g.notes[seat] || [])]},
   // Storyteller only: a player's tool that calls these is a leak whatever it does with the answer
@@ -137,9 +147,9 @@ section('the table');
   const TYPES = ['string', 'integer', 'number', 'array', 'object'];
   ok(JSON.stringify(TOOL_NAMES) === JSON.stringify(PLAYER_TOOLS.map(t => t.name)), 'TOOL_NAMES is the table in order');
   ok(new Set(TOOL_NAMES).size === TOOL_NAMES.length, 'tool names are unique');
-  const want = ['look', 'my_role', 'read_talk', 'my_whispers', 'my_notes', 'what_is_asked', 'who_voted', 'note', 'speak', 'whisper', 'nominate', 'vote', 'night_choice', 'pass'];
+  const want = ['look', 'my_role', 'read_talk', 'my_whispers', 'my_notes', 'what_is_asked', 'who_voted', 'note', 'speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'pass'];
   for (const n of want) ok(TOOL_NAMES.includes(n), `the table has ${n}`);
-  const acts = ['speak', 'whisper', 'nominate', 'vote', 'night_choice', 'pass'];
+  const acts = ['speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'pass'];
   for (const t of PLAYER_TOOLS) {
     ok(typeof t.act === 'boolean' && t.act === acts.includes(t.name), `${t.name}: act is ${acts.includes(t.name)}`);
     ok(typeof t.handler === 'function', `${t.name}: has a handler`);
@@ -163,7 +173,7 @@ const STATES = ['night', 'day', 'vote', 'dead-ghost', 'dead-spent', 'nominations
 const SAMPLE = {
   look: {}, my_role: {}, read_talk: {}, my_whispers: {}, my_notes: {}, what_is_asked: {}, who_voted: {}, note: {text: 'Bram claims Chef.'},
   speak: {text: 'I have a reading for tonight.'}, whisper: {to: 'Fitch', text: 'I believe you.'}, nominate: {target: 'Corwin'},
-  vote: {yes: 'yes'}, night_choice: {pick: ['Bram', 'Corwin']}, pass: {},
+  vote: {yes: 'yes'}, night_choice: {pick: ['Bram', 'Corwin']}, slay: {target: 'Corwin'}, pass: {},
 };
 section('every tool in every state: no secret in any answer');
 for (const st of STATES) {
@@ -358,6 +368,112 @@ section('the acts, and refusals that name what is legal');
   ok(!r.ok && /ghost vote is spent/.test(r.error), `the dead without a ghost vote are refused by the game: ${r.error}`);
   r = run(g, 'nominate', {target: 'Corwin'});
   ok(!r.ok && /dead cannot nominate/.test(r.error), 'the dead cannot nominate');
+}
+
+// ---- the Slayer's standing shot (#37) ----
+section("the Slayer's standing shot: an honest header line, slay, night_choice's fallback, the refusals, the hold");
+{
+  const SHOT = /Your shot is unspent: slay <name> any time today, or hold it\./;
+  const useOf = h => ((h.match(/Useful now: ([^.]+)\./) || [])[1] || '').split(', ');
+  const shoot = g => {g.shot = {0: {by: 0, ability: 'slayer', options: [0, 1, 2, 3, 4, 5, 6], question: 'your shot is unspent'}}; return g};
+  // the header with and without the shot, by day before nominations and with nominations open
+  for (const st of ['day', 'nominations']) {
+    const plain = playerHeader(fakeGame(st), 0, fakeApi), withShot = playerHeader(shoot(fakeGame(st)), 0, fakeApi);
+    ok(!SHOT.test(plain), `${st}: no shot, no shot line`);
+    ok(SHOT.test(withShot), `${st}: an unspent shot is said in the header: ${withShot}`);
+    ok(!/WAITING ON YOU: .*shot/i.test(withShot) && (st === 'nominations') === /WAITING ON YOU/.test(withShot), `${st}: the shot is a may, never "WAITING ON YOU" (only a real decision is)`);
+    ok(JSON.stringify(useOf(withShot)) === JSON.stringify([...useOf(plain), 'slay']), `${st}: the useful tools are unchanged by the shot, slay added: ${useOf(plain)} -> ${useOf(withShot)}`);
+    ok(withShot.length < HEADER_CAP, `${st}: the header with a shot is under ${HEADER_CAP} (${withShot.length})`);
+  }
+  {const gd = shoot(fakeGame('day')); run(gd, 'read_talk'); // nothing new: pass is offered beside speak and whisper
+    ok(['speak', 'whisper', 'pass', 'slay'].every(n => useOf(playerHeader(gd, 0, fakeApi)).includes(n)), 'by day the shot keeps speak, whisper and pass in the useful tools')}
+  ok(['nominate', 'pass'].every(n => useOf(playerHeader(shoot(fakeGame('nominations')), 0, fakeApi)).includes(n)), 'with nominations open it keeps nominate and pass');
+  ok(!SHOT.test(playerHeader(shoot(fakeGame('night')), 0, fakeApi)), 'at night there is no shot line');
+  // the fake: slay, the hold, night_choice's fallback, what_is_asked
+  let g = shoot(fakeGame('day'));
+  let r = run(g, 'what_is_asked');
+  ok(r.ok && r.asked === 'standing' && r.tool === 'slay' && r.options.includes('Corwin') && r.options.includes('hold'), `what_is_asked shows the standing shot, answered with slay: ${JSON.stringify(r)}`);
+  r = run(g, 'slay', {target: 'hold'});
+  ok(r.ok && r.held && g.shot[0] && g.shotAt === undefined, `slay "hold" keeps the shot: ${JSON.stringify(r)}`);
+  r = run(g, 'night_choice', {pick: ['nobody']});
+  ok(r.ok && r.held && g.shot[0], `night_choice "nobody" on a standing shot keeps it too: ${JSON.stringify(r)}`);
+  r = run(g, 'slay', {});
+  ok(!r.ok && /needs a target/.test(r.error) && /slay/.test(r.error), `slay with no target is refused, naming slay as open: ${r.error}`);
+  r = run(g, 'slay', {target: 'Storyteller'});
+  ok(!r.ok && /no player "Storyteller"/.test(r.error), 'slay at someone not at the table is refused with the names');
+  r = run(g, 'night_choice', {pick: ['corw']});
+  ok(r.ok && r.shot === 'Corwin' && g.shotAt === 3 && /still alive/.test(r.result) && r.public.some(x => /Odette claims the Slayer and shoots Corwin/.test(x)), `night_choice falls back to the shot: ${JSON.stringify(r)}`);
+  clean(r, 'the shot\'s answer');
+  ok(!SHOT.test(playerHeader(g, 0, fakeApi)), 'a spent shot leaves the header');
+  r = run(g, 'slay', {target: 'Bram'});
+  ok(!r.ok && /no ability/.test(r.error), `a second shot is refused with the reason: ${r.error}`);
+
+  // a real game, seed 7: Thea (seat 4) is dealt the Slayer, Bram (1) the Imp, Fitch (5) the Scarlet Woman
+  const toDay = (game, sc) => {
+    for (let n = 0; n < 500 && !(game.phase === 'day' && game.step === 'nominations' && game.pending?.kind === 'nomination'); n++) {
+      const p = game.pending;
+      if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game));
+    }
+  };
+  const real = (seed = 7) => {
+    const game = newGame({seed, rounds: 1}), sc = createScripted(seed);
+    const ctx = i => ({game, seat: {index: i, name: game.seats[i].name}, api: api.forSeat(i), log: () => {}});
+    return {game, sc, ctx, call: (i, name, args = {}) => tool(name).handler(args, ctx(i))};
+  };
+  {
+    const {game, sc, call} = real();
+    const nightTry = call(4, 'slay', {target: 'Bram'});
+    ok(!nightTry.ok && /by day/.test(nightTry.error), `at night the shot is refused with the reason: ${nightTry.error}`);
+    toDay(game, sc);
+    ok(api.dayActionFor(game, 4)?.ability === 'slayer', 'seed 7, day 1: the shot stands open to Thea');
+    const h = playerHeader(game, 4);
+    call(4, 'read_talk');
+    const h1 = playerHeader(game, 4);
+    ok(SHOT.test(h) && !/WAITING ON YOU/.test(h) && ['speak', 'whisper', 'pass', 'slay'].every(n => useOf(h1).includes(n)), `Thea's header says the shot as a may and keeps her tools: ${h}`);
+    ok(!/shot/i.test(playerHeader(game, 0)) && !/shot/i.test(JSON.stringify(call(0, 'what_is_asked'))), "nobody else's header or what_is_asked mentions a shot");
+    let r = call(0, 'slay', {target: 'Bram'});
+    ok(!r.ok && /no ability to use by day/.test(r.error), `a seat that is not the Slayer is refused with the reason: ${r.error}`);
+    r = call(4, 'slay', {target: 'hold'});
+    ok(r.ok && r.held && api.dayActionFor(game, 4), 'Thea holds: the shot is kept');
+    r = call(4, 'speak', {text: 'I am holding something back for now.'});
+    ok(r.ok && SHOT.test(playerHeader(game, 4)), 'after her line the shot is still offered');
+    const wa = call(4, 'what_is_asked');
+    ok(wa.asked === 'standing' && wa.tool === 'slay', `once her turn is taken what_is_asked shows the standing shot: ${JSON.stringify(wa)}`);
+    const h2 = playerHeader(game, 4);
+    ok(/nothing else to do/.test(h2) && SHOT.test(h2) && useOf(h2).includes('slay'), `a Slayer who has had her turn is told she has nothing else to do, and the shot: ${h2}`);
+    r = call(4, 'night_choice', {pick: ['nobody']});
+    ok(r.ok && r.held && api.dayActionFor(game, 4), 'night_choice "nobody" on the standing shot holds it');
+    r = call(4, 'slay', {target: 'Odette'});
+    ok(r.ok && r.shot === 'Odette' && /Odette is still alive/.test(r.result) && r.public.some(x => /Thea claims the Slayer and shoots Odette/.test(x)), `Thea shoots Odette, a townsfolk: ${JSON.stringify(r)}`);
+    ok(!api.dayActionFor(game, 4) && !SHOT.test(playerHeader(game, 4)), 'the shot is spent and leaves her header');
+    r = call(4, 'slay', {target: 'Bram'});
+    ok(!r.ok && /spent/.test(r.error), `a spent shot is refused with the reason: ${r.error}`);
+    for (const i of [0, 1, 2, 3, 5, 6]) ok(/Thea claims the Slayer and shoots Odette/.test(JSON.stringify(call(i, 'read_talk', {since: 0}))), `${game.seats[i].name} hears the shot in public`);
+  }
+  {
+    const {game, sc, call} = real();
+    toDay(game, sc);
+    // nominations open, a vote on someone: the shot waits for the vote to end
+    for (const s of game.seats) if (!game.clock.nominationsOpen) call(s.index, 'pass');
+    const hn = playerHeader(game, 4);
+    ok(/WAITING ON YOU: Nominations are open/.test(hn) && SHOT.test(hn) && ['nominate', 'pass', 'slay'].every(n => useOf(hn).includes(n)), `with nominations open Thea is asked to nominate, and told of her shot: ${hn}`);
+    ok(call(0, 'nominate', {target: 'Yusuf'}).ok && game.pending?.kind === 'vote', 'Odette nominates Yusuf: a vote is open');
+    let r = call(4, 'slay', {target: 'Bram'});
+    ok(!r.ok && /vote is open/.test(r.error), `during a vote the shot is refused with the reason: ${r.error}`);
+    ok(!SHOT.test(playerHeader(game, 4)), 'and the header does not offer it during the vote');
+    // a dead Slayer
+    game.seats[4].alive = false;
+    r = call(4, 'slay', {target: 'Bram'});
+    ok(!r.ok && /dead/.test(r.error), `a dead Slayer is refused with the reason: ${r.error}`);
+    game.seats[4].alive = true;
+  }
+  {
+    const {game, sc, call} = real();
+    toDay(game, sc);
+    const r = call(4, 'night_choice', {pick: ['Bram']});
+    ok(r.ok && r.shot === 'Bram' && r.result === 'Bram dies.' && !game.seats[1].alive, `through night_choice Thea shoots Bram, the Imp, and he dies: ${JSON.stringify(r)}`);
+    ok(!JSON.stringify(r).match(/imp|scarlet|demon/i), 'the answer names no role: only what the table saw');
+  }
 }
 
 // ---- one game through the real api ----
