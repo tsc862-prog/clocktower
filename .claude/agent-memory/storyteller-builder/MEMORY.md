@@ -48,3 +48,8 @@
 
 ## First dawn (#110, PR #115)
 - Day 1's quiet dawn is the rule, not news: `quietWords(day)` / `FIRST_NIGHT_QUIET` ("the first night passes without a death, as it always does") in the owed line, makings (warns off a reprieve) and scripted fallback; day 2+ keeps "nobody died in the night". Prompt: never a reprieve or a demon that spared anyone on Day 1. Narration check unchanged (owner/manager: no misfiring regex).
+
+## Execution tally (#124, PR #129)
+- Owed execution by vote carries `tally`, `need`, `others` [{name, tally, need, short, words}] from `blockOf(game, evs, e, day)`: the executed seat's OWN vote event, never the last vote whose `block.seat` matches (a later short vote carries the block too: game 5's bug). Fact: "X was executed ...: five votes against the four needed, nominated by N; Y drew four, one short of X's five". Numbers as words (`numberWord`).
+- Check: first sentence naming the executed seat, clauses naming another nominee and "Day N" dropped, first number must equal the tally; "one" counts only before vote/hand/yes/voice/ballot. No count, no check.
+- Tooling trap: writing JS with `\b` through node template strings or sed puts control characters in the file; write new code with the Write tool and splice by line number.

@@ -69,7 +69,7 @@ export function cleanEvent(view, me, e) {
     case 'vote-result': out.by = n(e.by); out.target = n(e.target); if (Array.isArray(e.yes)) out.yes = e.yes.map(n);
       if (e.tally != null) out.tally = e.tally; if (e.needed != null) out.needed = e.needed; break;
     case 'dawn': if (Array.isArray(e.deaths)) out.died = e.deaths.map(n); break;
-    case 'phase': if (typeof e.what === 'string') out.what = e.what; break;
+    case 'phase': if (typeof e.what === 'string') out.what = e.what; if (Number.isFinite(e.round)) out.round = e.round; break;
     case 'execution': case 'death': out.who = n(e.seat ?? e.target); break;
     case 'slayer-shot': case 'virgin': out.by = n(e.seat); out.target = n(e.target); break;
     case 'win': if (typeof e.team === 'string') out.team = e.team; break;
@@ -153,6 +153,11 @@ export function askedOf(game, view, me, p) {
     return {kind: 'vote', nominee, nominator, tool: 'vote',
       text: `Vote on ${nominator}'s nomination of ${nominee}: yes to execute, or no.${ghost}`};
   }
+  if (p.kind === 'thoughts') { // the night's thought before dawn (#111): once answered, nothing waits
+    if (p.mine != null) return null;
+    const tonight = String(p.tonight || '').trim();
+    return {kind: 'thoughts', tool: 'think', tonight, text: `${String(p.question || 'The night is ending. In a sentence or two, what are you thinking?').trim()}${tonight ? ` Tonight: ${tonight}` : ''}`};
+  }
   if (p.kind === 'nomination') {
     const targets = nominationTargets(view, me, p);
     if (!targets.length) return null;
@@ -184,9 +189,9 @@ export function clockLine(v, me) {
 // While the rooms are open a seat at the Square is offered invite, a seat in a room leave (and no whisper: a room has none).
 export function usefulTools(v, asked, news, waiting, shot) {
   let list = baseTools(v, asked, news, waiting);
-  const away = v.place?.room != null;
-  if (away) list = list.filter(n => n !== 'whisper');
-  if (v.phase === 'day' && v.roomsOpen && v.place && !(asked && !asked.done)) list = [...list, away ? 'leave' : 'invite'];
+  const away = v.place?.room != null, alone = away && !(v.place.with || []).length;
+  if (away) list = list.filter(n => n !== 'whisper' && !(alone && n === 'speak')); // a line alone in a room reaches nobody (#122)
+  if (v.phase === 'day' && v.roomsOpen && v.place && !(asked && !asked.done)) list = alone ? ['leave', ...list] : [...list, away ? 'leave' : 'invite'];
   return shot && !list.includes('slay') ? [...list, 'slay'] : list;
 }
 
@@ -199,7 +204,7 @@ export function placeText(v) {
   const nb = nm(p.neighbours);
   let here;
   if (p.room == null) here = `You are at the Square; whisper only to your neighbours ${nb.length ? andList(nb) : '(none alive)'}.`;
-  else if (!(p.with || []).length) here = `You are alone in ${p.name || placeNameOf(v, p.room)}: nobody hears you here; invite someone or leave.`;
+  else if (!(p.with || []).length) here = `You are alone in ${p.name || placeNameOf(v, p.room)}: nobody hears you here; leave to speak at the Square, or invite someone in.`;
   else here = `You are in ${p.name || placeNameOf(v, p.room)} with ${andList(nm(p.with))}: only you ${p.with.length + 1} hear what is said here; no whispers in a room.`;
   const away = (v.rooms || []).filter(r => (r.seats || []).length && r.id !== p.room).map(r => `${andList(nm(r.seats))} in ${r.name}`);
   return away.length ? `${here} Away: ${away.join('; ')}.` : here;
@@ -222,6 +227,7 @@ function baseTools(v, asked, news, waiting) {
   // the dead are never in toSpeak: pass means nothing to them; they may still speak and whisper
   if (v.alive === false && v.phase === 'day' && asked?.kind !== 'vote' && asked?.tool !== 'night_choice') return news?.total ? ['read_talk', 'speak', 'whisper'] : ['speak', 'whisper', 'read_talk'];
   if (asked?.tool === 'night_choice') return ['night_choice', 'what_is_asked', 'my_role'];
+  if (asked?.kind === 'thoughts') return ['think', 'my_role', 'my_notes', 'read_talk'];
   if (asked?.kind === 'vote' && !asked.done) return ['vote', 'who_voted', 'read_talk'];
   if (asked?.kind === 'nomination') return ['nominate', 'pass', 'read_talk'];
   if (v.phase === 'ended') return ['look', 'read_talk'];
@@ -697,6 +703,162 @@ export function inviteOf(game, a, v, me, asked, ledger, notesList) {
   return {...pick, room: room.id, text: `Take ${pick.name} to ${rn} to talk in private (${pick.why}): invite ${pick.name}, room ${bare(rn)}. Free; rooms close when nominations open.`};
 }
 
+// ---- who was where, from the public moves (#122, #126) ----
+// Every move is seen by the whole table; the words said in a room are not. Replaying a seat's cleaned move events gives who
+// shared which room when, and nothing a seat at the Square could not have watched. Each day starts with everyone at the Square.
+const SQUARE_NAME = 'the Square';
+const roundOfPhase = e => Number.isFinite(e.round) ? e.round : Number(String(e.text || '').match(/^Round (\d+)/i)?.[1]) || null;
+function replayPlaces(evs, each) {
+  let day = null, round = 1;
+  const at = new Map(); // name -> room name (absent: the Square)
+  const inRoom = room => [...at.entries()].filter(([, r]) => r === room).map(([n]) => n);
+  for (const e of evs || []) {
+    if (e.day != null && e.day !== day) {day = e.day; round = 1; at.clear()}
+    if (e.type === 'phase' && e.what === 'night') at.clear();
+    if (e.type === 'phase' && e.what === 'round') round = roundOfPhase(e) || round;
+    const touched = [];
+    if (e.type === 'move') {
+      for (const s of e.seats || []) {const was = at.get(s); if (was) touched.push(was); if (e.to && e.to !== SQUARE_NAME) at.set(s, e.to); else at.delete(s)}
+      if (e.to && e.to !== SQUARE_NAME) touched.push(e.to);
+    }
+    if (each(e, {day, round, at, inRoom, touched: [...new Set(touched)]}) === false) return;
+  }
+}
+// Today's and earlier days' room visits: [{day, round, room, who: [names]}], one entry each time a room's company of two or
+// more changed (Odette and Bram, then Odette alone, then Odette and Yusuf: two visits). Seat order inside each entry.
+export function visitsOf(v, evs) {
+  const out = [], last = new Map(), order = (v?.seats || []).map(s => s.name);
+  replayPlaces(evs, (e, s) => {
+    if (e.type === 'phase' && e.what === 'night') last.clear();
+    for (const room of s.touched) {
+      const who = s.inRoom(room).sort((x, y) => order.indexOf(x) - order.indexOf(y)), key = `${s.day}/${who.join(',')}`;
+      if (last.get(room) === key) continue;
+      last.set(room, key);
+      if (who.length >= 2) out.push({day: s.day, round: s.round, room, who});
+    }
+  });
+  return out;
+}
+// "Day 2: the Snug, round 1: Odette and Bram; the Snug, round 2: Odette and Yusuf." Oldest day first.
+export function visitsText(visits) {
+  if (!visits?.length) return 'Nobody has shared a room yet.';
+  const days = [...new Set(visits.map(x => x.day))];
+  return days.map(d => `Day ${d}: ${visits.filter(x => x.day === d).map(x => `${x.room}, round ${x.round}: ${andList(x.who)}`).join('; ')}.`).join(' ');
+}
+// How often each pair shared a room: ["Odette and Yusuf: once (day 2)", "Bram and Odette: twice (days 1 and 2)"].
+export function togetherOf(visits) {
+  const by = new Map();
+  for (const x of visits || []) for (let a = 0; a < x.who.length; a++) for (let b = a + 1; b < x.who.length; b++) {
+    const k = `${x.who[a]} and ${x.who[b]}`;
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(x.day);
+  }
+  const times = n => n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`;
+  return [...by.entries()].map(([k, ds]) => `${k}: ${times(ds.length)} (day${new Set(ds).size > 1 ? 's' : ''} ${andList([...new Set(ds)].map(String))})`);
+}
+// Who heard a line of mine said in a room: the others in that room at that moment, from the moves. [] at the Square or alone.
+export function heardWith(evs, id, me) {
+  let out = [];
+  replayPlaces(evs, (e, s) => {
+    if (e.id !== id) return;
+    out = e.type === 'say' && e.in ? s.inRoom(e.in).filter(n => n !== me) : [];
+    return false;
+  });
+  return out;
+}
+
+// ---- my turn this round, spent (#122) ----
+// Game 5: a seat spoke in a room, left, and tried again at the Square, 12 times. When the clock says this living seat's turn
+// is gone, this says where it went: {round, text}, or null while the turn is still mine (or the clock has no turns now).
+export function turnSpentOf(v, evs) {
+  const c = v?.clock || {};
+  if (v?.phase !== 'day' || v.winner || v.alive === false || c.nominationsOpen || !Array.isArray(c.toSpeak) || c.toSpeak.includes(v.index)) return null;
+  const mine = (evs || []).filter(e => ['say', 'pass'].includes(e.type) && e.from === v.name && (e.day == null || e.day === v.day)).at(-1);
+  const round = Math.min(c.round || 1, c.roundsBeforeNominations || c.round || 1);
+  let where = '';
+  if (mine?.type === 'pass') where = ': you passed';
+  else if (mine?.in) {const w = heardWith(evs, mine.id, v.name); where = ` in ${mine.in} (${w.length ? `to ${andList(w)}` : 'to nobody: you were alone'})`}
+  else if (mine) where = ' at the Square';
+  const next = (c.round || 1) < (c.roundsBeforeNominations || 0) ? 'The next round is yours again' : 'Nominations open after this round';
+  return {round, text: `You have had your turn: your round ${round} turn was spent${where}. ${next}; use the time to read or note.`};
+}
+
+// ---- the same line twice, in two places (#123) ----
+// The game refuses a line said word for word among a seat's last few. Game 5's Yusuf said one sentence in the Snug and,
+// two seconds later, nearly the same one at the Square. This compares a new line with the seat's last three lines today,
+// wherever said, by the word pairs they share in order (so "round 1" and "round 2" differ): {where, said, last} for a near
+// repeat, {game: true} for a word-for-word repeat in the same place (the game refuses it), else null. A line of fewer than
+// six words is left to the game's word-for-word rule.
+const wordsOf = t => (String(t || '').toLowerCase().match(/[a-z0-9'’]+/g) || []).map(w => w.replace(/['’]s$|['’]/g, '')).filter(Boolean);
+const pairsOf = t => {const w = wordsOf(t); return w.length < 6 ? null : new Set(w.slice(1).map((x, k) => `${w[k]} ${x}`))};
+export function similar(a, b) {
+  const A = pairsOf(a), B = pairsOf(b);
+  if (!A || !B) return 0;
+  let both = 0;
+  for (const w of A) if (B.has(w)) both++;
+  return (2 * both) / (A.size + B.size);
+}
+const flat = t => String(t).trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.!?…]+$/, '');
+export function repeatOf(v, evs, text) {
+  const here = v?.place?.room == null ? SQUARE_NAME : (v.place.name || placeNameOf(v, v.place.room));
+  const mine = (evs || []).filter(e => e.type === 'say' && e.from === v?.name && (e.day == null || e.day === v.day)).slice(-3);
+  for (let k = mine.length - 1; k >= 0; k--) {
+    const e = mine[k], there = e.in || SQUARE_NAME;
+    const exact = flat(e.text) === flat(text);
+    if (exact && there === here) return {game: true}; // the game's own rule answers this one, in its words
+    if (exact || similar(e.text, text) >= 0.75) return {where: there === SQUARE_NAME ? 'at the Square' : `in ${there}`, said: e.text, last: k === mine.length - 1};
+  }
+  return null;
+}
+
+// ---- a line in a room that names someone outside it (#122) ----
+// "Corwin, you've been quiet" said in the Snug to Ines reaches Ines only. Names spoken to (at the start of the line or of a
+// sentence, followed by a comma or a question mark, or a closing ", Corwin?") of players not in the room.
+export function addressedAway(v, text, others) {
+  const t = String(text || ''), out = [];
+  for (const s of v?.seats || []) {
+    if (s.name === v.name || (others || []).includes(s.name)) continue;
+    const n = reEsc(s.name);
+    if (new RegExp(String.raw`(?:^|[.!?;]\s+)` + n + String.raw`\s*[,:?!]|,\s*` + n + String.raw`\s*[?!.]?\s*$`, 'i').test(t)) out.push(s.name);
+  }
+  return out;
+}
+
+// ---- a question asked of me that I have answered already (#123) ----
+// Game 5 asked Corwin five times which of his two players he had checked; his day-1 line had the whole answer. When today's
+// latest line naming me with a question about what I learned comes after my last word, and I have said a role aloud, the
+// header puts my own line beside it, so the answer is one line, not a new argument. Null otherwise.
+const INFO_ASK = /\b(?:check|checked|learn|learned|learnt|told|show|showed|shown|saw|see|role|claim|info|information|number|night|who did you|which)\b/i;
+const cut = (t, n) => {t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 3).replace(/\s+\S*$/, '') + '...' : t};
+export function answeredOf(v, evs, ledger) {
+  if (v?.phase !== 'day' || v.winner) return null;
+  const nameAt = t => String(t || '').search(new RegExp(String.raw`\b` + reEsc(v.name) + String.raw`\b`, 'i'));
+  const myLast = (evs || []).filter(e => ['say', 'whisper'].includes(e.type) && e.from === v.name).at(-1)?.id ?? -1;
+  const q = (evs || []).filter(e => e.type === 'say' && e.from !== v.name && e.id > myLast && (e.day == null || e.day === v.day))
+    .filter(e => {const t = String(e.text || ''), at = nameAt(t); return at >= 0 && /\?/.test(t.slice(at)) && INFO_ASK.test(t.slice(at))}).at(-1);
+  if (!q) return null;
+  const mine = (ledger || []).find(p => p.player === v.name)?.claims.filter(c => !c.secret && !c.whispered && (c.id ?? 0) < q.id).sort((x, y) => (x.id ?? 0) - (y.id ?? 0)).at(-1);
+  if (!mine) return null;
+  return {from: q.from, id: q.id, said: mine.said,
+    text: `Asked of you: ${q.from}, "${cut(String(q.text).slice(nameAt(q.text)), 90)}" You said${mine.day != null && mine.day !== v.day ? ` day ${mine.day}` : ''}: "${cut(mine.said, 110)}" If that answers it, say so in one line.`};
+}
+
+// ---- the forced answer: an everyone-at-once scene the seat is slow on ----
+// When the game waits on every seat at once (a vote, the night's thoughts, #111) and this seat's turn has not answered, a runner
+// may ask for the answer in one structured call: {tool, ask, schema}, the schema's properties being the tool's own arguments
+// (vote {yes}, think {text}). The ask carries only what the seat's own header says. Null when no such scene waits on the seat.
+export const THOUGHT_ASK = 'Your thought as the night ends, one sentence.';
+export function forcedAsk(game, seat, api) {
+  const a = apiOr(api), me = seatIndex(seat), v = a.view(game, me);
+  const asked = askedOf(game, v, me, a.pendingFor(game, me));
+  if (!asked || asked.done) return null;
+  const obj = props => ({type: 'object', properties: props, required: Object.keys(props), additionalProperties: false});
+  if (asked.kind === 'vote') return {tool: 'vote', ask: `${asked.text} Answer "yes" or "no".`, schema: obj({yes: {type: 'string', enum: ['yes', 'no']}})};
+  if (asked.kind === 'thoughts') return {tool: 'think', ask: `${THOUGHT_ASK}${asked.tonight ? ` Tonight: ${asked.tonight}` : ''} First person, for yourself alone.`,
+    schema: obj({text: {type: 'string', maxLength: 400}})};
+  return null;
+}
+
 const TEAM_SIDE = {townsfolk: 'good', outsider: 'good', minion: 'evil', demon: 'evil'};
 export const sideOf = team => TEAM_SIDE[team] || team || 'unknown';
 
@@ -722,19 +884,20 @@ export function playerHeader(game, seat, api) {
   const poison = poisonOf(v, asked, ledger, evs);
   const invite = inviteOf(game, a, v, me, asked, ledger, notesList);
   const cover = coverOf(v, ledger);
+  const answered = asked && !asked.done ? null : answeredOf(v, evs, ledger); // a question I have answered already (#123)
   const lines = [
     `You are ${v.name}, the ${role.name || 'unknown role'} (${role.team || '?'}, ${sideOf(role.team)}), ${life}.${change ? ` You were the ${change.was} until ${change.when || 'lately'}.` : ''}`,
     waiting ? clockLine(v, null) : clockLine(v, me),
     `Alive (${living.length}): ${listNames(living)}.${dead.length ? ` Dead: ${listNames(dead)}.` : ''}`,
     ...(stakes ? [stakes] : []),
     newsLine(news),
-    ...[v.phase === 'day' ? movesText(news) : null, placeText(v), invite ? invite.text : roomsText(v), recordText(recordOf(evs)), claimsText(ledger, v.phase === 'day' ? v.day : null, v.day), cover?.text, notesText(staleNotes(notesList, v))].filter(Boolean),
+    ...[v.phase === 'day' ? movesText(news) : null, placeText(v), invite ? invite.text : roomsText(v), recordText(recordOf(evs)), claimsText(ledger, v.phase === 'day' ? v.day : null, v.day), cover?.text, notesText(staleNotes(notesList, v)), answered?.text].filter(Boolean),
   ];
   if (asked && !asked.done) lines.push(`**WAITING ON YOU: ${asked.text}**`);
   if (waiting) lines.push(waiting.text);
   if (shot) lines.push(shot.text);
   if (poison) lines.push(poison);
-  if (nudge) lines.push(nudge);
+  if (nudge && !answered && !cover) lines.push(nudge); // the Cover line says what to say of yourself; an answered question says what to answer
   const useful = usefulTools(v, asked, news, waiting, shot);
   lines.push(`Useful now: ${useful.join(', ')}.${useful.includes('speak') ? ' Speak without your name in front.' : ''}`);
   if (v.alive === false && v.phase === 'day' && !waiting) lines.push(`You are dead: you may still speak and whisper${v.ghostVote ? ', and vote once with your ghost vote' : ''}; there is nothing to pass.`);

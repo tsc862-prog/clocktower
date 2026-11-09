@@ -99,6 +99,8 @@ async function main() {
     const watched = ((await req(base, '/play/watch?since=0', {origin: PAGE})).events) || [];
     const winAt = watched.findIndex(e => e.type === 'win'), endLine = winAt >= 0 ? watched.slice(winAt + 1).find(e => e.type === 'narration') : null;
     ok(!!endLine && /^The game is over: (good|evil) wins/.test(endLine.text) && /Who was who: /.test(endLine.text), `the end is narrated after the win, roles revealed: ${endLine ? endLine.text.slice(0, 160) : 'no narration after the win'}`);
+    const thoughts = watched.filter(e => e.type === 'thought');
+    ok(thoughts.length > 0 && thoughts.every(e => e.audience === 'watcher' && /keep my own counsel/.test(e.text)), `the seats thought through think as each night ended, so the relay waited on them (#111): ${thoughts.length} thoughts`);
     console.log(`  game budget: players $${v.game.players.spent} of $${v.game.players.budget}, Storyteller $${v.game.storyteller.spent} of $${v.game.storyteller.budget}`);
     ok(v.game.players.spent > 0 && v.game.storyteller.spent > 0, 'the game budget counts the players\' and the Storyteller\'s spend apart');
 
