@@ -287,8 +287,9 @@ export function createApp({client, view = null, fixture = null, runnersFixture =
       render();
     }
   }
-  // the recorded moments: the recording's own, and a night and a dawn cut from its end
-  const moments = fixture ? (() => {const m = {...fixture.frames, ...fixtureMoments(fixture.frames.end)}, order = ['talk', 'vote', 'night', 'dawn', 'rooms', 'end'];
+  // the recorded moments: the recording's own (its night carries hand-made thoughts, #111), and a dawn (and a night, for an older
+  // recording) cut from its end
+  const moments = fixture ? (() => {const m = {...fixtureMoments(fixture.frames.end), ...fixture.frames}, order = ['talk', 'vote', 'night', 'dawn', 'rooms', 'end'];
     return Object.fromEntries([...order.filter(k => m[k]), ...Object.keys(m).filter(k => !order.includes(k))].map(k => [k, m[k]]))})() : null;
   function showFrame(name) {
     if (!fixture) return;

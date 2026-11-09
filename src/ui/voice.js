@@ -7,6 +7,9 @@
 //   night falls, a round, nominations, the day ends, who went to which room   in the Storyteller's voice (#82)
 //   a name tag before a seat's line    in the Storyteller's voice, when the names tick is on (default): "Odette." / "Odette, in the Snug."
 //   whispers                           in the whisperer's voice, only when the owner ticks them (off by default)
+//   the night (#111)                   in the Storyteller's voice: who it wakes, what they choose, what it tells them, a death, a
+//                                      bounced kill (nightSpoken); the page's own clip at once (the relay makes none for these)
+//   a seat's thought before dawn       in the seat's voice, after the tag "Odette, thinking."; never dropped at night
 // The speaking seat's marker is lit while its clip plays (the square's centre for the Storyteller). Skip ends the clip playing;
 // Mute hushes it, drops what waits and holds new lines until unmuted. The queue holds a few lines at most: past that the oldest
 // talk is dropped first (the Storyteller's lines last), so the voice never falls far behind the game at the readable pace.
@@ -20,8 +23,8 @@
 // and asks POST /tts/say itself only when no clip has come within about a second (whispers never have one). The page tells the relay
 // what it has heard: POST /play/heard {last, voice} on each clip's end or skip and every 20 s while the voice is on, and voice: false
 // at once on Voice off or Mute; the relay lets a seat's next speaking turn wait a moment while the voices are behind.
-import {seatNames} from './model.js';
-import {STORYTELLER_SPOKEN} from '../data/spoken.js';
+import {seatNames, roleName} from './model.js';
+import * as SPOKEN from '../data/spoken.js';
 
 export const VOICE_KEY = 'clocktower.voice';
 export const WHISPER_KEY = 'clocktower.voice.whispers';
@@ -30,13 +33,54 @@ export const QUEUE_CAP = 4; // lines waiting behind the one playing
 export const HEARD_MS = 20000; // the heard report's heartbeat (the relay counts a report fresh for 90 s)
 export const CLIP_WAIT_MS = 1000; // how long a line waits for the relay's clip before the page asks for its own
 const defaultTick = (f, ms) => {const t = setInterval(f, ms); if (t && t.unref) t.unref(); return () => clearInterval(t)};
-const STORYTELLER_LINES = new Set(STORYTELLER_SPOKEN); // shared with the relay (src/data/spoken.js)
-const TALK = new Set(['say', 'whisper']);
+const STORYTELLER_LINES = new Set(SPOKEN.STORYTELLER_SPOKEN); // shared with the relay (src/data/spoken.js)
+// What a seat says aloud in its own voice: 'say', and its night 'thought' (#111). The rules-keeper's list in src/data/spoken.js when it
+// is there (its name is read behind a guard), else these two.
+const SEAT_LINES = new Set([...(SPOKEN.SEAT_SPOKEN || SPOKEN.SEAT_SPOKEN_KINDS || SPOKEN.SEAT_LINES || []), 'say', 'thought']);
+const TALK = new Set(['say', 'whisper']); // dropped first when the queue is full by day
+const TAGGED = new Set(['say', 'whisper', 'thought']); // a name tag goes before these
+const NIGHT = new Set(['thought', 'night']); // the night told and the seats' thoughts (#111): never dropped, never counted in the cap
+const OWN = new Set(['whisper', 'night']); // the relay never makes a clip for these: the page asks its own at once
+
+// The night told aloud (#111), in the Storyteller's voice: a night event in plain prose for the watcher, or null. names: seat -> name;
+// seats: the grimoire's seats when known (a Drunk woken as the role it believes is named as what it truly is).
+// A verb per role whose choice has one; the rest pick.
+export const NIGHT_VERBS = {poisoner: 'poisons', monk: 'guards', imp: 'chooses', 'fortune-teller': 'checks', ravenkeeper: 'chooses', butler: 'picks'};
+const NAMED = new Set(['poisoner', 'monk']); // the verb already says who they are: "Yusuf poisons Bram."
+export function nightSpoken(e, names = [], seats = null) {
+  if (!e || e.phase !== 'night' && !['wake', 'acted', 'bounce', 'thought'].includes(e.type)) return null;
+  const n = i => names[i] ?? `seat ${i}`;
+  const list = v => (Array.isArray(v) ? v : [v]).filter(x => x != null).map(x => typeof x === 'number' ? n(x) : roleName(x));
+  const and = a => a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a.at(-1);
+  switch (e.type) {
+    case 'wake': {
+      if (!Number.isInteger(e.seat)) return null;
+      const truly = seats && seats.find(x => x.seat === e.seat), role = e.role ? roleName(e.role) : '';
+      const drunk = truly && truly.role && e.role && truly.role !== e.role ? `, who is truly the ${roleName(truly.role)}` : '';
+      return `The Storyteller wakes ${n(e.seat)}${role ? `, the ${role}` : ''}${drunk}.`;
+    }
+    case 'acted': {
+      if (!Number.isInteger(e.seat)) return null;
+      const verb = NIGHT_VERBS[e.role] || 'picks', who = and(list(e.target ?? e.targets)) || 'nobody';
+      const tail = e.role === 'butler' ? ' as master' : '';
+      return NAMED.has(e.role) ? `${n(e.seat)} ${verb} ${who}.` : `${n(e.seat)}${e.role ? `, the ${roleName(e.role)},` : ''} ${verb} ${who}${tail}.`;
+    }
+    case 'told': {
+      if (!Number.isInteger(e.seat) || typeof e.text !== 'string' || !e.text.trim()) return null;
+      return `The Storyteller tells ${n(e.seat)}: ${e.text.trim()}`;
+    }
+    case 'death': return Number.isInteger(e.seat) ? `${n(e.seat)} dies.` : null;
+    case 'bounce': return Number.isInteger(e.from) && Number.isInteger(e.to) ? `The kill passes from ${n(e.from)} to ${n(e.to)}.` : null;
+    case 'thought': return Number.isInteger(e.seat) && typeof e.text === 'string' && e.text.trim() ? `${n(e.seat)} thinks: ${e.text.trim()}` : null;
+  }
+  return null;
+}
 
 // What a log entry says aloud and who says it: {speaker: seat number | 'storyteller', text, kind}, or null for a silent one.
 export function spokenLine(e, {whispers = false} = {}) {
   if (!e || typeof e.text !== 'string' || !e.text.trim()) return null;
   if (e.type === 'say' && Number.isInteger(e.seat)) return {speaker: e.seat, text: e.text, kind: 'say'};
+  if (e.type !== 'say' && SEAT_LINES.has(e.type) && Number.isInteger(e.seat)) return {speaker: e.seat, text: e.text, kind: e.type}; // a night thought (#111)
   if (e.type === 'whisper') return whispers && Number.isInteger(e.from) ? {speaker: e.from, text: e.text, kind: 'whisper'} : null;
   if (e.type === 'death') return e.phase === 'day' ? {speaker: 'storyteller', text: e.text, kind: 'death'} : null; // a night death is the Storyteller's secret until dawn
   if (STORYTELLER_LINES.has(e.type)) return {speaker: 'storyteller', text: e.text, kind: e.type};
@@ -156,6 +200,7 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
   function tagText(l, e, names) {
     const who = nameOf(l.speaker, names);
     if (l.kind === 'whisper') return Number.isInteger(e.to) ? `${who}, to ${nameOf(e.to, names)}.` : `${who}.`;
+    if (l.kind === 'thought') return `${who}, thinking.`;
     if (e.room == null) return `${who}.`;
     const r = st.places && Array.isArray(st.places.rooms) ? st.places.rooms.find(x => x.id === e.room) : null;
     return `${who}, in ${r && r.name ? r.name : 'a room'}.`;
@@ -180,11 +225,15 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
     for (let i = w.events.length - 1; i >= 0 && w.events[i].id > st.heard; i--) if (w.events[i].clip) clip(w.events[i].id, w.events[i].clip);
     if (!st.on || st.muted || !fresh.length) return;
     const names = seatNames(w); if (w.places) st.places = w.places;
+    const seats = w.grimoire && w.grimoire.seats;
     for (const e of fresh) {
-      const l = spokenLine(e, {whispers: st.whispers});
-      if (l) st.queue.push({...l, id: e.id, name: nameOf(l.speaker, names), ...(st.names && TALK.has(l.kind) ? {tag: tagText(l, e, names)} : {})});
+      let l = spokenLine(e, {whispers: st.whispers});
+      if (!l) {const t = nightSpoken(e, names, seats); if (t && e.type !== 'thought') l = {speaker: 'storyteller', text: t, kind: 'night'}} // the night told (#111)
+      if (l) st.queue.push({...l, id: e.id, name: nameOf(l.speaker, names), ...(st.names && TAGGED.has(l.kind) ? {tag: tagText(l, e, names)} : {})});
     }
-    while (st.queue.length > cap) {const i = st.queue.findIndex(x => TALK.has(x.kind)); st.queue.splice(i >= 0 ? i : 0, 1); st.dropped++}
+    // the cap holds the day's lines; the night's (its telling and the thoughts) are all read, the picture waiting with the ear (#103)
+    const capped = () => st.queue.reduce((k, x) => k + (NIGHT.has(x.kind) ? 0 : 1), 0);
+    while (capped() > cap) {let i = st.queue.findIndex(x => TALK.has(x.kind)); if (i < 0) i = st.queue.findIndex(x => !NIGHT.has(x.kind)); st.queue.splice(i, 1); st.dropped++}
     changed(); pump();
   }
 
@@ -194,7 +243,7 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
     if (item.clip) return item.clip;
     const own = () => {const v = voiceFor(item.name, st.engine && st.engine.seatVoices, fileMap); item.voice = v.voice; item.via = 'say'; return client.ttsSay({text: item.text, ...(v.voice ? {voice: v.voice} : {}), speed: v.speed})};
     const relays = () => {const c = clips.get(item.id); if (c) {item.via = 'clip'; return {id: c.id, ms: c.ms}} return null};
-    const waits = item.kind !== 'whisper' && !!(st.engine && st.engine.clipsOnSay) && clipWait > 0;
+    const waits = !OWN.has(item.kind) && !!(st.engine && st.engine.clipsOnSay) && clipWait > 0;
     if (relays() || !waits) {item.clip = Promise.resolve(relays() || own()); return item.clip}
     item.clip = new Promise(res => {
       let done = false, t = null;

@@ -3,7 +3,8 @@
 // "A leaned in to B" with their text beneath, marked as something the table did not hear. What each seat was told by night and a
 // runner's own asides are the watcher's too, each marked so (both can be hidden). New lines are appended, never rebuilt; the
 // list follows the newest line until the owner scrolls up, and one click follows it again. A line said in a room (#28) carries its
-// place ("in the nook: Odette ..."), heard only by those in it; a move between the Square and the rooms is a one-line mark.
+// place ("in the nook: Odette ..."), heard only by those in it; a move between the Square and the rooms is a one-line mark. A seat's
+// thought before dawn (#111) sits with its night in a thinking style, marked as the watcher's alone.
 import {esc} from './dom.js';
 import {follower} from './dom.js';
 import {roleName, seatNames} from './model.js';
@@ -34,6 +35,7 @@ export function talkLine(e, names, rooms = roomNames(null)) {
       return {cls: 'event ' + e.type, html: esc(e.text)};
     case 'death': return e.phase === 'day' ? {cls: 'event death', html: esc(e.text)} : {cls: 'private death', html: `<span class="seen-by">ST sees</span> ${n(e.seat)} (${esc(roleName(e.role))}) dies in the night${e.by != null ? `, killed by ${n(e.by)}` : ''}.`};
     case 'win': return {cls: 'win', html: esc(e.text)};
+    case 'thought': return {cls: 'private thought', html: `<span class="seen-by">${n(e.seat)} thinks, for you only</span> <span class="text">${esc(e.text)}</span>`};
     case 'told': return {cls: 'private told', html: `<span class="seen-by">told ${n(e.seat)}</span> ${esc(e.text)}`};
     case 'aside': return {cls: 'private aside', html: `<span class="seen-by">${esc(e.who)}'s aside, for you only</span> ${esc(e.text)}`};
   }
