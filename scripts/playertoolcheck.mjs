@@ -205,6 +205,77 @@ for (const st of STATES) {
   useApi(null);
 }
 
+section('game 1 fixes: no doubled names, a voice per seat, a useful first day, the stakes, honest wait text');
+{
+  // #33: the seat's own name in front of a line is dropped; another name, or the name inside the line, is kept
+  let g = fakeGame('day');
+  let r = run(g, 'speak', {text: 'Odette: Odette: Bram, what did you see?'});
+  ok(r.ok && r.said === 'Bram, what did you see?' && g.events.at(-1).text === 'Bram, what did you see?', `speak drops a doubled own name: ${JSON.stringify(r)}`);
+  r = run(g, 'speak', {text: 'odette (ghost): I still have a vote.'});
+  ok(r.ok && r.said === 'I still have a vote.', `speak drops "Name (ghost):": ${JSON.stringify(r)}`);
+  r = run(g, 'speak', {text: '**Odette:** Fitch, answer me.'});
+  ok(r.ok && r.said === 'Fitch, answer me.', `speak drops a bold name: ${JSON.stringify(r)}`);
+  r = run(g, 'speak', {text: 'Bram: that is what you said.'});
+  ok(r.ok && r.said === 'Bram: that is what you said.', 'another seat\'s name in front is kept');
+  r = run(g, 'speak', {text: 'Odette here, no night role worth telling.'});
+  ok(r.ok && r.said.startsWith('Odette here'), 'a name inside the line is kept');
+  r = run(g, 'speak', {text: 'Odette: '});
+  ok(!r.ok && /without your name/.test(r.error), `a line that was only the name is refused: ${r.error}`);
+  r = run(g, 'whisper', {to: 'Fitch', text: 'Odette: keep this between us.'});
+  ok(r.ok && r.said === 'keep this between us.', 'whisper drops the own name too');
+  ok(/without your name in front/.test(tool('speak').args.text.desc), 'the speak tool says not to sign the line');
+  ok(/own name in front|your own name/.test(systemFor('player', 'Odette')), 'the system prompt says not to sign the line');
+  ok(/Speak without your name in front/.test(playerHeader(fakeGame('day'), 0, fakeApi)), 'the header says not to sign when speak is useful');
+
+  // #32: a manner per seat, distinct, in the system prompt; and the own-voice line
+  const manners = NAMES.map(n => (systemFor('player', n).match(/Your manner at the table is ([^.]+)\./) || [])[1]);
+  ok(manners.every(Boolean), `every seat has a manner line: ${manners.map((m, i) => `${NAMES[i]}=${m ? m.split(':')[0] : '-'}`).join(', ')}`);
+  ok(new Set(manners.map(m => m && m.split(':')[0])).size === NAMES.length, 'the seven manners are distinct');
+  ok(!/manner/.test(systemFor('player', 'Stranger')) && !/\{manner\}/.test(systemFor('player', 'Stranger')), 'an unknown seat name gets no manner line and no placeholder');
+  ok(/own voice/.test(systemFor('player', 'Bram')) && /echo the table/.test(systemFor('player', 'Bram')), 'the prompt asks for an own voice and no echo');
+
+  // #31: the first day and the empty nomination
+  const sys = systemFor('player', 'Thea');
+  ok(/first day/i.test(sys) && /question by name/.test(sys) && /soft claim/.test(sys) && /nominate someone anyway/.test(sys) && /given to the demon/.test(sys),
+    'the prompt carries the first-day guidance: speak or ask, a soft claim, nominate anyway');
+  ok(/First day: say something about yourself or ask a player a question/.test(playerHeader(fakeGame('day'), 0, fakeApi)), 'the day-1 header nudges a seat to speak');
+  ok(/nominate someone anyway/.test(playerHeader(fakeGame('nominations'), 0, fakeApi)), 'the header with nominations open and none made says to nominate anyway');
+  ok(!/First day|nominate someone anyway/.test(playerHeader(fakeGame('night'), 0, fakeApi)), 'no nudge at night');
+
+  // #38: the stakes line at four alive or fewer, by day only
+  const withAlive = (st, n) => {const x = fakeGame(st); x.seats.forEach((s, i) => {s.alive = i < n}); return x};
+  const h4 = playerHeader(withAlive('day', 4), 0, fakeApi), h3 = playerHeader(withAlive('day', 3), 0, fakeApi), h5 = playerHeader(withAlive('day', 5), 0, fakeApi);
+  ok(/Stakes: 4 alive; the demon kills one a night; evil wins at 2\. A wrong execution today: 3 left, 2 after tonight, evil wins\. Wrong executions to spare: none\./.test(h4), `the stakes at 4 alive: ${h4}`);
+  ok(/Stakes: 3 alive.*2 left, evil wins at once/.test(h3), 'the stakes at 3 alive');
+  ok(!/Stakes/.test(h5), 'no stakes line at 5 alive');
+  ok(!/Stakes/.test(playerHeader(withAlive('night', 4), 0, fakeApi)), 'no stakes line at night');
+  for (const h of [h4, h3]) ok(h.length < HEADER_CAP, `the header with the stakes stays under ${HEADER_CAP} (${h.length})`);
+
+  // #29: a seat that has had its turn this round is told so plainly and offered reads only
+  const READS = PLAYER_TOOLS.filter(t => !t.act).map(t => t.name);
+  const usefulOf = h => (h.match(/Useful now: ([^.]+)\./) || [])[1]?.split(', ') || [];
+  g = fakeGame('day'); g.clock.toSpeak = [1, 2, 3, 4, 5, 6];
+  let h = playerHeader(g, 0, fakeApi);
+  ok(/You have had your turn this round; nothing to do until round 3; reading is fine\./.test(h), `the wait text from the clock: ${h}`);
+  ok(usefulOf(h).length && usefulOf(h).every(n => READS.includes(n)), `waiting, the useful tools are reads only: ${usefulOf(h)}`);
+  ok(!/First day/.test(h), 'a waiting seat gets no nudge to speak');
+  g.clock.round = 3;
+  ok(/nothing to do until nominations open/.test(playerHeader(g, 0, fakeApi)), 'in the last round the wait is until nominations open');
+  r = run(g, 'what_is_asked');
+  ok(/nothing to do until nominations open/.test(r.text) && r.useful.every(n => READS.includes(n)), `what_is_asked says the same: ${r.text}`);
+  g.clock.toSpeak = [0, 1];
+  h = playerHeader(g, 0, fakeApi);
+  ok(!/nothing to do/.test(h) && usefulOf(h).includes('speak'), 'a seat whose turn is still to come is not told to wait');
+  // the game's own canAct and nextTurnText, when it has them, decide
+  const told = {...fakeApi, canAct: () => false, nextTurnText: () => 'until round 3 begins'};
+  g = fakeGame('day'); g.clock.toSpeak = [0];
+  h = playerHeader(g, 0, told);
+  ok(/You have had your turn this round; nothing to do until round 3 begins; reading is fine\./.test(h) && usefulOf(h).every(n => READS.includes(n)), `canAct false and nextTurnText from the game: ${h}`);
+  ok(/nothing to do until round 4/.test(playerHeader(g, 0, {...told, nextTurnText: () => 'round 4'})), 'a bare phrase from the game reads right');
+  ok(!/nothing to do/.test(playerHeader(fakeGame('day'), 0, {...fakeApi, canAct: () => true})), 'canAct true: no wait text');
+  ok(!/nothing to do/.test(playerHeader(fakeGame('vote'), 0, told)), 'a vote waiting on the seat outranks the wait text');
+}
+
 section('what each read shows');
 {
   const g = fakeGame('day');
@@ -329,9 +400,14 @@ section('integration: a real game through the real api, every seat with its own 
       for (const i of v.clock.toSpeak) {
         header(i); done.headers++;
         if (i === v.clock.toSpeak[0] && game.day === 1) {
-          const line = `${seats[i].name} here; I have a hunch about the night.`;
+          const line = `${seats[i].name}: ${seats[i].name} here; I have a hunch about the night.`; // signed twice, as in game 1
           if (call(i, 'speak', {text: line}).ok) done.say++;
           if (/You said that already/.test(call(i, 'speak', {text: line}).error || '')) done.repeat++;
+          const said = game.log.filter(e => e.type === 'say' && e.seat === i).at(-1)?.text || '';
+          done.signed = said.startsWith(`${seats[i].name}:`) ? said : null;
+          // the round is still going and this seat has had its turn: the header says wait and offers reads only
+          const h = header(i), use = (h.match(/Useful now: ([^.]+)\./) || [])[1] || '';
+          done.waitText = /nothing to do until/.test(h) && /reading is fine/.test(h) && use.split(', ').every(n => !PLAYER_TOOLS.find(t => t.name === n)?.act) ? 'ok' : h;
           continue;
         }
         if (game.day === 1 && done.whisper === 0) {
@@ -358,6 +434,8 @@ section('integration: a real game through the real api, every seat with its own 
   }
   ok(!done.bad.length, `no tool refused a legal move: ${done.bad.join(' | ')}`);
   ok(done.say >= 1 && done.repeat >= 1, `speak, and the no-repeating rule from the real api (${done.say} said, ${done.repeat} repeats refused)`);
+  ok(done.say >= 1 && done.signed === null, `the real game logs a signed line once, without the name: ${done.signed}`);
+  ok(done.waitText === 'ok', `in the real game a seat that has had its turn is told to wait, reads only (${typeof api.canAct === 'function' ? "the game's canAct" : 'from the clock'}): ${done.waitText}`);
   ok(done.whisper === 1 && done.pass > 0 && done.nominate >= 1 && done.vote >= 3 && done.choice >= 1,
     `the game was played through the tools: ${JSON.stringify({whisper: done.whisper, pass: done.pass, nominate: done.nominate, vote: done.vote, choice: done.choice, headers: done.headers})}`);
   ok(game.day >= 2 || game.winner, `the game moved on (day ${game.day}${game.winner ? ', ' + game.winner.text : ''})`);

@@ -9,6 +9,9 @@
 //   - the talk keeps its scroll position and its rows when new lines arrive while scrolled up, and one click follows again
 //   - the agents panel renders a row per seat and the Storyteller with their states; the resume button only when paused
 //   - start, stop, stop all, start all and resume post to the supervisor's routes with the right bodies; an open "last turn" stays open
+//   - the live push: a pushed event lands in the talk once (deduped by id), each pushed ballot raises or lowers its hand, the page
+//     reads ?since=last when the socket opens (pushes that land meanwhile wait for it) and polls only while the socket is down
+//   - the pace knob starts on "readable" and every start (one seat, start all) carries its minGap and heartbeat
 //   - nothing on the page posts to a seat's routes (/play/call, /play/storyteller, /play/narrate, /mcp), at run time or in the code
 //   - the recorded game as the page's ?fixture mode sends nothing; a fresh recording from today's engine renders too
 import {readFileSync, readdirSync} from 'node:fs';
@@ -23,6 +26,8 @@ const GAME = JSON.parse(readFileSync(join(ROOT, 'src/ui/fixtures/game.json'), 'u
 const RUN = JSON.parse(readFileSync(join(ROOT, 'src/ui/fixtures/runners.json'), 'utf8'));
 const {createApp} = await import('../src/ui/app.js');
 const {relayClient, ACTIONS, READS} = await import('../src/ui/relay.js');
+const {PACES} = await import('../src/ui/model.js');
+const tick = () => new Promise(r => setTimeout(r, 0));
 
 let fails = 0;
 const ok = (c, m) => {console.log(`  ${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) fails++};
@@ -132,6 +137,69 @@ ok(talk.querySelectorAll('.line.nomination').length === GAME.frames.end.events.f
 app.onSocket({type: 'narrate', player: 2, text: 'Bram drums his fingers.'});
 ok(talk.lastChild.classList.contains('aside') && /Bram's aside, for you only/.test(talk.lastChild.textContent), 'a runner\'s narration shows as an aside, marked as the watcher\'s only');
 
+// ---- the live push ----
+console.log('the live push');
+{
+  install(HTML);
+  const pr = fakeRelay();
+  const papp = createApp({client: relayClient({base: BASE, fetchImpl: pr.fetch}), refreshMs: null});
+  const V = GAME.frames.vote, T = GAME.frames.talk, watchReads = () => pr.calls.filter(c => c.path === READS.watch).length;
+  // the relay holds the talk frame; the socket opens; a push lands while the page is still reading it
+  pr.watch = T;
+  const opening = papp.onSocketOpen();
+  const early = V.events.filter(e => e.id > T.last).slice(0, 3);
+  papp.onSocket({type: 'watch', seed: V.seed, last: early.at(-1).id, events: early, clock: T.clock, pending: T.pending, ballot: null, phase: T.phase, day: T.day, night: T.night, winner: null});
+  await opening; await tick();
+  const tl = () => document.querySelector('#talk .lines');
+  const ids = () => tl().children.map(c => c.dataset.key).filter(k => k[0] === 'e').map(k => +k.slice(1));
+  ok(watchReads() === 1, 'the socket opens: the page reads the game once');
+  ok(early.every(e => ids().includes(e.id)) && JSON.stringify(ids()) === JSON.stringify([...ids()].sort((a, b) => a - b)), 'a push that landed during the read is merged after it, in event order');
+  await papp.tickWatch();
+  ok(watchReads() === 1, 'while the socket is open the timer does not poll');
+  // the vote: its events, then the ballots one by one
+  const upto = V.events.filter(e => e.id > early.at(-1).id);
+  const base = {type: 'watch', seed: V.seed, clock: V.clock, pending: V.pending, phase: V.phase, day: V.day, night: V.night, winner: null};
+  papp.onSocket({...base, last: V.last, events: upto, ballot: {id: V.ballot.id, nominee: V.ballot.nominee, votes: {}}});
+  await tick();
+  const hands = () => ({up: document.querySelectorAll('#square .hand.up').length, down: document.querySelectorAll('#square .hand.down').length, none: document.querySelectorAll('#square .hand.none').length});
+  ok(hands().none === V.pending.seats.length && hands().up === 0, `the vote opens with every hand still to cast (${JSON.stringify(hands())})`);
+  ok(!!document.querySelectorAll('#square .seat')[V.pending.nominee].querySelector('.mark.nominee'), 'the pushed vote marks the nominee');
+  const votes = {}; let n = 0;
+  for (const [seat, yes] of Object.entries(V.ballot.votes)) {
+    votes[seat] = yes; n++;
+    papp.onSocket({...base, last: V.last, events: [], ballot: {id: V.ballot.id, nominee: V.ballot.nominee, votes: {...votes}}});
+    await tick();
+    const h = hands(), want = Object.values(votes);
+    ok(h.up === want.filter(Boolean).length && h.down === want.filter(x => !x).length && h.none === V.pending.seats.length - n,
+      `ballot ${n} lands: ${h.up} raised, ${h.down} lowered, ${h.none} to cast`);
+  }
+  const before = tl().children.length;
+  papp.onSocket({...base, last: V.last, events: upto.slice(-3), ballot: {id: V.ballot.id, nominee: V.ballot.nominee, votes}});
+  await tick();
+  ok(tl().children.length === before, 'a pushed event the page already has is not shown twice');
+  // the socket drops: the timer polls; it reopens: one read ?since=last
+  papp.onSocketClose(); pr.watch = V;
+  await papp.tickWatch();
+  ok(watchReads() === 2, 'the socket is down: the timer polls');
+  pr.calls.length = 0;
+  await papp.onSocketOpen();
+  const reread = pr.calls.filter(c => c.path === READS.watch);
+  ok(reread.length === 1 && tl().children.length === before, 'the socket reopens: one read of the game, and nothing doubles');
+  // a push with new events: drawn at once, the grimoire side read a moment later
+  install(HTML);
+  const app2 = createApp({client: relayClient({base: BASE, fetchImpl: pr.fetch}), refreshMs: 60000});
+  pr.watch = T; await app2.onSocketOpen(); pr.calls.length = 0;
+  app2.onSocket({...base, last: early.at(-1).id, events: early, ballot: null});
+  await tick();
+  ok(pr.calls.length === 0 && early.every(e => document.querySelector(`#talk .line[data-key="e${e.id}"]`) || !['say', 'pass', 'nomination'].includes(e.type)), 'a push renders at once, without a read');
+  await app2.flushRefresh();
+  ok(pr.calls.length === 1 && pr.calls[0].path === READS.watch, 'after a push with new events the page reads the grimoire side once');
+}
+install(HTML);
+relay = fakeRelay();
+app = createApp({client: relayClient({base: BASE, fetchImpl: relay.fetch}), seed: 13});
+relay.watch = GAME.frames.end; await app.pollWatch();
+
 // ---- agents ----
 console.log('agents');
 app.onSocket(copy(RUN.links));
@@ -164,12 +232,12 @@ const thea = row('player:5');
 thea.querySelector('select[name="provider"]').value = 'ollama';
 thea.querySelector('input[name="model"]').value = 'qwen2.5:14b';
 thea.querySelector('button.start').click(); await new Promise(r => setTimeout(r, 0));
-ok(relay.posts[0] && relay.posts[0].path === ACTIONS.start && JSON.stringify(relay.posts[0].body) === JSON.stringify({kind: 'player', player: 5, provider: 'ollama', model: 'qwen2.5:14b', by: 'owner'}),
+ok(relay.posts[0] && relay.posts[0].path === ACTIONS.start && JSON.stringify(relay.posts[0].body) === JSON.stringify({kind: 'player', player: 5, provider: 'ollama', model: 'qwen2.5:14b', minGap: PACES.readable.minGap, heartbeat: PACES.readable.heartbeat, by: 'owner'}),
   `start posts the seat, provider and model (${JSON.stringify(relay.posts[0] && relay.posts[0].body)})`);
 relay.posts.length = 0;
 row('player:7').querySelector('input[name="budget"]').value = '0.25';
 row('player:7').querySelector('button.start').click(); await new Promise(r => setTimeout(r, 0));
-ok(relay.posts[0] && JSON.stringify(relay.posts[0].body) === JSON.stringify({kind: 'player', player: 7, budget: 0.25, by: 'owner'}), `a budget typed in goes with the start (${JSON.stringify(relay.posts[0] && relay.posts[0].body)})`);
+ok(relay.posts[0] && JSON.stringify(relay.posts[0].body) === JSON.stringify({kind: 'player', player: 7, budget: 0.25, minGap: PACES.readable.minGap, heartbeat: PACES.readable.heartbeat, by: 'owner'}), `a budget typed in goes with the start (${JSON.stringify(relay.posts[0] && relay.posts[0].body)})`);
 relay.posts.length = 0;
 row('player:1').querySelector('button.stop').click(); row('storyteller').querySelector('button.stop').click(); await new Promise(r => setTimeout(r, 0));
 ok(relay.posts.length === 2 && relay.posts.every(x => x.path === ACTIONS.stop) && JSON.stringify(relay.posts.map(x => x.body)) === JSON.stringify([{kind: 'player', player: 1}, {kind: 'storyteller'}]), 'stop posts the runner to stop');
@@ -183,6 +251,25 @@ $('agents').querySelector('button[data-act="start-all"]').click(); await new Pro
 const started = relay.posts.filter(x => x.path === ACTIONS.start).map(x => x.body);
 ok(started.length >= 2 && started[0].kind === 'storyteller' && started.every(b => b.by === 'owner') && !started.some(b => b.player === 1 || b.player === 2),
   `start all starts the Storyteller first and only seats with no runner (${started.map(b => b.kind === 'storyteller' ? 'ST' : b.player).join(', ')})`);
+
+// ---- the pace knob ----
+console.log('the pace knob');
+ok($('pace').value === 'readable' && $('pace').options.length === 3, `the knob offers fast, readable and slow and starts on readable (${$('pace').value})`);
+ok(started.every(b => b.minGap === PACES.readable.minGap && b.heartbeat === PACES.readable.heartbeat), 'start all sends the readable pace with every start');
+$('pace').value = 'slow'; $('pace').dispatch('change');
+relay.posts.length = 0;
+row('player:5').querySelector('button.start').click(); await tick();
+ok(relay.posts[0] && relay.posts[0].body.minGap === PACES.slow.minGap && relay.posts[0].body.heartbeat === PACES.slow.heartbeat, `slow: a start sends minGap ${PACES.slow.minGap} s and heartbeat ${PACES.slow.heartbeat} game min`);
+$('pace').value = 'fast'; $('pace').dispatch('change');
+relay.posts.length = 0;
+row('player:5').querySelector('button.start').click(); await tick();
+ok(relay.posts[0] && relay.posts[0].body.minGap === 20 && relay.posts[0].body.heartbeat === 120, "fast: the runners' own default, 20 s and 120 game minutes");
+relay.runners.runners = relay.runners.runners.map(x => ({...x, pace: 'waiting: a turn on an event, else every 120 game min, at least 20 s apart'}));
+$('pace').value = 'readable'; $('pace').dispatch('change'); await app.pollRunners();
+ok(/old pace until restarted/.test($('pace-note').textContent), `runners started at another pace are named (${$('pace-note').textContent})`);
+$('pace').value = 'fast'; $('pace').dispatch('change');
+ok($('pace-note').textContent === '', 'no note once the knob matches what runs');
+$('pace').value = 'readable'; $('pace').dispatch('change');
 
 // ---- nothing speaks for a seat ----
 console.log('watcher only');

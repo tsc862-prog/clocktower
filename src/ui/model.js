@@ -92,5 +92,34 @@ export const ago = s => s == null ? '' : s < 60 ? `${s}s ago` : s < 3600 ? `${Ma
 export function mergeFrame(old, next) {
   if (!old || !next || next.seed !== old.seed || (next.events.length && next.events[0].id === 0)) return next;
   const seen = new Set(old.events.map(e => e.id));
-  return {...next, events: [...old.events, ...next.events.filter(e => !seen.has(e.id))]};
+  return {...next, events: [...old.events, ...next.events.filter(e => !seen.has(e.id))].sort((a, b) => a.id - b.id)};
 }
+
+// A push from the relay's socket ({type: 'watch', seed, last, events, clock, pending, ballot, phase, day, night, winner}: the watch
+// body's fields without the grimoire, the rulings and the night order) merged into the frame the page holds. Events are deduped by
+// id and kept in id order. -> {frame, fresh: number of new events, full: true when the page must read the whole game again (no frame
+// yet, another seed, or a new game starting again from event 0)}.
+export function mergePush(old, push) {
+  const events = Array.isArray(push && push.events) ? push.events : [];
+  // a push from event 0 that is not a replay of what the page holds: a new game began
+  const byId = old ? new Map(old.events.map(e => [e.id, JSON.stringify(e)])) : null;
+  const replay = byId && events.every(e => byId.get(e.id) === JSON.stringify(e));
+  if (!old || !push || push.seed !== old.seed || (events.length && events[0].id === 0 && old.events.length && !replay)) return {frame: old, fresh: 0, full: true};
+  const seen = new Set(old.events.map(e => e.id)), fresh = events.filter(e => !seen.has(e.id));
+  const {type, ...rest} = push;
+  const frame = {...old, ...rest, last: Math.max(old.last ?? -1, push.last ?? -1),
+    events: fresh.length ? [...old.events, ...fresh].sort((a, b) => a.id - b.id) : old.events};
+  return {frame, fresh: fresh.length, full: false};
+}
+
+// The pace knob on the game bar: how far apart a runner's turns are. minGap: the least real seconds between two turns of one seat
+// (scripts/pacing.mjs --min-gap); heartbeat: game minutes of quiet before a seat takes a turn anyway (--heartbeat). Urgent turns (a
+// vote, a night choice) still come at once. "fast" is the runners' own default; the page starts on "readable".
+export const PACES = {
+  fast: {label: 'fast', minGap: 20, heartbeat: 120, about: 'a seat speaks every 20 s or so'},
+  readable: {label: 'readable', minGap: 60, heartbeat: 360, about: 'about a minute between a seat\'s turns'},
+  slow: {label: 'slow', minGap: 150, heartbeat: 720, about: 'two and a half minutes between a seat\'s turns'},
+};
+export const DEFAULT_PACE = 'readable';
+// The gap a running runner plays at, from its pacing line ("... at least 20 s apart"), or null when it has not said.
+export const runnerGap = r => {const m = /at least (\d+) s apart/.exec((r && r.pace) || ''); return m ? Number(m[1]) : null};
