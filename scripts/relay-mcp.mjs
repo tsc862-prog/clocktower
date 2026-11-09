@@ -135,7 +135,7 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
   const be = backend || stubBackend({log});
   const stats = {calls: 0, errors: 0};
   const claims = new Map(), act = new Map(), readies = new Map(); // seat key -> {runner, at, info} / {last, inflight} / {runner, state, ...}
-  const vlog = rec => {if (!verbose) return; try {mkdirSync(dirname(verbose), {recursive: true}); appendFileSync(verbose, JSON.stringify(rec) + '\n')} catch (e) {log(`[play] verbose log failed: ${e.message}`)}};
+  const vlog = rec => {if (!verbose) return; try {mkdirSync(dirname(verbose), {recursive: true}); appendFileSync(verbose, JSON.stringify(be.gameId ? {...rec, gameId: be.gameId} : rec) + '\n')} catch (e) {log(`[play] verbose log failed: ${e.message}`)}};
   const players = () => (be.info().players || []);
   const claimOf = id => {const c = claims.get(id); return c && now() - c.at < CLAIM_MS ? c : null};
   const linkOf = id => {const a = act.get(id), busy = a && (a.inflight > 0 || now() - a.last < LINK_MS); return busy ? 'connected' : claimOf(id) ? 'waiting' : 'none'};

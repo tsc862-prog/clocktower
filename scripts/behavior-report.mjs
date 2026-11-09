@@ -1,6 +1,11 @@
-// KEPT FOR NOW: the report runs over the behavior logs, but its sections and anomaly names are the borrowed game's; the
-// milestone's measures (who won and how, cost per seat and model, leaks, contradicted claims, how the demon was found) replace
-// them once the game writes its digests (slice 7 of issue #1).
+// npm run behavior-report prints the milestone's measures, one column per game (scripts/measures.mjs, issue #98):
+//   npm run behavior-report                  every finished game found in the logs, newest last
+//   npm run behavior-report -- --all         unfinished runs too
+//   npm run behavior-report -- --game ID     one game (its id, or the start of its start time, e.g. 2026-11-09T01:52)
+//   npm run behavior-report -- --json        the raw numbers; --evidence adds the lines behind the rows that need judgement
+//   options: --dir DIR (the behavior root), --logs DIR (play.jsonl and runners/), --names FILE (labels: {"<id or start>": "Game 4"},
+//   default <behavior root>/games.json)
+// The old per-game Markdown report below (the borrowed game's sections: anomalies, minds, digests) stays behind --full.
 // npm run behavior-report: summarise a game's behavior logs (logs/behavior/<game>/, written by
 // scripts/behavior-log.mjs) into Markdown at logs/behavior/<game>/report.md, for the watcher and the
 // playtest-reviewer agent: top anomalies with counts and examples, per-seat health, a model comparison
@@ -20,6 +25,8 @@ import {fileURLToPath} from 'node:url';
 import {behaviorRoot, FILES, ROTATE, scrub, legacyTokens} from './behavior-log.mjs';
 import {mindSection, ctxSection, toolLoadSection, pctile} from './mind-compare.mjs';
 import {costSection, gameVoices} from './cost-report.mjs';
+import {splitGames, loadData, measure, renderTable, renderEvidence} from './measures.mjs';
+const readNames = f => {try {return JSON.parse(readFileSync(f, 'utf8'))} catch {return {}}};
 
 const SEV = {bad: 3, warn: 2, info: 1};
 const ABOUT = {
@@ -374,6 +381,18 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const argv = process.argv.slice(2);
   const opt = (k, d) => {const i = argv.indexOf('--' + k); return i >= 0 && argv[i + 1] != null && !argv[i + 1].startsWith('--') ? argv[i + 1] : d};
   const root = opt('dir', behaviorRoot()), hours = Number(opt('hours', 0)), sinceMs = hours > 0 ? Date.now() - hours * 3600e3 : 0;
+  if (!argv.includes('--full')) {
+    const logs = opt('logs', process.env.AGENT_LOGS || dirname(root));
+    const found = splitGames(loadData(root, logs)).filter(g => argv.includes('--all') || /game is over|game over/.test(g.endedBy || '') || g.play.some(e => e.result && /The game is over/.test(JSON.stringify(e.result))));
+    const names = readNames(opt('names', join(root, 'games.json')));
+    const want = opt('game', null);
+    const ms = found.map(measure).filter(m => !want || m.id === want || m.start.startsWith(want));
+    if (!ms.length) {console.error(want ? `No game "${want}" in the logs under ${root}.` : `No finished game in the logs under ${root} yet (--all shows unfinished runs).`); process.exit(1)}
+    const labels = ms.map(m => names[m.id] || Object.entries(names).find(([k]) => m.start.startsWith(k))?.[1] || null);
+    if (argv.includes('--json')) console.log(JSON.stringify(ms.map((m, i) => ({label: labels[i], ...m})), null, 2));
+    else {console.log(renderTable(ms, labels)); if (argv.includes('--evidence')) console.log('\n' + renderEvidence(ms, labels))}
+    process.exit(0);
+  }
   const list = argv.includes('--all') ? games(root) : [opt('game', null) || lastGame(root)].filter(Boolean);
   if (!list.length) {console.error(`No behavior logs under ${root} yet. Run the relay (npm run relay) with agent runners first.`); process.exit(1)}
   for (const w of list) {

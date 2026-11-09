@@ -149,13 +149,13 @@ export function startRelay({env = loadEnv(), argv = process.argv, port = Number(
   const playOnly = argv.includes('--play-only');
   if (!playOnly && !env.ANTHROPIC_API_KEY) log('[relay] No ANTHROPIC_API_KEY: Claude seats cannot start (put a key in .env, see .env.example). Local models (Ollama) still work; --play-only hides this line.');
   const model = env.RELAY_MODEL || DEFAULT_MODEL, origin = env.RELAY_ORIGIN || DEV_ORIGIN;
-  const verbose = argv.includes('--verbose') || /^(1|true|yes)$/i.test(env.RELAY_VERBOSE || '') ? PLAY_LOG : null;
+  const verbose = argv.includes('--verbose') || /^(1|true|yes)$/i.test(env.RELAY_VERBOSE || '') ? (env.AGENT_LOGS ? join(env.AGENT_LOGS, 'play.jsonl') : PLAY_LOG) : null;
   // The relay itself makes no model call yet (the seats' runners do); its Claude adapter answers status only, so the SDK is
   // loaded with the key by the runners, never here. A key present shows as configured.
   const anthropicClient = env.ANTHROPIC_API_KEY ? {messages: {create: () => Promise.reject(new Error('the relay makes no Claude call'))}} : null;
   const providers = makeProviders({anthropicClient, model, env});
   const limits = makeLimits(env);
-  const behavior = argv.includes('--no-behavior') || /^(0|false|no|off)$/i.test(env.RELAY_BEHAVIOR || '') ? null : behaviorLog({game: env.CLOCKTOWER_GAME || 'clocktower', log});
+  const behavior = argv.includes('--no-behavior') || /^(0|false|no|off)$/i.test(env.RELAY_BEHAVIOR || '') ? null : behaviorLog({game: env.CLOCKTOWER_GAME || 'clocktower', gameId: () => backend && backend.gameId, log});
   const {tts, probed} = makeVoice(env, log);
   let play = null;
   const {server} = createRelay({providers, model, origin, limits, tts, seats: () => play ? play.backend.info() : {}});

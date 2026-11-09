@@ -84,6 +84,7 @@ jobs:
       - {name: "Channel check (secrets stay in their seat; a whole game through the relay)", run: npm run channelcheck}
       - {name: Runners with budget stops, run: npm run runnercheck}
       - {name: "Mock game (eight runners from the supervisor play seed 5 to a winner, no dollar spent)", run: npm run mockgamecheck}
+      - {name: "Behavior report (the measures table from logs: games told apart, a planted leak found)", run: npm run behaviorreportcheck}
       - {name: Providers against their mocks, run: npm run providercheck}
       - {name: The launcher starts the relay and the page, run: npm run upcheck}
       - {name: "Narrator voice against a mock engine (probe, forced off, say and cache)", run: npm run ttscheck}
