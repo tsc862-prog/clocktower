@@ -12,7 +12,7 @@
 //   relay state                                           GET /health
 //   voices                                                the socket's {type: 'clip'} (the relay's clip for an event), /tts/*, and
 //                                                         POST /play/heard (how far the voices have got; src/ui/voice.js)
-// While the voice is on and lines wait to be read, the square, the talk, the grimoire, the Storyteller's log, the People view and the
+// While the voice is on and lines wait to be read (or the line playing has not yet begun its own clip, #109), the square, the talk, the grimoire, the Storyteller's log, the People view and the
 // game bar's phase draw the frame that goes with the ear (pickShown below, #103): a move, a vote's result or dawn lands as it is said.
 // Two views of the same panels, switched on the game bar and remembered per browser (clocktower.view): People, the characters as the
 // main screen with the talk, the grimoire, the Storyteller's log and the agents in drawers over the stage's edge; Table, every panel
@@ -188,8 +188,11 @@ export function createApp({client, view = null, fixture = null, runnersFixture =
     if (F.key !== key) {F.key = key; F.ring = []; F.top = null; F.shown = null}
     if (w && F.top !== w) {F.top = w; F.ring.push({seq: ++F.seq, max: maxEventId(w), frame: w}); if (F.ring.length > FRAME_RING) F.ring.splice(0, F.ring.length - FRAME_RING)}
     const vs = voice && voice.state, top = F.ring.at(-1);
-    const keeping = !!(w && top && state.source === 'live' && vs && vs.on && !vs.muted && !vs.blocked && vs.queue.length);
-    const pick = keeping ? pickShown(F.ring, {boundary: vs.queue[0].id, now: vs.now ? vs.now.id : null, shown: F.shown}) : null;
+    // the line playing is part of the picture only once its own clip has begun (#109); until then it is the boundary itself
+    const held = !!(vs && vs.now && !vs.now.started);
+    const boundary = !vs ? null : held ? vs.now.id : vs.queue.length ? vs.queue[0].id : null;
+    const keeping = !!(w && top && state.source === 'live' && vs && vs.on && !vs.muted && !vs.blocked && boundary != null);
+    const pick = keeping ? pickShown(F.ring, {boundary, now: !held && vs.now ? vs.now.id : null, shown: F.shown}) : null;
     F.shown = pick || (top ? {seq: top.seq, trim: null} : null);
     let frame = w;
     if (pick && !(pick.seq === top.seq && pick.trim == null)) {
@@ -284,8 +287,9 @@ export function createApp({client, view = null, fixture = null, runnersFixture =
       render();
     }
   }
-  // the recorded moments: the recording's own, and a night and a dawn cut from its end
-  const moments = fixture ? (() => {const m = {...fixture.frames, ...fixtureMoments(fixture.frames.end)}, order = ['talk', 'vote', 'night', 'dawn', 'rooms', 'end'];
+  // the recorded moments: the recording's own (its night carries hand-made thoughts, #111), and a dawn (and a night, for an older
+  // recording) cut from its end
+  const moments = fixture ? (() => {const m = {...fixtureMoments(fixture.frames.end), ...fixture.frames}, order = ['talk', 'vote', 'night', 'dawn', 'rooms', 'end'];
     return Object.fromEntries([...order.filter(k => m[k]), ...Object.keys(m).filter(k => !order.includes(k))].map(k => [k, m[k]]))})() : null;
   function showFrame(name) {
     if (!fixture) return;
