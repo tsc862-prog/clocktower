@@ -7,7 +7,7 @@ import {newGame, answer as engineAnswer, playOut, grimoire, createScripted} from
 import * as realApi from '../src/game/api.js';
 import {SCRIPT} from '../src/data/script.js';
 import {STORYTELLER_TOOLS, STORYTELLER_TOOL_NAMES, reasonError, reasonFactsError, resolveValue} from '../src/data/storyteller-tools.js';
-import {storytellerHeader, HEADER_CAP, storytellerDue, toolsNow} from '../src/seats/storyteller.js';
+import {storytellerHeader, HEADER_CAP, storytellerDue, toolsNow, narrationOwed, scriptedNarration, narrationError, FIRST_NIGHT_QUIET} from '../src/seats/storyteller.js';
 import {DAWN_TOUCHES, DUSK_TOUCHES, touchFor, touchOrder} from '../src/data/colour.js';
 import {STORYTELLER_SYSTEM, systemFor} from '../src/data/prompts.js';
 
@@ -523,7 +523,7 @@ section('a narrated dawn (#36)');
   D.clock = {round: 1, roundsBeforeNominations: 3, nominationsOpen: false};
   api._push(D, {type: 'dawn', deaths: []});
   const h = header(D, api);
-  ok(/^DAWN NOT YET NARRATED \(Day 1\): nobody died in the night/.test(h) && h.includes(touchFor(D.config.seed, 1)), `the header opens with the dawn call and a touch of the town\n${h}`);
+  ok(/^DAWN NOT YET NARRATED \(Day 1\): the first night passes without a death, as it always does/.test(h) && h.includes(touchFor(D.config.seed, 1)), `the header opens with the dawn call and a touch of the town\n${h}`);
   ok(/Now: narrate,/.test(h), 'the Now line puts narrate first at dawn');
   ok(h.length <= HEADER_CAP, `the dawn header is under the cap (${h.length})`);
   api._say(D, 1, 'Good morning.');
@@ -532,6 +532,31 @@ section('a narrated dawn (#36)');
   const h2 = header(D, api);
   ok(!/DAWN NOT YET NARRATED/.test(h2), 'the flag clears once narrated');
   ok(/narrate/.test(STORYTELLER_SYSTEM) && /every dawn/.test(STORYTELLER_SYSTEM) && /Thistlewick/.test(STORYTELLER_SYSTEM) && /only reads/.test(STORYTELLER_SYSTEM), 'the prompt asks for a narrated dawn with colour and for acting turns');
+}
+
+section('the first dawn is quiet by the rules (#110)');
+{
+  ok(/The first dawn is different: nobody ever dies on the first night/.test(STORYTELLER_SYSTEM) && /never tell it as a reprieve, luck or a demon that spared anyone/.test(STORYTELLER_SYSTEM)
+    && /From Day 2 on, a night with no death is news/.test(STORYTELLER_SYSTEM), 'the prompt tells the first dawn as the rule and a later quiet night as news');
+  const api = fakeApi();
+  const D = newGame({seed: 7, roles: ['imp', 'mayor', 'poisoner', 'washerwoman', 'chef', 'empath', 'soldier']});
+  until(D, s => s.phase === 'day' && s.pending?.kind === 'nomination');
+  D.clock = {round: 1, roundsBeforeNominations: 3, nominationsOpen: false, spoke: [], passedNominating: []};
+  api._push(D, {type: 'dawn', deaths: []});
+  const h = header(D, api), owed = narrationOwed(D, api);
+  ok(D.day === 1 && h.startsWith(`DAWN NOT YET NARRATED (Day 1): ${FIRST_NIGHT_QUIET}.`) && !/nobody died/i.test(h), `day 1's owed dawn carries the rules' wording
+${h}`);
+  ok(/quiet by the rules, not by luck: no reprieve, no demon that spared anyone/.test(h), 'the makings warn off a reprieve');
+  ok(h.length <= HEADER_CAP, `the first dawn header is under the cap (${h.length})`);
+  ok(scriptedNarration(D, owed) === `Day 1 begins in Thistlewick: ${FIRST_NIGHT_QUIET}.`, 'the scripted fallback says the same on day 1');
+  ok(narrationError(D, 'Nobody died in the night. The baker lit his oven early.', api) === null, 'a plain "nobody died" on day 1 is true and passes');
+  // day 2, a quiet night: news, in the old words
+  D.day = 2; D.diedTonight = [];
+  api._push(D, {type: 'dawn', deaths: []});
+  const h2 = header(D, api), owed2 = narrationOwed(D, api);
+  ok(h2.startsWith('DAWN NOT YET NARRATED (Day 2): nobody died in the night.') && !/as it always does|quiet by the rules/.test(h2), `day 2's quiet night keeps "nobody died in the night"
+${h2}`);
+  ok(scriptedNarration(D, owed2) === 'Day 2 begins in Thistlewick: nobody died in the night.', 'the scripted fallback on day 2 says nobody died');
 }
 
 section('a dawn with one touch of the town, acting first (#70)');
