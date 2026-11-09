@@ -19,11 +19,20 @@
 // with standing: true when nothing else waits on the seat, it never makes mustAct true, and dayAction() spends it (#37).
 // canAct(game, seat) says whether a seat has anything to do now; nextTurnText(game, seat) says when it next will (#29).
 //
+// Places (#28): by day a seat is at the Square (place null: the table hears it) or in one of the rooms of src/data/rooms.js
+// (at most `size` seats each). go, invite and leave move seats; every move is public (a 'move' entry, audience all), the words
+// are not: a line said in a room reaches the seats in that room at the moment of the line (a late joiner hears nothing said
+// before it came in). A line anywhere is the seat's turn of the round. Whispers happen only at the Square and only between a
+// seat and its nearest living neighbour on either side (dead seats are skipped; both at the Square); a room has no whispers.
+// The rooms open with the day's talk and close when nominations open (or the day ends): everyone comes back to the Square.
+// The dead may go to rooms and talk there. The Storyteller hears neither whispers nor room talk; the watcher hears both.
+//
 // Everything the api keeps lives in the state (game.clock, game.ballot, game.notes, game.actions), and every call that
 // changes the game is recorded in game.actions, so restore(plainCopy) rebuilds the same live game.
 import {answer as engineAnswer, validate, isLive} from './engine.js';
 import {newGame} from './state.js';
-import {roleOf, roleName, alive, log, grimoire as fullGrimoire} from './grimoire.js';
+import {roleOf, roleName, alive, log, livingNeighbours, grimoire as fullGrimoire} from './grimoire.js';
+import {ROOMS, SQUARE} from '../data/rooms.js';
 import {HOOKS, TELLINGS} from './abilities.js';
 import {notEnglish} from './lang.js';
 
@@ -59,7 +68,9 @@ function sync(game) {
   const c = game.clock;
   if (game.phase === 'day' && c.day !== game.day) {
     Object.assign(c, {day: game.day, round: 1, nominationsOpen: c.roundsBeforeNominations <= 0, spoke: [], passedNominating: []});
+    game.places = game.seats.map(() => null);
   }
+  if (!Array.isArray(game.places)) game.places = game.seats.map(() => null);
   const p = game.pending;
   if (p && p.kind === 'vote') {if (!game.ballot || game.ballot.id !== p.id) game.ballot = {id: p.id, nominee: p.nominee, votes: {}}}
   else game.ballot = null;
@@ -67,6 +78,42 @@ function sync(game) {
 
 // Whether today's clock runs: it is day and the engine has reached the day's table decision (not night, not a dawn).
 export const clockStarted = game => game.phase === 'day' && game.step === 'nominations' && !game.winner;
+
+// ---- places: the Square and the rooms ----
+export {ROOMS};
+const roomById = id => ROOMS.find(r => r.id === id) || null;
+const placeName = id => id == null ? SQUARE.name : roomById(id)?.name ?? String(id);
+const placeOf = (game, seat) => game.places?.[seat] ?? null;
+const occupants = (game, room) => game.seats.filter(s => placeOf(game, s.index) === room).map(s => s.index);
+// The rooms are open while the day's talk runs and the nominations have not opened.
+export const roomsOpen = game => clockStarted(game) && !game.clock.nominationsOpen;
+// A room named by id or by name ('nook', 'the nook', 'Nook'), or null.
+const findRoom = name => {
+  if (typeof name !== 'string') return null;
+  const k = name.trim().toLowerCase().replace(/^the\s+/, '');
+  return ROOMS.find(r => r.id === k || r.name.toLowerCase().replace(/^the\s+/, '') === k) || null;
+};
+// The seats a seat may whisper to now: its nearest living neighbour on each side, when both are at the Square.
+const whisperable = (game, seat) => placeOf(game, seat) != null ? [] : livingNeighbours(game, seat).filter(j => placeOf(game, j) == null);
+
+// Who is where: {place, placeName, with, square, rooms: [{id, name, size, seats, free}], open, neighbours, canWhisper}.
+// place: this seat's room id (null: the Square); with: the others in the same place; neighbours: the nearest living seat on each
+// side (whom it may whisper to at the Square); canWhisper: those of them it may whisper to now. Presence is public: any seat
+// and the Storyteller may read it (the Storyteller has no place).
+export function where(game, seat) {
+  sync(game);
+  const me = seat === ST ? null : (player(game, seat), seat);
+  const place = me == null ? null : placeOf(game, me);
+  return {
+    place, placeName: me == null ? null : placeName(place),
+    with: me == null ? [] : occupants(game, place).filter(i => i !== me),
+    square: occupants(game, null),
+    rooms: ROOMS.map(r => {const seats = occupants(game, r.id); return {id: r.id, name: r.name, size: r.size, seats, free: r.size - seats.length}}),
+    open: roomsOpen(game),
+    neighbours: me == null ? [] : livingNeighbours(game, me),
+    canWhisper: me == null || !clockStarted(game) ? [] : whisperable(game, me),
+  };
+}
 
 // The standing day action this seat may call now ({by, ability, options, question}), or null: only while the day's
 // table decision waits (not during a vote or a Storyteller ruling).
@@ -100,8 +147,9 @@ export function legalNow(game, seat) {
   if (game.phase === 'setup') return 'The Storyteller is setting up the game; wait.';
   if (game.phase === 'day' && !clockStarted(game)) return game.step === 'dusk' ? `Day ${game.day} is ending: wait for the night.` : `Day ${game.day} is breaking: the talk has not begun yet; wait for it.`;
   if (game.phase === 'day') {
-    const c = game.clock, more = standingText(game, seat);
-    if (!c.nominationsOpen) return `It is day ${game.day}, round ${c.round} of ${c.roundsBeforeNominations}: ${c.spoke.includes(seat) ? 'you have had your turn this round; you may whisper or wait' : 'you may say a line, whisper or pass'}.${more}`;
+    const c = game.clock, more = standingText(game, seat), pl = placeOf(game, seat);
+    const here = pl == null ? 'at the Square' : `in ${placeName(pl)}`, wh = pl == null ? 'whisper to a neighbour' : 'leave for the Square';
+    if (!c.nominationsOpen) return `It is day ${game.day}, round ${c.round} of ${c.roundsBeforeNominations}, and you are ${here}: ${c.spoke.includes(seat) ? `you have had your turn this round; you may ${wh}, go to a room or wait` : `you may say a line, ${wh}, go to a room or pass`}.${more}`;
     return `It is day ${game.day} and nominations are open: you may say, whisper${game.seats[seat].alive ? ', nominate' : ''}, vote when a vote is open, or pass.${more}`;
   }
   return 'Nothing is asked of you now.';
@@ -182,7 +230,8 @@ function project(game, e) {
     case 'night': return {...base, type: 'phase', what: 'night', text: `Night ${e.night} falls.`};
     case 'dawn': return {...base, deaths: [...e.deaths], text: `Day ${e.day} breaks. ${e.deaths.length ? list(game, e.deaths) + (e.deaths.length > 1 ? ' died' : ' died') + ' in the night.' : 'Nobody died in the night.'}`};
     case 'phase': return {...base, what: e.what, ...(e.round != null ? {round: e.round} : {}), text: e.text};
-    case 'say': return {...base, seat: e.seat, text: e.text};
+    case 'say': return {...base, seat: e.seat, text: e.text, ...(e.room != null ? {room: e.room} : {})};
+    case 'move': return {...base, seats: [...e.seats], room: e.room, from: e.from ?? null, by: e.by ?? null, text: e.text};
     case 'whisper': return {...base, from: e.from, to: e.to, text: e.text};
     case 'whisper-seen': return {...base, from: e.from, to: e.to, text: `${n(e.from)} whispers to ${n(e.to)}.`};
     case 'pass': return {...base, seat: e.seat, text: `${n(e.seat)} passes.`};
@@ -210,7 +259,9 @@ export function view(game, seat) {
     alive: s.alive, ghostVote: s.alive || s.ghostVote, phase: PHASES[game.phase] || game.phase, night: game.night, day: game.day,
     clock: clockView(game),
     told: game.log.filter(e => e.type === 'told' && canSee(e.audience, seat)).map(e => ({night: e.night, what: e.what, text: toldText(game, e)})),
-    seats: game.seats.map(x => ({index: x.index, name: x.name, alive: x.alive})),
+    seats: game.seats.map(x => ({index: x.index, name: x.name, alive: x.alive, room: placeOf(game, x.index)})),
+    place: (w => ({room: w.place, name: w.placeName, with: w.with, neighbours: w.neighbours, canWhisper: w.canWhisper}))(where(game, seat)),
+    rooms: where(game, seat).rooms, roomsOpen: roomsOpen(game),
     today: todayView(game),
     dead: game.seats.filter(x => !x.alive).map(x => x.name),
     winner: game.winner ? {team: game.winner.team, text: game.winner.text} : null,
@@ -275,7 +326,7 @@ export function nextTurnText(game, seat) {
 export function events(game, seat, since = 0) {
   sync(game);
   const from = Number.isFinite(Number(since)) ? Number(since) : 0;
-  if (seat === ST) return game.log.filter(e => e.id > from && e.audience && e.type !== 'whisper').map(e => {const {n: _n, ...rest} = e; return copy({...rest, ...(project(game, e)?.text ? {text: project(game, e).text} : {})})});
+  if (seat === ST) return game.log.filter(e => e.id > from && e.audience && e.type !== 'whisper' && !(e.type === 'say' && e.room != null)).map(e => {const {n: _n, ...rest} = e; return copy({...rest, ...(project(game, e)?.text ? {text: project(game, e).text} : {})})});
   player(game, seat);
   const out = [];
   for (const e of game.log) {
@@ -316,6 +367,14 @@ function turnTaken(game, seat) {
 function openNoms(game, text) {
   game.clock.nominationsOpen = true; game.clock.spoke = [];
   log(game, 'phase', {what: 'nominations', text, audience: 'all'});
+  closeRooms(game, 'Nominations are open');
+}
+// Everyone in a room comes back to the Square, in public (nominations open, or the day ends).
+function closeRooms(game, why) {
+  const away = game.seats.filter(s => placeOf(game, s.index) != null).map(s => s.index);
+  if (!away.length) return;
+  for (const i of away) game.places[i] = null;
+  log(game, 'move', {seats: away, room: null, from: null, by: null, closed: true, text: `${why}: the rooms close and ${list(game, away)} come${away.length === 1 ? 's' : ''} back to the Square.`, audience: 'all'});
 }
 // The day ends by itself once every living seat has nominated or passed on nominating.
 function maybeEndDay(game) {
@@ -332,7 +391,9 @@ export const say = act('say', (game, seat, text) => {
   const mine = game.log.filter(e => e.type === 'say' && e.seat === seat).slice(-LIMITS.repeatWindow);
   if (mine.some(e => norm(e.text) === norm(t))) refuse(game, seat, REPEAT_MESSAGE);
   if (!c.nominationsOpen && c.spoke.includes(seat)) refuse(game, seat, `You have had your turn in round ${c.round};`);
-  const e = log(game, 'say', {seat, text: t, audience: 'all'});
+  // a line reaches the seat's place: the whole table at the Square, the room's occupants (at this moment) in a room
+  const room = placeOf(game, seat);
+  const e = log(game, 'say', room == null ? {seat, text: t, audience: 'all'} : {seat, text: t, room, audience: occupants(game, room)});
   turnTaken(game, seat);
   return {id: e.id};
 });
@@ -341,6 +402,11 @@ export const whisper = act('whisper', (game, seat, to, text) => {
   player(game, seat); dayOnly(game, seat, 'whisper');
   target(game, to, 'player to whisper to');
   if (to === seat) refuse(game, seat, 'You cannot whisper to yourself; write a note instead.');
+  const pl = placeOf(game, seat);
+  if (pl != null) refuse(game, seat, `There are no whispers in a room: everyone in ${placeName(pl)} hears what you say. Say it, or leave for the Square.`);
+  const nb = livingNeighbours(game, seat);
+  if (!nb.includes(to)) refuse(game, seat, `At the Square you may whisper only to your nearest living neighbour${nb.length === 1 ? '' : 's'}: ${list(game, nb) || 'nobody'}.`);
+  if (placeOf(game, to) != null) refuse(game, seat, `${nameOf(game, to)} is in ${placeName(placeOf(game, to))}; whisper when they are back at the Square.`);
   const t = line(game, seat, text);
   const e = log(game, 'whisper', {from: seat, to, text: t, audience: [seat, to]});
   log(game, 'whisper-seen', {from: seat, to, audience: 'all'});
@@ -362,6 +428,60 @@ export const pass = act('pass', (game, seat) => {
   }
   maybeEndDay(game);
   return {passed: 'nominations'};
+});
+
+// ---- moving between places ----
+function roomsOnly(game, seat) {
+  dayOnly(game, seat, 'go to a room'); clockOnly(game, seat);
+  if (game.clock.nominationsOpen) refuse(game, seat, 'The rooms are closed: nominations are open and everyone is at the Square.');
+}
+function roomNamed(game, seat, name) {
+  const r = findRoom(name);
+  if (!r) refuse(game, seat, `There is no room ${JSON.stringify(name)}: the rooms are ${ROOMS.map(x => `${x.id} (${x.name}, for ${x.size})`).join(', ')}.`);
+  return r;
+}
+const fullText = (game, r) => {const o = occupants(game, r.id); return `${r.name.charAt(0).toUpperCase() + r.name.slice(1)} holds ${r.size} and has ${o.length} (${list(game, o)})`};
+
+// The seat goes to a room (from the Square or another room). Public: the table sees it go. Not a turn.
+export const go = act('go', (game, seat, room) => {
+  player(game, seat); roomsOnly(game, seat);
+  const r = roomNamed(game, seat, room), from = placeOf(game, seat);
+  if (from === r.id) refuse(game, seat, `You are in ${r.name} already.`);
+  if (occupants(game, r.id).length >= r.size) refuse(game, seat, `${fullText(game, r)}: it is full.`);
+  game.places[seat] = r.id;
+  const n = nameOf(game, seat);
+  log(game, 'move', {seats: [seat], room: r.id, from, by: seat, text: from == null ? `${n} went to ${r.name}.` : `${n} left ${placeName(from)} for ${r.name}.`, audience: 'all'});
+  return {place: r.id, with: occupants(game, r.id).filter(i => i !== seat)};
+});
+
+// The seat takes another seat from the Square to a room (room omitted: the seat's own room). Both go together, in public; the
+// other may leave at once. Only a seat at the Square can be invited (a seat in another room is in its own conversation).
+export const invite = act('invite', (game, seat, other, room) => {
+  player(game, seat); roomsOnly(game, seat);
+  target(game, other, 'player to invite');
+  if (other === seat) refuse(game, seat, 'You cannot invite yourself; use go to go to a room.');
+  const from = placeOf(game, seat);
+  if (room == null && from == null) refuse(game, seat, `Name a room: ${ROOMS.map(x => `${x.id} (for ${x.size})`).join(', ')}.`);
+  const r = room == null ? roomById(from) : roomNamed(game, seat, room);
+  if (placeOf(game, other) === r.id) refuse(game, seat, `${nameOf(game, other)} is in ${r.name} already.`);
+  if (placeOf(game, other) != null) refuse(game, seat, `${nameOf(game, other)} is in ${placeName(placeOf(game, other))}; you may invite only someone at the Square.`);
+  const need = (from === r.id ? 0 : 1) + 1;
+  if (occupants(game, r.id).length + need > r.size) refuse(game, seat, `${fullText(game, r)}: there is no room for ${need === 2 ? 'the two of you' : nameOf(game, other)}.`);
+  game.places[seat] = r.id; game.places[other] = r.id;
+  const a = nameOf(game, seat), b = nameOf(game, other);
+  const text = from === r.id ? `${a} called ${b} into ${r.name}.` : from == null ? `${a} and ${b} went to ${r.name}.` : `${a} left ${placeName(from)} and went to ${r.name} with ${b}.`;
+  log(game, 'move', {seats: from === r.id ? [other] : [seat, other], room: r.id, from, by: seat, text, audience: 'all'});
+  return {place: r.id, with: occupants(game, r.id).filter(i => i !== seat)};
+});
+
+// The seat comes back to the Square from its room. Public. Not a turn.
+export const leave = act('leave', (game, seat) => {
+  player(game, seat); dayOnly(game, seat, 'leave a room'); clockOnly(game, seat);
+  const from = placeOf(game, seat);
+  if (from == null) refuse(game, seat, 'You are at the Square already.');
+  game.places[seat] = null;
+  log(game, 'move', {seats: [seat], room: null, from, by: seat, text: `${nameOf(game, seat)} came back to the Square from ${placeName(from)}.`, audience: 'all'});
+  return {place: null};
 });
 
 export const nominate = act('nominate', (game, seat, tg) => {
@@ -527,20 +647,21 @@ export const endDay = act('endDay', (game, reason) => {
   if (!p || p.kind !== 'nomination') refuse(game, ST, p && p.kind === 'vote' ? 'A vote is open; close it first (closeVote).' : `The day waits on another decision first (${p ? p.kind : 'none'}).`);
   stReason(game, 'end-day', reason, `End day ${game.day} now?`);
   log(game, 'phase', {what: 'day-ends', text: 'The Storyteller ends the day.', audience: 'all'});
+  closeRooms(game, 'The day ends');
   toEngine(game, null);
   return {ended: true};
 });
 
 // ---- what a seat's tool handler gets ----
-export const PLAYER_FUNCTIONS = ['view', 'pendingFor', 'answer', 'say', 'whisper', 'pass', 'nominate', 'vote', 'events', 'note', 'notes', 'legalNow', 'mustAct', 'canAct', 'nextTurnText', 'dayActionFor', 'dayAction'];
+export const PLAYER_FUNCTIONS = ['view', 'pendingFor', 'answer', 'say', 'whisper', 'pass', 'nominate', 'vote', 'events', 'note', 'notes', 'legalNow', 'mustAct', 'canAct', 'nextTurnText', 'dayActionFor', 'dayAction', 'where', 'go', 'invite', 'leave'];
 export const STORYTELLER_FUNCTIONS = ['grimoire', 'nightOrder', 'narrate', 'openNominations', 'closeVote', 'endDay', 'rulings'];
-const ALL = {view, pendingFor, answer, say, whisper, pass, nominate, vote, events, note, notes, legalNow, mustAct, canAct, nextTurnText, dayActionFor, dayAction, grimoire, nightOrder, narrate, openNominations, closeVote, endDay, rulings, toldText};
+const ALL = {view, pendingFor, answer, say, whisper, pass, nominate, vote, events, note, notes, legalNow, mustAct, canAct, nextTurnText, dayActionFor, dayAction, where, go, invite, leave, grimoire, nightOrder, narrate, openNominations, closeVote, endDay, rulings, toldText};
 
 // The api bound to one seat: a player's handler may name only its own seat and has no Storyteller function; the
 // Storyteller may read any seat's view and pending but never acts for a player or reads its notes or whispers.
 export function forSeat(seat) {
   const out = {ApiError, LIMITS};
-  const ST_READS = new Set(['view', 'pendingFor']);
+  const ST_READS = new Set(['view', 'pendingFor', 'where']);
   for (const name of PLAYER_FUNCTIONS) out[name] = (game, who, ...rest) => {
     if (seat === ST ? (who !== ST && !ST_READS.has(name)) : who !== seat)
       fail(seat === ST ? `The Storyteller does not ${name} for a player.` : `You are ${nameOf(game, seat)} (seat ${seat}); you act and read only as yourself.`);

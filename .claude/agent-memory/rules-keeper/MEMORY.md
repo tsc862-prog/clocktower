@@ -41,3 +41,13 @@
 - `canAct(game, seat)`: mustAct, or (clock running) a standing action, its round turn, or a nomination/pass on nominating. `nextTurnText` returns a phrase starting "until ..." (the player header wraps it "nothing to do until ...").
 - backend pace: soft only if unseen AND (winner, Storyteller, a seat never shown the game, or canAct); the heartbeat's why adds "nothing to do until ...".
 - Scripted Slayer: weighs the shot once a day (memo in createScripted) after the day's first vote, or before the scripted table ends the day. Seed 2's transcript moved; 1 and 3 did not. Seed 10 shoots (apicheck covers it).
+
+## Rooms and neighbour whispers (#28, PR #57)
+- Rooms are data in `src/data/rooms.js` ROOMS [{id, name, size}] (placeholders nook 2, parlour 3, backroom 4; lore renames). State `game.places[seat]` = room id or null (the Square); sync resets it on a new day.
+- Owner's open questions answered by the manager's defaults: 3 rooms (2/3/4); a line anywhere is the turn. Moves (go/invite/leave) are free, never a turn.
+- Room line audience = occupants at the moment (late joiner hears nothing earlier). A Square line stays 'all' (seats in rooms hear the Square too). Storyteller events exclude room lines like whispers; watchView adds both, plus `places`.
+- invite: only a seat at the Square (never pulls someone out of another room); room omitted = inviter's room; both move, one public `move`.
+- Whisper: at the Square only, to livingNeighbours (dead skipped), target must be at the Square too (a neighbour in a room is refused, not replaced by the next one). Dead seats may whisper and use rooms.
+- Rooms close (one `move` with closed: true) in openNoms and endDay.
+- The sim plays through the api (`src/game/talk.js` playScripted); talk has its own RNG (seed ^ 0x7a1c7a1c) so no decision moves; apicheck still compares apiGame (no rooms) to the sim's answers. Adding talk randomness never moves winners; changing scripted.js does.
+- channelcheck's B is A's neighbour now (the old B could be anyone).
