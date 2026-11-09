@@ -379,6 +379,18 @@ section('the Empath with dead neighbours');
   ok(e[0].info === 0 && eq(e[1].neighbours, [6, 2]) && e[1].info === 1, 'the Empath reads the nearest living neighbours, past the dead');
 }
 
+section('the dawn as the table hears it (#110)');
+{
+  const roles = ['empath', 'chef', 'imp', 'soldier', 'monk', 'baron', 'mayor'];
+  const dawns = s => s.log.filter(e => e.type === 'dawn').map(e => api.events(s, 0).find(x => x.id === e.id)?.text);
+  let s = play(roles, [{kind: 'choose', role: 'imp', value: 3}], {until: atDay(2)});
+  const d = dawns(s);
+  ok(d[0] === 'Day 1 breaks. The first night passes without a death, as it always does.', `day 1: the quiet first night is the rule, not news ("${d[0]}")`);
+  ok(d[1] === 'Day 2 breaks. Nobody died in the night.', `a later quiet night is news ("${d[1]}")`);
+  s = play(roles, [{kind: 'choose', role: 'monk', value: 3}, {kind: 'choose', role: 'imp', value: 1}], {until: atDay(2)});
+  ok(dawns(s)[1] === `Day 2 breaks. ${s.seats[1].name} died in the night.`, `a night death is named at dawn ("${dawns(s)[1]}")`);
+}
+
 section('decisions, determinism and replay');
 {
   let s = newGame({seed: 3, roles: ['empath', 'imp', 'poisoner', 'chef', 'monk', 'soldier', 'mayor']});
