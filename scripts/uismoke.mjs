@@ -26,6 +26,10 @@
 //     on mute and off, nothing posted while the voice is off; the "keeping time" mark while the page reports
 //   - rooms (#28): a line said in a room carries its place, a move is a one-line mark; in the square, a seat away carries its room's
 //     name, the rooms show as discs off the table with their occupants, one line says who is where; all of it goes when the rooms close
+//   - the People view (#77): the default, the Table view one click away and remembered; seven cards in seat order with the role in a
+//     corner; a pushed line lights its speaker with the line beside the face, the line before goes down into the strip; whispers and
+//     room lines marked; the vote on the faces and the tally against its bar; the result flashed; night dims and wakes the Storyteller;
+//     dawn large; the dead shrouded in place; drawers open without unmounting the stage; the roles switch; the phone layout; no control
 import {readFileSync, readdirSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -329,7 +333,7 @@ install(HTML);
 relay = fakeRelay();
 app = createApp({client: relayClient({base: BASE, fetchImpl: relay.fetch}), fixture: GAME, runnersFixture: RUN});
 ok(document.querySelectorAll('#square .seat').length === 7 && document.querySelectorAll('#talk .line').length > 50 && document.querySelectorAll('#agents .agent').length === 8, 'every panel renders from the recording');
-ok($('frames').options.length === 3 && !$('frames').hidden, 'a picker offers the three recorded moments');
+ok($('frames').options.length === 5 && !$('frames').hidden, 'a picker offers the recorded moments: talk, a vote, a night, a dawn, the end');
 $('frames').value = 'talk'; $('frames').dispatch('change');
 ok(document.querySelectorAll('#talk .line.win').length === 0 && /round \d of 2/.test($('phase').textContent), 'picking an earlier moment shows that moment');
 for (const b of document.querySelectorAll('button')) b.click();
@@ -487,12 +491,15 @@ console.log('voices');
   ok(au.plays.at(-1) === BASE + VOICE.clip + '?id=' + clipId(1), `the clip plays from the relay (${au.plays.at(-1)})`);
   const who0 = want[0].speaker;
   ok(who0 === 'storyteller' ? centreLit() && lit().length === 0 : JSON.stringify(lit()) === JSON.stringify([who0]), `the speaker is lit while its clip plays (${who0 === 'storyteller' ? 'the Storyteller, in the centre' : names[who0]})`);
+  {const st = document.querySelector('#stage .stage-st'), c = who0 === 'storyteller' ? null : document.querySelector('#stage .card[data-seat="' + who0 + '"]');
+    ok(who0 === 'storyteller' ? st.classList.contains('voicing') && st.querySelector('.st-line').textContent === want[0].text : c.classList.contains('voicing') && c.querySelector('.cap-text').textContent === want[0].text, 'the People view puts the line being spoken on stage, its speaker lit')}
   const heard = [vr.says[0].text], litBy = [who0 === 'storyteller' ? centreLit() : lit()[0] === who0];
   for (let i = 1; i < want.length; i++) {
     au.end(); await settle();
     heard.push(vr.says[i] && vr.says[i].text);
     litBy.push(want[i].speaker === 'storyteller' ? centreLit() && lit().length === 0 : JSON.stringify(lit()) === JSON.stringify([want[i].speaker]));
   }
+  {const l = want.at(-1), c = document.querySelector('#stage .card.voicing'); ok(Number.isInteger(l.speaker) && c && +c.dataset.seat === l.speaker && c.querySelector('.cap-text').textContent === l.text, 'as each clip plays its line takes the stage (the caption follows the voice)')}
   ok(JSON.stringify(heard) === JSON.stringify(want.map(l => l.text)), `the lines are read in the order they came (${want.map(l => l.kind).join(', ')})`);
   ok(litBy.every(Boolean), 'each line lights its own speaker, and only that one');
   ok(want.every((l, i) => vr.says[i].voice === voiceOf(l)), "a seat's line is in that seat's voice, the Storyteller's lines in the Storyteller's");
@@ -700,6 +707,120 @@ console.log('rooms in the talk');
   const {talkLine} = await import('../src/ui/talk.js');
   const {ROOMS} = await import('../src/data/rooms.js');
   ok(talkLine({type: 'say', seat: 0, room: ROOMS[0].id, text: 'x'}, n).html.includes(`in ${ROOMS[0].name}:`), `without places in the body, the room is named from the rooms as data (${ROOMS[0].name})`);
+}
+
+// ---- the People view (#77) ----
+console.log('the People view');
+const {frameAt} = await import('../src/ui/model.js');
+{
+  install(HTML);
+  const pr = fakeRelay();
+  const papp = createApp({client: relayClient({base: BASE, fetchImpl: pr.fetch}), refreshMs: null});
+  const body = document.body, stage = $('stage');
+  ok(body.dataset.view === 'people' && localStorage.getItem('clocktower.view') === null, 'the People view is the default; nothing is stored until the owner picks');
+  pr.watch = GAME.frames.talk; await papp.onSocketOpen();
+  const T = GAME.frames.talk, tn = T.grimoire.seats.map(s => s.name);
+  const cards = () => stage.querySelectorAll('.card');
+  const card = i => stage.querySelector(`.card[data-seat="${i}"]`);
+  ok(cards().length === 7 && JSON.stringify(cards().map(c => c.querySelector('.name').textContent)) === JSON.stringify(tn), 'seven cards on the stage, in seat order');
+  ok(cards().every((c, i) => c.querySelector('.initial').textContent === tn[i][0]), 'each card carries the initial under its portrait (no portraits here)');
+  ok(cards().every((c, i) => c.querySelector('.role-corner .role-token').dataset.role === T.grimoire.seats[i].role), 'each card has its true role small in a corner');
+  ok(!!stage.querySelector('.stage-st .face') && /Storyteller/.test(stage.querySelector('.stage-st .name').textContent) && stage.querySelector('.stage-st .st-line').textContent.length > 0,
+    "the Storyteller's portrait sits apart with its latest words");
+  // a pushed line lights its speaker and sits beside the face
+  const base = {type: 'watch', seed: T.seed, clock: T.clock, pending: T.pending, ballot: null, phase: T.phase, day: T.day, night: T.night, winner: null};
+  let nid = T.last;
+  const push = async e => {const ev = {id: ++nid, phase: 'day', night: T.night, day: T.day, audience: 'all', ...e}; papp.onSocket({...base, last: ev.id, events: [ev]}); await tick(); return ev};
+  const s1 = await push({type: 'say', seat: 3, text: 'The tower is wrong by four minutes.'});
+  let sp = stage.querySelectorAll('.card.speaking');
+  ok(sp.length === 1 && sp[0].dataset.seat === '3' && sp[0].querySelector('.caption .cap-text').textContent === s1.text, `a pushed line lights ${tn[3]}'s card, the line beside the face`);
+  const s2 = await push({type: 'say', seat: 5, text: 'Four minutes is a long time in this town.'});
+  sp = stage.querySelectorAll('.card.speaking');
+  ok(sp.length === 1 && sp[0].dataset.seat === '5' && !card(3).querySelector('.caption') && card(5).querySelector('.cap-text').textContent === s2.text, 'the next line moves the light and the caption');
+  const strip = stage.querySelector('.recent');
+  ok(strip.firstChild && strip.firstChild.dataset.key === String(s1.id) && /four minutes/.test(strip.firstChild.textContent) && strip.children.length <= 8, 'the line before goes down into the recent strip, newest first, eight at most');
+  ok(strip.firstChild.querySelector('.who.sc-3'), 'the strip keeps the speaker colours');
+  const wh = await push({type: 'whisper', from: 1, to: 2, text: 'Watch Corwin tonight.', audience: [1, 2]});
+  const wc = card(1).querySelector('.caption.whisper');
+  ok(!!wc && new RegExp('to ' + tn[2]).test(wc.textContent) && /did not hear/.test(wc.textContent) && wc.querySelector('.cap-text').textContent === wh.text, 'a whisper shows on the whisperer, to whom, marked as unheard by the table');
+  await push({type: 'say', seat: 4, room: 'nook', text: 'Just the two of us, then.'});
+  ok(/in the Snug/.test(card(4).querySelector('.caption.in-room .cap-head').textContent), 'a line said in a room carries its place');
+  ok(strip.querySelector('.r-line[data-kind~="whisper"]'), 'the strip marks the whisper');
+  // drawers over the stage's edge
+  const firstCard = card(0), talkBox = $('talk').querySelector('.lines'), firstLine = talkBox.firstChild;
+  const tab = k => document.querySelector(`#drawer-tabs button[data-drawer="${k}"]`);
+  tab('talk').click();
+  ok(body.dataset.drawer === 'talk' && tab('talk').getAttribute('aria-expanded') === 'true', 'the Talk tab opens the talk drawer');
+  const s3 = await push({type: 'say', seat: 6, text: 'Then I will wait four minutes.'});
+  ok(stage.isConnected && card(0) === firstCard && card(6).classList.contains('speaking') && talkBox.firstChild === firstLine && talkBox.querySelector(`.line[data-key="e${s3.id}"]`),
+    'with a drawer open the stage stays mounted and goes on; the talk appends behind it');
+  tab('grimoire').click();
+  ok(body.dataset.drawer === 'grimoire' && tab('talk').getAttribute('aria-expanded') === 'false', 'another tab swaps the drawer');
+  tab('grimoire').click();
+  ok(body.dataset.drawer === '', 'its tab again closes it');
+  tab('agents').click(); body.dispatch('keydown', {key: 'Escape'});
+  ok(body.dataset.drawer === '', 'Esc closes a drawer');
+  tab('rulings').click(); document.querySelector('#board .drawer-close').click();
+  ok(body.dataset.drawer === '' && card(0) === firstCard, 'Close closes it; the same stage is there');
+  // the roles switch
+  $('roles-toggle').checked = false; $('roles-toggle').dispatch('change');
+  ok(body.dataset.roles === 'off' && stage.querySelectorAll('.role-corner').length === 0 && localStorage.getItem('clocktower.roles') === 'off', 'the roles switch hides the roles on the cards, remembered');
+  ok(document.querySelectorAll('#grimoire .grim-row .role-token').length === 7, 'the grimoire still shows every role');
+  // the view switch and its memory
+  tab('talk').click();
+  document.querySelector('#view-switch button[data-view="table"]').click();
+  ok(body.dataset.view === 'table' && body.dataset.drawer === '' && localStorage.getItem('clocktower.view') === 'table', 'Table switches the view, closes the drawer and is remembered');
+  const kept = {...localStorage._d};
+  install(HTML); Object.assign(localStorage._d, kept);
+  createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch}), refreshMs: null});
+  ok(document.body.dataset.view === 'table' && document.body.dataset.roles === 'off' && !$('roles-toggle').checked, 'the next visit opens on the remembered view, roles hidden');
+  document.querySelector('#view-switch button[data-view="people"]').click();
+  ok(document.body.dataset.view === 'people' && localStorage.getItem('clocktower.view') === 'people', 'People again, remembered');
+}
+{
+  // the recorded vote, night, dawn and end, as ?fixture shows them
+  install(HTML);
+  const fapp = createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch}), fixture: GAME, runnersFixture: RUN, frame: 'vote'});
+  const stage = $('stage'), V = GAME.frames.vote, p = V.pending, card = i => stage.querySelector(`.card[data-seat="${i}"]`);
+  const vn = V.grimoire.seats.map(s => s.name);
+  ok(card(p.nominee).classList.contains('is-nominee') && card(p.nominee).querySelector('.tag.nominee') && card(p.nominator).classList.contains('is-nominator') && card(p.nominator).querySelector('.tag.nominator'),
+    `the vote: ${vn[p.nominee]} ringed as the nominee, ${vn[p.nominator]} as the nominator`);
+  const votes = V.ballot.votes, yes = Object.values(votes).filter(Boolean).length, no = Object.values(votes).filter(x => !x).length;
+  ok(stage.querySelectorAll('.hand-mark.up').length === yes && stage.querySelectorAll('.hand-mark.down').length === no && stage.querySelectorAll('.hand-mark.none').length === p.seats.length - yes - no,
+    `hands on the faces: ${yes} yes, ${no} no, ${p.seats.length - yes - no} to cast`);
+  for (const [i, x] of Object.entries(votes)) ok(!!card(i).querySelector(x ? '.hand-mark.up' : '.hand-mark.down'), `${vn[i]}'s card shows ${x ? 'yes' : 'no'}`);
+  const need = Math.ceil(V.grimoire.seats.filter(s => s.alive).length / 2), c = stage.querySelector('.table-centre');
+  const pips = c.querySelectorAll('.pip');
+  ok(c.querySelector('.tally-big b').textContent === String(yes) && new RegExp(`of ${need} needed`).test(c.textContent) && pips.filter(x => x.classList.contains('yes')).length === yes && pips.findIndex(x => x.classList.contains('need')) === need - 1,
+    `the tally in the middle: ${yes} of ${need} needed, the bar at ${need}`);
+  ok(!stage.querySelector('.caption'), 'no caption from before the nomination hangs over the vote');
+  // a vote just closed: its result flashed on the nominee
+  const E = GAME.frames.end, vote = E.events.find(e => e.type === 'vote');
+  fapp.state.watch = frameAt(E, vote.id); fapp.state.epoch++; fapp.render();
+  const res = card(vote.target).querySelector('.result');
+  ok(card(vote.target).classList.contains('flash') && res && new RegExp(`${vote.tally} of ${vote.need}`).test(res.textContent), `the result flashed on the nominee (${res && res.textContent})`);
+  // night
+  $('frames').value = 'night'; $('frames').dispatch('change');
+  const N = fapp.state.watch;
+  ok(stage.dataset.phase === 'night' && /Night \d/.test(stage.querySelector('.night-big').textContent), `night: the stage dims, "${stage.querySelector('.night-big').textContent}" in the middle`);
+  ok(stage.querySelector('.stage-st').classList.contains('awake') && stage.querySelectorAll('.st-night div').length > 0, "the Storyteller's card wakes, with what it does tonight");
+  const dead = N.grimoire.seats.filter(s => !s.alive);
+  ok(dead.length > 0 && dead.every(s => card(s.seat).classList.contains('dead') && card(s.seat).querySelector('.shroud') && card(s.seat).querySelector('.ghost-corner')), `the dead are shrouded in place, with their ghost vote (${dead.map(s => s.name).join(', ')})`);
+  ok(stage.querySelectorAll('.card.woken').length === 1, 'the seat the Storyteller has woken glows');
+  // dawn
+  $('frames').value = 'dawn'; $('frames').dispatch('change');
+  const D = fapp.state.watch, dawn = D.events.findLast(e => e.type === 'dawn');
+  ok(stage.dataset.phase === 'day' && stage.querySelector('.dawn-big').textContent === dawn.text && stage.querySelector('.dawn-words'), `dawn: "${dawn.text}" large in the middle, with its narration`);
+  ok(dawn.deaths.every(i => card(i).querySelector('.shroud')), 'the night\'s dead are shrouded at dawn');
+  $('frames').value = 'end'; $('frames').dispatch('change');
+  ok(/wins/.test(stage.querySelector('.winner-big').textContent), 'the end: the winner in the middle');
+  // phone layout and no control that acts for a seat
+  const css = readFileSync(join(ROOT, 'styles/page.css'), 'utf8'), phone = css.slice(css.lastIndexOf('@media (max-width: 600px)'));
+  ok(/#stage \.table \{ display: grid; grid-template-columns: repeat\(2,/.test(phone) && /\.card\.speaking \{ grid-column: 1 \/ -1; \}/.test(phone) && /body\[data-view="people"\] #board \{ position: fixed; inset: 0/.test(phone),
+    'at phone width: two columns of cards, the speaker across both with its caption under, the drawers over the whole screen');
+  ok(stage.querySelectorAll('button, input, select, textarea').length === 0, 'the stage has no control at all');
+  const labels = [...document.querySelectorAll('#drawer-tabs button, #view-switch button')].map(b => b.textContent).join(' ') + ' ' + $('bar-start-all').textContent;
+  ok(!/\b(nominate|vote|whisper|speak)\b/i.test(labels), `the new controls only switch views, open drawers and start runners (${labels})`);
 }
 
 console.log(fails ? `${fails} check(s) failed` : 'the page renders the game and changes nothing');

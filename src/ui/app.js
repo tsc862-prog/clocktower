@@ -1,4 +1,4 @@
-// The watcher's page: six panels fed by the relay. createApp() wires the panels to one state and exposes the polls, so the page
+// The watcher's page: the People view (src/ui/stage.js, the default) or the Table view of six panels, fed by the relay. createApp() wires the panels to one state and exposes the polls, so the page
 // (src/ui/main.js) drives them on timers and the smoke (scripts/uismoke.mjs) drives them by hand.
 //
 // Where each panel's data comes from:
@@ -12,6 +12,9 @@
 //   relay state                                           GET /health
 //   voices                                                the socket's {type: 'clip'} (the relay's clip for an event), /tts/*, and
 //                                                         POST /play/heard (how far the voices have got; src/ui/voice.js)
+// Two views of the same panels, switched on the game bar and remembered per browser (clocktower.view): People, the characters as the
+// main screen with the talk, the grimoire, the Storyteller's log and the agents in drawers over the stage's edge; Table, every panel
+// at once. Both are always built and fed, so switching, or opening a drawer, keeps every scroll position and open row.
 // The page's actions are the supervisor's: start, stop, stop all, resume; and New game once the relay serves it. The pace knob on the
 // game bar goes with every start (minGap, heartbeat); a running runner keeps the pace it was started with.
 import {createSquare} from './square.js';
@@ -19,7 +22,9 @@ import {createTalk} from './talk.js';
 import {createGrimoire} from './grimoire.js';
 import {createRulings} from './rulings.js';
 import {createAgents} from './agents.js';
-import {clockText, mergeFrame, mergePush, seatNames, PACES, DEFAULT_PACE, runnerGap} from './model.js';
+import {createStage} from './stage.js';
+import {openRooms, roomsLine} from './square.js';
+import {fixtureMoments, clockText, mergeFrame, mergePush, seatNames, PACES, DEFAULT_PACE, runnerGap} from './model.js';
 import {esc} from './dom.js';
 import {probeArt, artNote, imageLoad} from './art.js';
 import {loadPortraits} from './portraits.js';
@@ -27,11 +32,15 @@ import {createVoice, voiceBar} from './voice.js';
 
 const PACE_KEY = 'clocktower.pace';
 function storedPace() {try {const v = globalThis.localStorage && localStorage.getItem(PACE_KEY); return PACES[v] ? v : DEFAULT_PACE} catch {return DEFAULT_PACE}}
+export const VIEW_KEY = 'clocktower.view', ROLES_KEY = 'clocktower.roles', VIEWS = ['people', 'table'], DRAWERS = ['talk', 'grimoire', 'rulings', 'agents'];
+const stored = k => {try {return globalThis.localStorage ? localStorage.getItem(k) : null} catch {return null}};
+const store = (k, v) => {try {if (globalThis.localStorage) localStorage.setItem(k, v)} catch {}};
+const FRAME_NAMES = {talk: 'day 1, talking', vote: 'day 1, a vote', night: 'a night', dawn: 'dawn', end: 'the end'};
 
-export function createApp({client, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end', artLoad = imageLoad, pageFetch = undefined, audio = undefined, voiceFile = undefined, voiceTick = undefined, clipWait = undefined}) {
+export function createApp({client, view = null, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end', artLoad = imageLoad, pageFetch = undefined, audio = undefined, voiceFile = undefined, voiceTick = undefined, clipWait = undefined}) {
   const $ = id => document.getElementById(id);
   const state = {watch: null, runners: null, links: null, asides: [], health: null, source: fixture ? 'recorded' : 'live', watchMissing: false, frame: null, msg: '', epoch: 0, socket: false, pace: storedPace()};
-  const bar = {seed: $('seed'), rounds: $('rounds'), phase: $('phase'), winner: $('winner'), source: $('source'), relay: $('relay-state'), newGame: $('new-game'), frames: $('frames'), msg: $('act-msg'), empty: $('empty'), pace: $('pace'), paceNote: $('pace-note'), art: $('art-note')};
+  const bar = {seed: $('seed'), rounds: $('rounds'), phase: $('phase'), winner: $('winner'), source: $('source'), relay: $('relay-state'), newGame: $('new-game'), frames: $('frames'), msg: $('act-msg'), empty: $('empty'), pace: $('pace'), paceNote: $('pace-note'), art: $('art-note'), rooms: $('rooms-line'), startAll: $('bar-start-all')};
   if (seed != null && bar.seed && !bar.seed.value) bar.seed.value = String(seed);
   let asideN = 0, seedTouched = false;
   if (bar.seed) bar.seed.addEventListener('input', () => {seedTouched = true});
@@ -71,11 +80,46 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
   }
   const say = m => {state.msg = m; if (bar.msg) bar.msg.textContent = m};
 
-  const panels = {square: createSquare($('square')), talk: createTalk($('talk')), grimoire: createGrimoire($('grimoire')), rulings: createRulings($('rulings')), agents: createAgents($('agents'), {act})};
+  let voice = null;
+  const panels = {square: createSquare($('square')), talk: createTalk($('talk')), grimoire: createGrimoire($('grimoire')), rulings: createRulings($('rulings')), agents: createAgents($('agents'), {act}),
+    stage: createStage($('stage'), {voiceState: () => voice ? voice.state : null, recorded: !!fixture})};
+  // the view: People (the default) or Table, remembered per browser; ?view= on the address picks one for this visit only
+  const body = document.body;
+  function setView(v, remember = true) {
+    const next = VIEWS.includes(v) ? v : 'people';
+    body.dataset.view = next;
+    for (const b of document.querySelectorAll('#view-switch button')) b.setAttribute('aria-pressed', b.dataset.view === next ? 'true' : 'false');
+    if (remember) store(VIEW_KEY, next);
+    if (next === 'table') setDrawer(null);
+  }
+  // a drawer over the stage's edge (People view): one at a time; its tab again, Close or Esc shuts it
+  function setDrawer(d) {
+    const next = DRAWERS.includes(d) ? d : '';
+    body.dataset.drawer = next;
+    for (const b of document.querySelectorAll('#drawer-tabs button')) b.setAttribute('aria-expanded', b.dataset.drawer === next ? 'true' : 'false');
+    if (next === 'talk' && panels.talk.follower.following) {const box = panels.talk.box; box.scrollTop = box.scrollHeight}
+  }
+  for (const b of document.querySelectorAll('#view-switch button')) b.addEventListener('click', () => setView(b.dataset.view));
+  for (const b of document.querySelectorAll('#drawer-tabs button')) b.addEventListener('click', () => setDrawer(body.dataset.drawer === b.dataset.drawer ? null : b.dataset.drawer));
+  {const c = document.querySelector('#board .drawer-close'); if (c) c.addEventListener('click', () => setDrawer(null))}
+  document.addEventListener('keydown', e => {if (e && e.key === 'Escape' && body.dataset.drawer) setDrawer(null)});
+  // the roles switch: the true role in each card's corner, or not, for a tenser watch
+  const rolesBox = $('roles-toggle');
+  function setRoles(on, remember = true) {
+    body.dataset.roles = on ? 'on' : 'off';
+    if (rolesBox) rolesBox.checked = !!on;
+    if (remember) store(ROLES_KEY, on ? 'on' : 'off');
+    panels.stage.refresh();
+  }
+  if (rolesBox) rolesBox.addEventListener('change', () => setRoles(rolesBox.checked));
+  setDrawer(null);
+  setView(view || stored(VIEW_KEY) || 'people', false);
+  setRoles(stored(ROLES_KEY) !== 'off', false);
+  {const b = $('bar-start-all'); if (b) b.addEventListener('click', () => panels.agents.startAll())}
   if (bar.newGame) bar.newGame.addEventListener('click', () => act('newGame'));
   // the voices: every public line read aloud through the relay's local engine, when the owner turns them on
   let drawVoice = () => {};
-  const voice = createVoice({client, recorded: !!fixture, onSpeaker: who => panels.square.setSpeaking(who), onChange: st => drawVoice(st),
+  voice = createVoice({client, recorded: !!fixture, onSpeaker: who => {panels.square.setSpeaking(who); panels.stage.setSpeaking(who)}, onChange: st => {drawVoice(st); panels.stage.refresh()},
     ...(audio !== undefined ? {audio} : {}), ...(voiceFile !== undefined ? {voiceFile} : {}), ...(voiceTick !== undefined ? {tick: voiceTick} : {}), ...(clipWait !== undefined ? {clipWait} : {})});
   drawVoice = voiceBar(voice, {box: $('voice'), toggle: $('voice-toggle'), skip: $('voice-skip'), mute: $('voice-mute'), whispers: $('voice-whispers'), note: $('voice-note'), time: $('voice-time')});
   drawVoice();
@@ -99,6 +143,8 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
       bar.newGame.title = can ? 'Stops every runner, then deals a new game with this seed' : 'Needs the relay to start a new game over the wire (POST /play/game/new), asked of the backend';
     }
     if (bar.frames) bar.frames.hidden = live;
+    if (bar.rooms) {const o = openRooms(w), t = o ? roomsLine(o.rooms, seatNames(w)) : ''; if (bar.rooms.textContent !== t) bar.rooms.textContent = t; bar.rooms.hidden = !o}
+    if (bar.startAll) {const a = panels.agents.canStartAll(); bar.startAll.disabled = !live || !a; bar.startAll.title = !live ? 'The recorded game: nothing is sent to the relay' : a ? 'Start a runner for the Storyteller and every seat that has none' : 'Every seat has a runner, or the runner supervisor is off'}
     if (bar.art) {const a = artNote(); if (bar.art.textContent !== a) bar.art.textContent = a; bar.art.hidden = !a}
     if (bar.pace) {
       const p = PACES[state.pace];
@@ -112,8 +158,8 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
   }
   function render() {
     const s = {watch: state.watch, runners: state.runners, links: state.links, asides: state.asides, epoch: state.epoch};
-    renderBar();
     for (const p of Object.values(panels)) p.render(s);
+    renderBar(); // after the panels: the bar's Start all asks the agents panel
     if (state.source === 'live') voice.feed(state.watch, state.epoch);
   }
 
@@ -182,22 +228,25 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
       render();
     }
   }
+  // the recorded moments: the recording's own, and a night and a dawn cut from its end
+  const moments = fixture ? (() => {const m = {...fixture.frames, ...fixtureMoments(fixture.frames.end)}, order = ['talk', 'vote', 'night', 'dawn', 'end'];
+    return Object.fromEntries([...order.filter(k => m[k]), ...Object.keys(m).filter(k => !order.includes(k))].map(k => [k, m[k]]))})() : null;
   function showFrame(name) {
     if (!fixture) return;
-    const f = fixture.frames[name] || fixture.frames.end;
+    const f = moments[name] || moments.end;
     state.frame = name; state.watch = f; state.epoch++;
     if (runnersFixture) {state.runners = runnersFixture.runners; state.links = runnersFixture.links}
     render();
   }
   if (fixture) {
-    if (bar.frames) {bar.frames.replaceChildren(...Object.keys(fixture.frames).map(k => {const o = document.createElement('option'); o.value = k; o.textContent = {talk: 'day 1, talking', vote: 'day 1, a vote', end: 'the end'}[k] || k; return o}));
+    if (bar.frames) {bar.frames.replaceChildren(...Object.keys(moments).map(k => {const o = document.createElement('option'); o.value = k; o.textContent = k === 'night' ? `night ${moments[k].night}` : k === 'dawn' ? `dawn, day ${moments[k].day}` : FRAME_NAMES[k] || k; return o}));
       bar.frames.addEventListener('change', () => showFrame(bar.frames.value))}
-    const first = fixture.frames[frame] ? frame : 'end';
+    const first = moments[frame] ? frame : 'end';
     showFrame(first); if (bar.frames) bar.frames.value = first;
   } else render();
   // the owner's own token images: looked for once per page load; the drawn tokens stay until (and unless) one is found
   const art = probeArt({load: artLoad}).then(n => {render(); return n});
   // the seats' portraits (assets/portraits/index.json, read once per page load); the initials until then, or for good without it
   const portraits = loadPortraits(pageFetch ? {fetchImpl: pageFetch} : {}).then(m => {render(); return m});
-  return {art, portraits, voice, state, panels, act, render, pollWatch, tickWatch, pollRunners, pollHealth, onSocket, onSocketOpen, onSocketClose, flushRefresh, showFrame};
+  return {art, portraits, voice, state, panels, act, setView, setDrawer, setRoles, render, pollWatch, tickWatch, pollRunners, pollHealth, onSocket, onSocketOpen, onSocketClose, flushRefresh, showFrame};
 }

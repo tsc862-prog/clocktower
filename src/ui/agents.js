@@ -16,7 +16,8 @@ export function createAgents(root, {act}) {
   list.addEventListener('error', e => {const t = e.target; if (t && t.tagName === 'IMG' && t.classList.contains('mini-portrait')) t.hidden = true}, true);
   let last = {runners: null};
   resume.addEventListener('click', () => act('resume'));
-  startAll.addEventListener('click', () => act('startAll', {seats: [...rows.values()].filter(r => r.startable).map(r => r.body())}));
+  const doStartAll = () => act('startAll', {seats: [...rows.values()].filter(r => r.startable).map(r => r.body())});
+  startAll.addEventListener('click', doStartAll);
   stopAll.addEventListener('click', () => act('stopAll'));
 
   function row(key, label, kind, player) {
@@ -90,5 +91,6 @@ export function createAgents(root, {act}) {
     startAll.disabled = !enabled || ![...rows.values()].some(r => r.startable);
     stopAll.disabled = !enabled || !((rv && rv.runners) || []).some(r => !['stopped', 'crashed'].includes(r.state));
   }
-  return {render, rows, get last() {return last}};
+  // the game bar's Start all (src/ui/app.js) does what this panel's does
+  return {render, rows, startAll: doStartAll, canStartAll: () => !startAll.disabled, get last() {return last}};
 }

@@ -125,3 +125,37 @@ export const PACES = {
 export const DEFAULT_PACE = 'readable';
 // The gap a running runner plays at, from its pacing line ("... at least 20 s apart"), or null when it has not said.
 export const runnerGap = r => {const m = /at least (\d+) s apart/.exec((r && r.pace) || ''); return m ? Number(m[1]) : null};
+
+// Moments cut from a recorded game's last frame, for the recorded game's picker (?fixture=night, ?fixture=dawn): the events up to a
+// point, the phase and clock of the last of them, and the seats as they stood then (a night's deaths are in the next dawn's
+// grimoire; a day's are the last dawn's with that day's deaths after it). Nothing waits, nothing is open.
+export function frameAt(f, upto) {
+  const events = f.events.filter(e => e.id <= upto), at = events.at(-1);
+  if (!at) return f;
+  const dawns = f.events.filter(e => e.type === 'dawn' && Array.isArray(e.grimoire));
+  let seats = null;
+  if (at.phase === 'night') {const d = dawns.find(x => x.id > upto); seats = d ? d.grimoire.map(s => ({...s})) : null}
+  else {
+    const d = dawns.filter(x => x.id <= upto).at(-1);
+    if (d) {
+      seats = d.grimoire.map(s => ({...s}));
+      for (const e of events) if (e.id > d.id && e.type === 'death') {const s = seats.find(x => x.seat === e.seat); if (s) s.alive = false}
+    }
+  }
+  seats = seats || f.grimoire.seats;
+  return {...f, phase: at.phase, night: at.night, day: at.day, last: at.id, events, pending: null, ballot: null, winner: null,
+    clock: at.phase === 'day' ? {day: at.day, round: 1, roundsBeforeNominations: f.rounds, nominationsOpen: false, spoke: [], passedNominating: []} : null,
+    grimoire: {...f.grimoire, seats, pending: null, winner: null}, nightOrder: [], rulings: (f.rulings || []).filter(r => r.id == null || r.id <= upto)};
+}
+// -> {night, dawn}: the second night (or the first) after its kill, before dawn; that dawn with its narration
+export function fixtureMoments(end) {
+  if (!end || !Array.isArray(end.events)) return {};
+  const nights = end.events.filter(e => e.type === 'night'), n = nights[1] || nights[0];
+  if (!n) return {};
+  const dawn = end.events.find(e => e.type === 'dawn' && e.id > n.id);
+  const out = {};
+  const beforeDawn = end.events.filter(e => e.id > n.id && (!dawn || e.id < dawn.id)).at(-1);
+  out.night = frameAt(end, (beforeDawn || n).id);
+  if (dawn) {const next = end.events.find(e => e.id > dawn.id); out.dawn = frameAt(end, next && next.type === 'narration' ? next.id : dawn.id)}
+  return out;
+}
