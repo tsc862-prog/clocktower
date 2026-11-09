@@ -75,6 +75,7 @@ export function playScripted(game, seed = game.config.seed, {onDecision, maxStep
     if (p.seat === ST) {const v = answerer(game); onDecision?.(p, v, game); api.answer(game, ST, v, `${SCRIPTED_REASON_PREFIX} ${p.kind}`); continue}
     if (p.kind === 'choose') {const v = answerer(game); onDecision?.(p, v, game); api.answer(game, p.seat, v); continue}
     if (p.kind === 'vote') {const v = answerer(game); onDecision?.(p, v, game); for (const i of p.seats) api.vote(game, i, v[i]); continue}
+    if (p.kind === 'thoughts') {const v = answerer(game); onDecision?.(p, v, game); for (const i of p.seats) api.think(game, i, v[i] ?? ''); continue}
     if (p.kind === 'nomination' && !game.clock.nominationsOpen) {
       const next = game.seats.find(s => s.alive && !game.clock.spoke.includes(s.index));
       turn(game, next.index);

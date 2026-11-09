@@ -1,9 +1,9 @@
 // The engine's public face. Runs unchanged in Node and in the browser: no model, no network, no node: imports.
 export {newGame, createState, deal} from './state.js';
-export {answer, replay, validate, start} from './engine.js';
+export {answer, replay, validate, start, THOUGHT_MAX, THOUGHTS_QUESTION} from './engine.js';
 export {PENDING_KINDS, optionKey, sameAnswer} from './mechanics.js';
 export {grimoire, roleName, aliveCount} from './grimoire.js';
-export {createScripted, suspicion} from './scripted.js';
+export {createScripted, suspicion, cannedThoughts} from './scripted.js';
 export {createScriptedTalk, playScripted} from './talk.js';
 export {createRng} from './rng.js';
 export {HOOKS, TELLINGS, PASSIVE} from './abilities.js';
