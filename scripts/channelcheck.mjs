@@ -161,7 +161,8 @@ async function channels() {
         look: [{}, {player: A + 1}, {seat: A}], my_role: [{}, {player: A + 1}, {name: nm(A)}], read_talk: [{}, {since: 0}, {since: -5}, {since: 'x'}, {since: 1e9}, {since: 0, player: A + 1}],
         my_whispers: [{}, {to: nm(A)}, {player: A + 1}], my_notes: [{}, {seat: A}, {player: A + 1}, {name: nm(A)}], what_is_asked: [{}, {player: A + 1}], who_voted: [{}],
         note: [{text: ''}], speak: [{text: ''}], whisper: [{to: nm(i), text: 'x'}, {to: 'Storyteller', text: 'x'}, {to: String(A), text: 'x'}, ...other.slice(0, 2).map(o => ({to: o, text: ''}))],
-        nominate: [{target: nm(A)}, {target: 'Storyteller'}, {target: String(A)}], vote: [{yes: 'yes'}, {yes: 'maybe'}], night_choice: [{pick: [nm(A)]}, {pick: other}],
+        nominate: [{target: nm(A)}, {target: 'Storyteller'}, {target: String(A)}], vote: [{yes: 'yes'}, {yes: 'maybe'}], night_choice: [{pick: [nm(A), 'Storyteller']}, {pick: other}], // never one name: by day one name fires a Slayer's shot (#37)
+        slay: [{}, {target: 'Storyteller'}, {target: String(A)}], // hostile but never a real shot: the read must not change the game
       }};
     ok(PLAYER_TOOLS.every(t => t.name in variants(0) || t.name === 'pass'), 'every player tool is read with hostile arguments (pass is played, not probed)');
     const heard = {}, tRead = Date.now();
