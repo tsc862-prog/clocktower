@@ -234,7 +234,8 @@ export function pendingFor(game, seat) {
     const targets = p.options.filter(o => o && o.by === seat).map(o => o.target);
     return {kind: 'nomination', targets, question: 'Nominations are open: nominate a player for execution, or pass.'};
   }
-  const d = dayActionFor(game, seat);
+  // the standing shot shows once the seat has taken its say-or-pass of the round, so it never hides the turn itself
+  const d = game.clock.nominationsOpen || game.clock.spoke.includes(seat) ? dayActionFor(game, seat) : null;
   if (d) return {kind: 'choose', role: d.ability, standing: true, question: `${nameOf(game, seat)} (${roleName(game, d.ability)}): ${d.question}`, options: [null, ...d.options]};
   return null;
 }
@@ -258,16 +259,17 @@ export function canAct(game, seat) {
   return s.alive && game.pending?.kind === 'nomination' && !game.today.nominators.includes(seat) && !c.passedNominating.includes(seat);
 }
 
-// When a seat that cannot act now next will, as a phrase for its header ("nothing to do until round 2"); null when it can act.
+// When a seat that cannot act now next will, as a phrase for its header ("until round 2"; the header reads "nothing to do until
+// round 2"); null when it can act.
 export function nextTurnText(game, seat) {
   if (canAct(game, seat)) return null;
-  if (game.winner) return 'nothing to do: the game is over';
-  if (game.phase === 'night' || game.phase === 'setup') return `nothing to do until day ${game.day + 1}${game.phase === 'night' ? ', unless the Storyteller wakes you' : ''}`;
-  if (!clockStarted(game)) return `nothing to do until the talk of day ${game.day} begins`;
+  if (game.winner) return 'the game is over';
+  if (game.phase === 'night' || game.phase === 'setup') return `until day ${game.day + 1}${game.phase === 'night' ? ', unless the Storyteller wakes you' : ''}`;
+  if (!clockStarted(game)) return `until the talk of day ${game.day} begins`;
   const c = game.clock;
-  if (!c.nominationsOpen) return c.round >= c.roundsBeforeNominations ? 'nothing to do until nominations' : `nothing to do until round ${c.round + 1}`;
-  if (game.pending?.kind === 'vote') return 'nothing to do until the vote ends';
-  return 'nothing to do until the day ends (you may still speak or whisper)';
+  if (!c.nominationsOpen) return c.round >= c.roundsBeforeNominations ? 'until nominations open' : `until round ${c.round + 1}`;
+  if (game.pending?.kind === 'vote') return 'until the vote ends';
+  return 'until the day ends (you may still speak or whisper)';
 }
 
 export function events(game, seat, since = 0) {

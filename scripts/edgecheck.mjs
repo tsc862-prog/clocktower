@@ -265,7 +265,9 @@ section('the Slayer');
   let s = play(roles, [], {until: atDay(1)});
   ok(s.pending.kind === 'nomination' && !s.log.some(e => e.type === 'wake' && e.phase === 'day'), 'no choice is asked of the Slayer at dawn: the day goes straight to its talk');
   ok(s.pending.dayActions.length === 1 && s.pending.dayActions[0].by === 0 && s.pending.dayActions[0].ability === 'slayer' && eq(s.pending.dayActions[0].options, [0, 1, 2, 3, 4, 5, 6]), 'the day\'s table decision offers the Slayer\'s shot');
-  ok(!api.mustAct(s, 0) && api.pendingFor(s, 0)?.standing === true && api.pendingFor(s, 0).options[0] === null && api.canAct(s, 0), 'the shot never makes the Slayer\'s seat wait: a standing choice it may answer or not');
+  ok(!api.mustAct(s, 0) && api.dayActionFor(s, 0)?.ability === 'slayer' && api.pendingFor(s, 0) === null && api.canAct(s, 0), 'the shot never makes the Slayer seat wait, nor hides its turn to speak');
+  api.say(s, 0, 'Good morning.');
+  ok(api.pendingFor(s, 0)?.standing === true && api.pendingFor(s, 0).options[0] === null && !api.mustAct(s, 0) && api.canAct(s, 0), 'once it has spoken, the shot shows as a standing choice it may answer or not');
   s = play(roles, [shot(1, 0, 1)], {until: s => s.winner});
   ok(s.winner?.team === 'good' && s.winner.reason === 'demon-dead' && s.winner.day === 1, 'the Slayer kills the Imp and good wins');
   s = play(roles, [shot(1, 0, 2), {kind: 'choose', role: 'imp', answer: p => [3, 4, 6].find(x => p.options.includes(x))}], {until: atDay(2)});
@@ -280,6 +282,7 @@ section('the Slayer');
   // through the api: mid-day after talk
   let g = play(roles, [], {until: atDay(1)});
   for (const x of g.seats) api.say(g, x.index, `${x.name} speaks first.`);
+  api.say(g, 0, 'Odette again, round two.');
   ok(g.clock.round === 2 && api.canAct(g, 0), 'after a round of talk the Slayer still holds the shot');
   ok(eq(api.answer(g, 0, null), {kept: true}) && api.dayActionFor(g, 0), 'answering "nobody" keeps the shot for later');
   ok(throws(() => api.dayAction(g, 0, 9), /Pick one of/), 'a shot at no seat is refused');

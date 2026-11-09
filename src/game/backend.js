@@ -128,8 +128,9 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     const soft = !args.wake || args.wake === 'all';
     const check = () => {
       if (mustAct(key)) return {ok: true, wake: 'now', why: key === ST ? `a ${game.pending.kind} decision waits on you` : api.legalNow(game, key), clock: clockText()};
-      // soft only for a seat that can act on what it has not seen (#29): one that had its turn this round waits for the next
-      if (unseen(key) && (game.winner || soft && (key === ST || api.canAct(game, key)))) return {ok: true, wake: 'soft', why: 'something happened at the table', clock: clockText()};
+      // soft only for a seat that can act on what it has not seen (#29): one that had its turn this round waits for the next;
+      // a seat never shown the game yet (a new runner) gets its first turn to read its role
+      if (unseen(key) && (game.winner || soft && (key === ST || seen[key] === undefined || api.canAct(game, key)))) return {ok: true, wake: 'soft', why: 'something happened at the table', clock: clockText()};
       if (game.winner) return {ok: false, gone: true, error: `The game is over: ${game.winner.text}.`};
       return null;
     };
@@ -143,7 +144,7 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
       waiters.add(w);
     });
     if (r) return mark(r);
-    const quiet = key === ST ? 'a quiet beat' : `a quiet beat${(t => t ? ': ' + t : '')(api.nextTurnText(game, key))}`;
+    const quiet = key === ST ? 'a quiet beat' : `a quiet beat${(t => t ? ': nothing to do ' + t : '')(api.nextTurnText(game, key))}`;
     return soft ? mark({ok: true, wake: 'heartbeat', why: quiet, clock: clockText()}) : {ok: true, wake: null, why: 'nothing new', clock: clockText()};
   }
 

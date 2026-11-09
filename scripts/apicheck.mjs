@@ -222,7 +222,7 @@ section('game 1 (#30): a pass from a night header never burns a day turn');
   ok(!api.canAct(g7, 0) && /until day 1/.test(api.nextTurnText(g7, 0)), `at night a seat with no night choice cannot act: "${api.nextTurnText(g7, 0)}"`);
   settle(g7);
   ok(g7.phase === 'day' && g7.day === 1 && g7.pending.kind === 'nomination', 'dawn of day 1 goes straight to the talk');
-  ok(!api.mustAct(g7, 4) && api.pendingFor(g7, 4)?.standing === true, 'nothing blocks the dawn: the Slayer\'s shot stands open to Thea, nobody waits on it');
+  ok(!api.mustAct(g7, 4) && api.dayActionFor(g7, 4)?.ability === 'slayer' && api.pendingFor(g7, 4) === null, 'nothing blocks the dawn: the Slayer\'s shot stands open to Thea, nobody waits on it');
   // The moment of dawn before the day's clock has started (the engine still resolving the dawn, as it was in game 1
   // while the Slayer's dawn choice waited): the same passes are refused and count for nothing.
   const step = g7.step; g7.step = 'dawn';
@@ -236,7 +236,7 @@ section('game 1 (#30): a pass from a night header never burns a day turn');
   api.say(g7, 2, 'Nobody died in the night. Thea, Odette, what did you notice?');
   ok(g7.log.filter(e => e.type === 'say' && e.day === 1 && [0, 2].includes(e.seat)).length === 2, 'Odette and Ines each have a real choice in round 1, and speak');
   ok(throws(() => api.pass(g7, 0), /had your turn/) && g7.clock.round === 1 && g7.clock.spoke.length === 2, 'a refused pass after a line moves nothing either');
-  ok(!api.canAct(g7, 0) && api.nextTurnText(g7, 0) === 'nothing to do until round 2' && api.canAct(g7, 1), 'a seat that has had its turn cannot act until round 2; one that has not, can');
+  ok(!api.canAct(g7, 0) && api.nextTurnText(g7, 0) === 'until round 2' && api.canAct(g7, 1), 'a seat that has had its turn cannot act until round 2; one that has not, can');
 }
 
 section('scripted games through the api alone match the sim');
