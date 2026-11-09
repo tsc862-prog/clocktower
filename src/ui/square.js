@@ -7,6 +7,7 @@ import {esc, el} from './dom.js';
 import {roleName, teamOf, voteView, tokenWord, SQUARE_TOKENS, seatNames} from './model.js';
 import {seatMarker, handMarker, installDefs} from './tokens.js';
 import {roleToken, ghostCoin, shroudArt} from './art.js';
+import {portraitOf} from './portraits.js';
 
 export function createSquare(root) {
   installDefs();
@@ -30,7 +31,7 @@ export function createSquare(root) {
     const believed = s.believed !== s.role ? ` <span class="believed">(thinks ${esc(roleName(s.believed))})</span>` : '';
     const team = teamOf(s.role) || '';
     return `<div class="marks">${marks.join(' ')} ${handTxt}</div>` +
-      `<div class="pieces">${seatMarker(s.name, {dead: !s.alive, shroud: shroudArt()})}` +
+      `<div class="pieces">${seatMarker(s.name, {dead: !s.alive, shroud: shroudArt(), portrait: portraitOf(s.name)})}` +
       `<span class="role-piece" title="Only the Storyteller and you see this">${roleToken(s.role, {name: roleName(s.role), team, title: roleName(s.role) + ' (' + team + ')'})}</span>${ghost}</div>` +
       `<div class="life">${s.alive ? 'alive' : 'dead'}</div>` +
       `<div class="st"><span class="sees" title="Only the Storyteller and you see this">ST sees</span> <span class="role team-${esc(team)}">${esc(roleName(s.role))}</span>${believed}${toks ? '<br>' + toks : ''}</div>`;

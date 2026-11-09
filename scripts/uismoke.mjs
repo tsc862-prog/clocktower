@@ -16,6 +16,8 @@
 //   - the recorded game as the page's ?fixture mode sends nothing; a fresh recording from today's engine renders too
 //   - the owner's own token images: a PNG, then a WebP, looked for once per id per page load; the drawn token wherever none loads;
 //     the shroud image over the dead; the game bar counts them; nothing in public/tokens-local is tracked but its README
+//   - portraits (a fixture assets/portraits/index.json): in each seat's disc, the initial without one, the shroud over the dead,
+//     beside each agent row and in the Storyteller's log; no index, or a broken one, and the page carries on
 import {readFileSync, readdirSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -378,6 +380,43 @@ console.log("the owner's own token images");
   ok(tracked.every(f => f === 'public/tokens-local/README.md'), `nothing in the local art folder is tracked but its README (${tracked.join(', ') || 'none yet'})`);
   const ignored = f => {try {return execFileSync('git', ['check-ignore', f], {cwd: ROOT, encoding: 'utf8'}).trim() === f} catch {return false}};
   ok(ignored('public/tokens-local/imp.png') && ignored('public/tokens-local/imp.webp') && !ignored('public/tokens-local/README.md'), 'an image dropped in the folder is git-ignored; its README is not');
+}
+
+// ---- portraits on the seat markers ----
+console.log('portraits');
+{
+  const PI = await import('../src/ui/portraits.js');
+  const IDX = JSON.parse(readFileSync(join(ROOT, 'src/ui/fixtures/portraits.json'), 'utf8'));
+  const E = GAME.frames.end;
+  const page = (pageFetch) => {PI.resetPortraits(); install(HTML); return createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch}), fixture: GAME, runnersFixture: RUN, pageFetch})};
+  const html = {ok: true, status: 200, json: async () => {throw new SyntaxError('Unexpected token <')}};
+  for (const [why, f] of [['no index (404)', async () => ({ok: false, status: 404, json: async () => ({})})], ['the dev server\'s HTML for a missing index', async () => html], ['a fetch that fails', async () => {throw new Error('down')}]]) {
+    const a = page(f); await a.portraits;
+    ok(document.querySelectorAll('#square image.sm-portrait').length === 0 && document.querySelectorAll('#square .sm-initial').length === 7 && document.querySelectorAll('#agents img.mini-portrait').length === 0 && $('rulings').querySelector('.st-portrait').hidden,
+      `${why}: the initials, no portraits, and the page carries on`);
+  }
+  let asked = [];
+  const a = page(async u => {asked.push(u); return {ok: true, status: 200, json: async () => copy(IDX)}});
+  await a.portraits;
+  ok(asked.length === 1 && asked[0] === PI.PORTRAIT_INDEX, 'the page reads assets/portraits/index.json once');
+  const seatsEl = document.querySelectorAll('#square .seat');
+  const has = E.grimoire.seats.map(s => !!IDX.portraits[s.name]);
+  ok(seatsEl.every((el, i) => {const im = el.querySelector('image.sm-portrait'); return has[i] ? im && im.getAttribute('href') === '/assets/portraits/' + E.grimoire.seats[i].name + '.png' : !im}),
+    `each seat with a portrait shows it in its disc (${has.filter(Boolean).length} of 7)`);
+  const bare = E.grimoire.seats.findIndex(s => !IDX.portraits[s.name]);
+  ok(bare >= 0 && !seatsEl[bare].querySelector('image.sm-portrait') && seatsEl[bare].querySelector('.sm-initial').textContent === E.grimoire.seats[bare].name[0], 'a seat with no entry keeps its initial');
+  const deadP = E.grimoire.seats.map((s, i) => [s, seatsEl[i]]).filter(([s]) => !s.alive && IDX.portraits[s.name]);
+  ok(deadP.length > 0 && deadP.every(([, el]) => {const svg = el.querySelector('.seat-marker'), kids = svg.children.map(c => c.tagName.toLowerCase()); return svg.classList.contains('is-dead') && kids.indexOf('path') > kids.indexOf('image')}),
+    `a dead seat keeps the shroud over its portrait (${deadP.length})`);
+  const minis = document.querySelectorAll('#agents .agent img.mini-portrait');
+  ok(minis.length === Object.keys(IDX.portraits).length && document.querySelector('#agents .agent[data-key="storyteller"] img.mini-portrait').getAttribute('src') === '/assets/portraits/Storyteller.png', `the agents panel shows a small portrait per row that has one (${minis.length})`);
+  const stp = $('rulings').querySelector('.st-portrait');
+  ok(!stp.hidden && stp.getAttribute('src') === '/assets/portraits/Storyteller.png', "the Storyteller's log shows the Storyteller's portrait");
+  minis[0].dispatch('error');
+  ok(minis[0].hidden, 'a portrait that fails to load hides itself');
+  ok(JSON.stringify(PI.readIndex({Odette: {file: 'assets/portraits/odette.png'}, Bram: {file: '../secret.png'}, Ines: {file: 'https://example.com/x.png'}})) === JSON.stringify({Odette: '/assets/portraits/odette.png'}),
+    'the other index shape reads too; a file outside the portraits or off the machine is ignored');
+  PI.resetPortraits();
 }
 
 console.log(fails ? `${fails} check(s) failed` : 'the page renders the game and changes nothing');
