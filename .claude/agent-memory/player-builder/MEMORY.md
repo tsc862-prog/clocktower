@@ -86,3 +86,6 @@ Useful now: vote, who_voted, read_talk.
 
 ## Table pendings (#119)
 - Nomination, vote and thoughts pendings carry `seat: 'table'` (+ `seats`); never pass p.seat to api.answer for them. Test drive loops: think per seat for thoughts, or playScripted with an onDecision that throws a sentinel to stop at a scene (the #107 red CI was a test loop, not player.js).
+
+## Game 5 day fixes (#122, #123, #126)
+- [Game 5 day fixes](game5-day-fixes.md): alone-in-a-room refusal, where a spent turn went, cross-place near repeats (bigrams), Asked-of-you line, where.visits/together.

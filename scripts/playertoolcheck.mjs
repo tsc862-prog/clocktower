@@ -11,7 +11,7 @@ import {join, dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {PLAYER_TOOLS, TOOL_NAMES, ATTEMPT_INVITE} from '../src/data/player-tools.js';
 import {PLAYER_TOOL_LINES, systemFor} from '../src/data/prompts.js';
-import {playerHeader, whatsNew, useApi, claimsInLine, cleanEvent, FIRST_DAWN, forcedAsk, THOUGHT_ASK} from '../src/seats/player.js';
+import {playerHeader, whatsNew, useApi, claimsInLine, cleanEvent, FIRST_DAWN, forcedAsk, THOUGHT_ASK, similar} from '../src/seats/player.js';
 import {nextCall} from './mock-mind.mjs';
 import * as api from '../src/game/api.js';
 import {newGame, createScripted, playScripted} from '../src/game/index.js';
@@ -768,9 +768,11 @@ section('rooms on the fake: where, go, invite, leave, the header, read_talk, whi
   r = run(g, 'go', {room: 'Parlour'});
   ok(r.ok && r.place === 'the parlour' && r.with.length === 0 && /Nobody else is here yet/.test(r.note) && /table saw you go/.test(r.note), `go: ${JSON.stringify(r)}`);
   h = playerHeader(g, 0, fakeApi);
-  ok(/You are alone in the parlour: nobody hears you here; invite someone or leave\./.test(h) && useOf(h).includes('leave') && !useOf(h).includes('whisper'), `alone in a room the header says so, offers leave and no whisper: ${h}`);
+  ok(/You are alone in the parlour: nobody hears you here; leave to speak at the Square, or invite someone in\./.test(h) && useOf(h)[0] === 'leave' && !useOf(h).includes('whisper') && !useOf(h).includes('speak'),
+    `alone in a room the header says so, offers leave first, no whisper and no speak (#122): ${h}`);
+  const said = g.events.length;
   r = run(g, 'speak', {text: 'Is anyone there?'});
-  ok(r.ok && r.heard === 'in the parlour, heard by nobody: you are alone there', `speak alone in a room says nobody heard: ${r.heard}`);
+  ok(!r.ok && /You are alone in the parlour: nobody would hear it. Leave, then speak at the Square\./.test(r.error) && g.events.length === said, `speak alone in a room is refused before the game is asked (#122): ${r.error}`);
   r = run(g, 'invite', {player: 'Thea'});
   ok(r.ok && r.place === 'the parlour' && JSON.stringify(r.with) === '["Thea"]' && /Thea came with you/.test(r.note), `invite into my room: ${JSON.stringify(r)}`);
   r = run(g, 'invite', {player: 'Ines'});
@@ -857,6 +859,103 @@ section('rooms in a real game: a line in a room stays in the room, the moves are
 }
 function andNames(xs) {return xs.length < 2 ? xs[0] : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`}
 
+
+section('game 5 day fixes: no line to an empty room, where a spent turn went (#122), no question asked twice, no line said twice (#123), who shared a room (#126)');
+{
+  // the fake: the header line for a question already answered, and the warning for a line that speaks to someone outside the room
+  let g = fakeGame('day');
+  g.events.push({id: g.events.length, ...say(4, 'Bram, which pair did your zero show? Tell us what you learned.')});
+  let h = playerHeader(g, 1, fakeApi);
+  ok(/Asked of you: Thea, "Bram, which pair did your zero show\? Tell us what you learned\." You said: "Good morning\. I am the Chef and I got a zero\." If that answers it, say so in one line\./.test(h),
+    `the header puts my own answer beside a question I have answered (#123): ${h}`);
+  ok(h.length <= HEADER_CAP, `and stays under the cap (${h.length})`);
+  ok(!/Asked of you/.test(playerHeader(g, 5, fakeApi)), 'nobody else gets the line');
+  run(g, 'speak', {text: 'I said it: a zero, and a zero names nobody.'}, 1);
+  ok(!/Asked of you/.test(playerHeader(g, 1, fakeApi)), 'once I have spoken since, the line goes');
+  g = fakeGame('day');
+  g.events.push({id: g.events.length, ...say(4, 'Fitch, which of the two did you check?')});
+  ok(!/Asked of you/.test(playerHeader(g, 5, fakeApi)), 'a question to a player who has claimed nothing gets no such line');
+  g = fakeGame('day');
+  let r = run(g, 'invite', {player: 'Thea', room: 'parlour'});
+  r = run(g, 'speak', {text: 'Mayor, noted. Corwin, you have been quiet; what did you learn?'});
+  ok(r.ok && r.warning === 'Corwin is not in the parlour; only Thea heard this.', `a line in a room that speaks to someone outside it is said, with a warning: ${JSON.stringify(r)}`);
+  r = run(g, 'speak', {text: 'Thea, I think Corwin is the one to watch.'});
+  ok(r.ok && !r.warning, 'a player only talked about is no warning');
+  // the near repeat across places, from the fake (the fake has no turn rule)
+  r = run(g, 'leave');
+  r = run(g, 'speak', {text: 'Thea, I think Corwin is the one to watch today.'});
+  ok(!r.ok && /^You said that already, in the parlour a moment ago: "Thea, I think Corwin is the one to watch\." Say something new, or pass\./.test(r.error), `the same line from the room to the Square is refused, naming the room (#123): ${r.error}`);
+  r = run(g, 'speak', {text: 'Mayor, noted. Corwin, you have been quiet; what did you learn?'});
+  ok(!r.ok && /You said that already, in the parlour earlier today/.test(r.error), `an older room line word for word, at the Square: refused with where (#123): ${r.error}`);
+  ok(similar("Fitch, you pushed Bram's 0 hardest, then claimed Soldier only after I pressed you, and you cannot be checked.",
+    "Fitch, you pushed Bram's 0 hardest, then claimed Soldier only after I pressed you, and no one can check it.") >= 0.75, "game 5's two lines by Yusuf count as one line said twice");
+  ok(similar('Corwin, what did you learn on the first night?', 'Thea, I trust Bram more than Fitch after that vote.') < 0.75, 'two different lines do not');
+
+  // the real game: seed 7, two rounds a day, the rooms open on day 1
+  const game = newGame({seed: 7, rounds: 2}), sc = createScripted(7);
+  const out = game.seats.map(() => []);
+  const ctx = i => ({game, seat: {index: i, name: game.seats[i].name}, api: api.forSeat(i), log: () => {}});
+  const call = (i, name, args = {}) => {const x = tool(name).handler(args, ctx(i)); out[i].push(JSON.stringify(x)); return x};
+  for (let n = 0; n < 500 && !(game.phase === 'day' && api.roomsOpen(game)); n++) {
+    const p = game.pending;
+    if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(game, i, ''); else api.answer(game, p.seat, sc(game));
+  }
+  const nm = i => game.seats[i].name, rooms = api.where(game, 0).rooms, PARLOUR = rooms.find(x => x.id === 'parlour').name, NOOK = rooms.find(x => x.id === 'nook').name;
+  const toSpeak = i => api.view(game, i).clock.toSpeak.includes(i);
+  ok(api.roomsOpen(game) && game.clock.round === 1, `seed 7, day 1, round 1, rooms open (${game.seats.map(s => s.name).join(', ')})`);
+  // Odette alone in the parlour: the header says so, speak is refused, the turn stays hers; after leave she speaks at the Square
+  const O = 0;
+  call(O, 'go', {room: 'parlour'});
+  h = playerHeader(game, O);
+  ok(h.includes(`You are alone in ${PARLOUR}: nobody hears you here; leave to speak at the Square`), `the real header says I am alone (#122): ${h.split('\n').find(l => /alone/.test(l))}`);
+  const before = game.log.length;
+  r = call(O, 'speak', {text: 'Three alive, and a day without an execution hands the demon the win.'});
+  ok(!r.ok && r.error.startsWith(`You are alone in ${PARLOUR}: nobody would hear it`) && game.log.length === before && toSpeak(O), `alone, speak is refused and the turn is not spent: ${r.error}`);
+  call(O, 'leave');
+  r = call(O, 'speak', {text: 'Three alive, and a day without an execution hands the demon the win.'});
+  ok(r.ok && r.heard === 'at the Square, heard by the whole table' && !toSpeak(O), `after leave the same line is said at the Square, in the same round: ${JSON.stringify(r)}`);
+  // Thea takes Ines to the parlour, speaks to Fitch who is outside, leaves, and tries again
+  const T = 4, I = 2, F = 5;
+  call(T, 'invite', {player: nm(I), room: 'parlour'});
+  r = call(T, 'speak', {text: `${nm(F)}, you have been quiet all morning; what did you learn last night?`});
+  ok(r.ok && r.warning === `${nm(F)} is not in ${PARLOUR}; only ${nm(I)} heard this.`, `the warning names who is not in the room and who heard: ${r.warning}`);
+  call(T, 'leave');
+  r = call(T, 'speak', {text: `${nm(F)}, you have been quiet all morning; what did you learn on the night?`});
+  ok(!r.ok && r.error.startsWith(`You said that already, in ${PARLOUR} a moment ago: "${nm(F)}, you have been quiet`), `the near repeat at the Square names the room (#123): ${r.error}`);
+  r = call(T, 'speak', {text: 'Something new for the whole table.'});
+  ok(!r.ok && r.error.startsWith(`You have had your turn: your round 1 turn was spent in ${PARLOUR} (to ${nm(I)}). The next round is yours again; use the time to read or note.`),
+    `the had-your-turn refusal names the room and who heard (#122): ${r.error}`);
+  r = call(T, 'pass');
+  ok(!r.ok && r.error.includes(`spent in ${PARLOUR} (to ${nm(I)})`), `so does a pass: ${r.error}`);
+  r = call(O, 'pass');
+  ok(!r.ok && r.error.startsWith('You have had your turn: your round 1 turn was spent at the Square.'), `a turn spent at the Square says so: ${r.error}`);
+  // the reverse: Yusuf speaks at the Square, then takes Corwin to the nook and says it again there
+  const Y = 6, C = 3;
+  r = call(Y, 'speak', {text: `${nm(C)}, you voted with nobody yesterday and you have named no role at all so far.`});
+  ok(r.ok, 'Yusuf speaks at the Square');
+  call(Y, 'invite', {player: nm(C), room: 'nook'});
+  r = call(Y, 'speak', {text: `${nm(C)}, you voted with nobody yesterday and you named no role at all so far.`});
+  ok(!r.ok && r.error.startsWith('You said that already, at the Square a moment ago'), `from the Square to a room is refused too (#123): ${r.error}`);
+  call(Y, 'leave'); call(C, 'leave');
+  // where: who shared a room, from the moves; Bram was in none of them and sees the visits, never a word said in one
+  const B = 1, seatOrder = (x, y) => game.seats.findIndex(s => s.name === x) - game.seats.findIndex(s => s.name === y);
+  r = call(B, 'where');
+  const wantI = [nm(I), nm(T)].sort(seatOrder).join(' and '), wantY = [nm(C), nm(Y)].sort(seatOrder).join(' and ');
+  ok(r.ok && r.visits.startsWith('Day 1: ') && r.visits.includes(`${PARLOUR}, round 1: ${wantI}`) && r.visits.includes(`${NOOK}, round 1: ${wantY}`) && !r.visits.includes(`${nm(O)} and`),
+    `where lists the day's visits with who was together (#126): ${r.visits}`);
+  ok(Array.isArray(r.together) && r.together.includes(`${wantI}: once (day 1)`), `and how often each pair shared a room: ${JSON.stringify(r.together)}`);
+  ok(!/quiet all morning|named no role/.test(JSON.stringify(r)), 'where carries no word said in a room');
+  ok(!out[B].some(x => /quiet all morning/.test(x)), 'nothing Bram was shown carries the room line');
+  // headers in the longest day case on this game stay under the cap
+  const longest = Math.max(...game.seats.map(s => playerHeader(game, s.index).length));
+  ok(longest <= HEADER_CAP, `every header on this day is under ${HEADER_CAP} (${longest}): ${game.seats.map(s => playerHeader(game, s.index)).find(x => x.length === longest)}`);
+  // the prompt
+  const sys = systemFor('player', 'Odette');
+  ok(/look at what they already said: read_talk with since 0, and claims/.test(sys) && /"which one did you check" has no answer/.test(sys), 'the prompt: check what was answered before you ask (#123)');
+  ok(/if you would say the same of any player at the table, it is not a reason/.test(sys) && /say what changed since/.test(sys) && /What a dead player says happened is a claim like any other/.test(sys),
+    "the prompt: a reason that fits anyone, a reversed read, a ghost's account (#126)");
+  ok(/alone in a room, nobody does, so leave before you speak to the table/.test(sys), 'the prompt: a line alone in a room (#122)');
+}
 
 section('game 3 fixes: claims checked before repeated (#67), a reason to use a room (#68), notes that know they are stale (#71)');
 {
@@ -1042,7 +1141,8 @@ section("game 4 fixes: no dodge on day 1 (#87), the Poisoner's targets (#88), th
   ok(/First day: the Monk first acts on night 2, so you have nothing to tell yet; say so if asked, and ask a player a question by name\./.test(h), `the Monk's day 1 nudge: ${h}`);
   ok(/First day: the Mayor learns nothing at night/.test(playerHeader(g, 2, as('mayor', 'townsfolk'))), 'the Mayor learns nothing at night');
   ok(/First day: say something about yourself/.test(playerHeader(g, 2, as('chef', 'townsfolk'))), 'the Chef has something to tell: the usual nudge');
-  ok(/First day: say something about yourself/.test(playerHeader(g, 2, as('baron', 'minion'))), 'an evil seat is not told its role has nothing to tell');
+  const hb = playerHeader(g, 2, as('baron', 'minion'));
+  ok(!/nothing to tell/.test(hb) && /^Cover: /m.test(hb) && !/First day:/.test(hb), `an evil seat is not told its role has nothing to tell; its Cover line stands in for the day-1 nudge: ${hb}`);
   const mr = tool('my_role').handler({}, {...ctxFor(g, 2), api: as('monk', 'townsfolk')});
   ok(/first acts on night 2: on day 1 you have nothing to tell/.test(mr.day1) && !mr.reads, `my_role for the Monk: ${JSON.stringify(mr)}`);
   const sys = systemFor('player', 'Ines');
