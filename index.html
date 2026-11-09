@@ -9,6 +9,11 @@
 <body>
   <header id="gamebar" class="panel bar">
     <h1>Clocktower</h1>
+    <span id="view-switch" class="view-switch" role="group" aria-label="Which view">
+      <button data-view="people" aria-pressed="true" title="The characters as the main screen">People</button>
+      <button data-view="table" aria-pressed="false" title="Every panel at once: the square, the talk, the grimoire, the Storyteller's log, the agents">Table</button>
+    </span>
+    <label class="field roles-switch" title="Show each character's true role on their card (only the Storyteller and you see them); off for a tenser watch"><input type="checkbox" id="roles-toggle" checked> roles</label>
     <label class="field" title="The seed of the next game; New game deals with it">seed <input id="seed" name="seed" size="6" inputmode="numeric"></label>
     <span id="rounds" class="dim"></span>
     <span id="phase" class="phase"></span>
@@ -27,12 +32,27 @@
       <span id="voice-time" class="voice-time" hidden title="The game lets a seat's next speaking turn wait a moment while the voices catch up: the page tells the relay what it has heard">keeping time</span>
       <span id="voice-note" class="dim voice-note" aria-live="polite"></span>
     </span>
+    <span id="rooms-line" class="rooms-bar" hidden></span>
     <span class="grow"></span>
+    <button id="bar-start-all" title="Start a runner for the Storyteller and every seat that has none">Start all</button>
     <span id="act-msg" class="dim" aria-live="polite"></span>
     <button id="new-game" disabled title="Needs the relay to start a new game over the wire">New game</button>
     <span id="relay-state" class="relay" data-state="not-connected">relay: checking...</span>
   </header>
+  <div id="view">
+  <section id="stage" aria-label="The people">
+    <div class="stage-st"></div>
+    <div class="table"><div class="table-centre" aria-live="polite"></div></div>
+    <div class="recent" aria-label="The last lines"></div>
+  </section>
+  <nav id="drawer-tabs" aria-label="More">
+    <button data-drawer="talk" aria-expanded="false">Talk</button>
+    <button data-drawer="grimoire" aria-expanded="false">Grimoire</button>
+    <button data-drawer="rulings" aria-expanded="false">Storyteller's log</button>
+    <button data-drawer="agents" aria-expanded="false">Agents</button>
+  </nav>
   <main id="board">
+    <button class="drawer-close" title="Back to the people (Esc)">Close</button>
     <section id="square" class="panel" aria-label="The town square">
       <h2>The Square</h2>
       <div class="ring"><div class="centre"></div></div>
@@ -69,6 +89,7 @@
       <div class="agent-rows"></div>
     </section>
   </main>
+  </div>
   <script type="module" src="/src/ui/main.js"></script>
 </body>
 </html>

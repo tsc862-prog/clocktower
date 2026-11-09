@@ -132,3 +132,9 @@ export function handMarker(state) {
     '<rect x="52" y="16" width="8" height="36" rx="4"/><rect x="61" y="24" width="7" height="30" rx="3.5"/><rect x="20" y="46" width="8" height="24" rx="4" transform="rotate(-35 24 58)"/>' +
     '</g></svg>';
 }
+
+// cardShroud() -> a cloth drawn over a dead character's portrait card (the People view, src/ui/stage.js): a dark drape from the top
+// with a ragged hem and a small pin, stretched to the card's face. --tk-shroud and --shroud-hem colour it.
+export const cardShroud = () => '<svg class="token card-shroud" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">' +
+  '<path class="cs-drape" d="M0 0h100v58c-7 6-13 2-19 9-6-7-12-3-17 6-5-9-11-12-17-5-6-7-12-3-18 4-6-8-12-6-17-2-5-5-9-4-12-1z"/>' +
+  '<path class="cs-fold" d="M22 0v52M50 0v60M78 0v54"/><circle class="cs-pin" cx="50" cy="14" r="4"/></svg>';

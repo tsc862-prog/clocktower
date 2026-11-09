@@ -15,10 +15,10 @@ async function boot() {
   const client = relayClient({base: RELAY});
   if (params.has('fixture')) {
     const [g, r] = await Promise.all([import('./fixtures/game.json'), import('./fixtures/runners.json')]);
-    window.clocktower = createApp({client, fixture: g.default || g, runnersFixture: r.default || r, frame: params.get('fixture') || 'end'}); // ?fixture=vote opens on that moment
+    window.clocktower = createApp({client, view: params.get('view'), fixture: g.default || g, runnersFixture: r.default || r, frame: params.get('fixture') || 'end'}); // ?fixture=vote opens on that moment
     return;
   }
-  const app = createApp({client, seed: SEED});
+  const app = createApp({client, seed: SEED, view: params.get('view')}); // ?view=table or ?view=people: for this visit, not remembered
   window.clocktower = app;
   const every = (ms, f) => {f(); setInterval(f, ms)};
   every(1500, app.tickWatch); every(2000, app.pollRunners); every(5000, app.pollHealth);

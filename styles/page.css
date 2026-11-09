@@ -242,3 +242,176 @@ img.ghost-coin.spent { opacity: .4; filter: grayscale(1); }
   .rooms { gap: .6rem; } .room { width: 5.2rem; } .room-disc { width: 48px; height: 48px; } .room-name { font-size: 11px; }
   .rooms-line { font-size: .85rem; } .away-tag { font-size: 9px; bottom: -7px; } .seat.away .st { padding-top: 7px; }
 }
+
+/* ---- the People view (#77): the characters as the main screen (src/ui/stage.js). The Table view above is the other view; both are
+   always built, the game bar switches them (body[data-view]). ---- */
+:root {
+  --stage-bg: #17141d; --stage-glow: #241f2c; --stage-night: #0a0b15; --stage-night-glow: #151830; --moon: #9aa3d8; --dawn: #e9c98f;
+  --card-w: min(18.5vh, 9.6vw); --card-frame: #3d3649; --card-face: #262230; --speak: #e6b95c; --speak-glow: rgba(230, 185, 92, .55);
+  --caption-bg: #f1e8d3; --caption-ink: #231d16; --caption-head: #7a6a52; --whisper-bg: #241d31;
+  --st-w: clamp(220px, 14vw, 480px); --st-face: min(250px, 17.5vh); --rail-w: 52px; --drawer-w: clamp(480px, 34vw, 1100px);
+  --pip-off: #6d6758; --pip-yes: #7fbf7f; --table-oval: #2c2118; --table-oval-edge: #4a3727;
+}
+.view-switch { display: inline-flex; } .view-switch button { border-radius: 0; } .view-switch button:first-child { border-radius: 4px 0 0 4px; }
+.view-switch button:last-child { border-radius: 0 4px 4px 0; border-left: 0; }
+.view-switch button[aria-pressed="true"] { background: var(--gold); color: var(--bg); border-color: var(--gold); }
+.bar .rooms-bar { font: 13px var(--sans); color: var(--room-tag); } .bar .rooms-bar[hidden] { display: none; }
+#stage, #drawer-tabs, .drawer-close { display: none; }
+body[data-view="table"] .roles-switch { display: none; }
+
+@media (min-width: 601px) {
+  body[data-view="people"] { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  body[data-view="people"] #view { flex: 1; min-height: 0; position: relative; }
+}
+body[data-view="people"] #stage { display: grid; grid-template-columns: var(--st-w) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; height: 100%;
+  gap: 6px 18px; padding: 10px calc(var(--rail-w) + 14px) 8px 18px; background: radial-gradient(ellipse at 58% 46%, var(--stage-glow), var(--stage-bg) 72%); transition: background 1.2s; }
+#stage .table { grid-row: 1; grid-column: 2; position: relative; min-height: 0; }
+#stage .table::before { content: ''; position: absolute; left: 50%; top: 50%; width: 50%; height: 40%; transform: translate(-50%, -50%); border-radius: 50%;
+  background: radial-gradient(ellipse at 45% 40%, #3a2b1f, var(--table-oval) 72%); box-shadow: 0 0 0 5px var(--table-oval-edge), 0 0 50px #000a inset; opacity: .75; transition: opacity 1.2s; }
+
+/* a card: the portrait, the name, alive or dead; corners for the role, the ghost vote and the hand */
+.card { position: absolute; transform: translate(-50%, -50%); width: var(--card-w); text-align: center; z-index: 1; transition: filter .8s, opacity .8s; }
+#stage .face { position: relative; aspect-ratio: 1 / 1; margin: 0 auto; }
+.card .face { position: relative; width: var(--card-w); aspect-ratio: 1 / 1; margin: 0 auto; border-radius: 14px; background: var(--card-face); border: 3px solid var(--card-frame);
+  box-shadow: 0 6px 18px #0009; transition: transform .35s, box-shadow .35s, border-color .35s; }
+.face .portrait { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 11px; display: block; }
+.face .portrait[hidden] { display: none; }
+.face .initial { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font: calc(var(--card-w) * .45) var(--serif); color: var(--seat-ink); }
+.card .name { margin-top: .4rem; font: 1.45rem/1.2 var(--serif); letter-spacing: .03em; }
+.card .name.sc-0 { color: var(--seat-c0); } .card .name.sc-1 { color: var(--seat-c1); } .card .name.sc-2 { color: var(--seat-c2); } .card .name.sc-3 { color: var(--seat-c3); }
+.card .name.sc-4 { color: var(--seat-c4); } .card .name.sc-5 { color: var(--seat-c5); } .card .name.sc-6 { color: var(--seat-c6); }
+.card .life { font: 12px var(--sans); color: var(--dim); } .card .life .awake { color: var(--moon); }
+.role-corner { position: absolute; right: -16px; top: -16px; width: 32%; z-index: 2; filter: drop-shadow(0 2px 4px #000a); }
+.role-corner .token { width: 100%; height: auto; }
+body[data-roles="off"] .role-corner { display: none; }
+.ghost-corner { position: absolute; left: -12px; bottom: -12px; width: 24%; z-index: 2; } .ghost-corner .token { width: 100%; height: auto; }
+.card.dead .portrait { filter: grayscale(1) brightness(.5); } .card.dead .initial { color: var(--faint); } .card.dead .name { color: var(--dim); }
+.card .shroud { position: absolute; inset: 0; border-radius: 11px; overflow: hidden; pointer-events: none; }
+.card .shroud .card-shroud, .card .shroud .shroud-art { width: 100%; height: 100%; display: block; }
+.card .shroud .shroud-art { object-fit: contain; opacity: .9; }
+.card-shroud .cs-drape { fill: var(--tk-shroud); opacity: .8; } .card-shroud .cs-fold { fill: none; stroke: #ffffff18; stroke-width: 1.2; } .card-shroud .cs-pin { fill: var(--coin); }
+.card.away .face { opacity: .62; border-style: dashed; border-color: var(--room-rim); } .card.away .away-tag { bottom: -11px; font-size: 13px; }
+
+/* votes on the faces: the nominee and the nominator ringed, each hand as its ballot lands, the result flashed on the nominee */
+.card.is-nominee .face { border-color: var(--evil); box-shadow: 0 0 0 4px var(--evil), 0 0 30px rgba(216, 143, 143, .5); }
+.card.is-nominator .face { border-color: var(--gold); box-shadow: 0 0 0 4px var(--gold), 0 0 24px rgba(216, 194, 122, .4); }
+.card .tags { position: absolute; left: 50%; top: -14px; transform: translateX(-50%); z-index: 3; white-space: nowrap; }
+.card .tag { font: 600 13px var(--sans); padding: .1rem .55rem; border-radius: 4px; box-shadow: 0 1px 4px #0009; }
+.card .tag.nominee { background: var(--evil); color: var(--bg); } .card .tag.nominator { background: var(--gold); color: var(--bg); }
+.hand-mark { position: absolute; left: -20px; top: -20px; width: 36%; aspect-ratio: 1 / 1; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  border-radius: 50%; background: var(--bg); border: 3px solid var(--faint); box-shadow: 0 2px 8px #000b; }
+.hand-mark .hand-marker { width: 62%; height: auto; } .hand-mark .hw { font: 700 12px/1 var(--sans); text-transform: uppercase; letter-spacing: .05em; }
+.hand-mark.up { border-color: var(--hand-up); color: var(--hand-up); } .hand-mark.down { border-color: var(--hand-down); color: var(--hand-down); }
+.hand-mark.none { border-style: dashed; } .hand-mark.none .hand-marker { width: 46%; }
+.card .result { position: absolute; left: 50%; bottom: 10%; transform: translateX(-50%); z-index: 3; white-space: nowrap; font: 700 15px var(--sans);
+  padding: .2rem .7rem; border-radius: 4px; box-shadow: 0 2px 8px #000b; }
+.card .result.passes { background: var(--gold); color: var(--bg); } .card .result.fails { background: #3a3446; color: var(--ink); }
+.card .result.block { font-size: 12px; font-weight: 600; background: #3a2e1e; color: var(--gold); border: 1px solid var(--gold); }
+.card.flash .result { animation: ct-flash 1s ease-out 3; }
+@keyframes ct-flash { 0% { transform: translateX(-50%) scale(1.5); box-shadow: 0 0 30px var(--gold); } 100% { transform: translateX(-50%) scale(1); } }
+
+/* the speaker: the card grows and lights, the line beside the face until the next one */
+.card.speaking { z-index: 5; } .card.speaking .name { margin-top: calc(var(--card-w) * .1 + .4rem); }
+.card.speaking .face { transform: scale(1.16); border-color: var(--speak); box-shadow: 0 0 0 3px var(--speak), 0 0 40px var(--speak-glow); }
+.card.speaking.stale .face { transform: scale(1.04); box-shadow: 0 0 0 2px #e6b95c55; }
+.card.voicing .face, .stage-st.voicing .face { animation: ct-glow 1.4s ease-in-out infinite alternate; }
+@keyframes ct-glow { from { box-shadow: 0 0 0 3px var(--speak), 0 0 14px var(--speak-glow); } to { box-shadow: 0 0 0 3px var(--speak), 0 0 50px var(--speak-glow); } }
+.card .caption { position: absolute; top: calc(var(--card-w) / 2); transform: translateY(-50%); width: min(600px, 20vw); max-height: 46vh; overflow: hidden; text-align: left; z-index: 6;
+  background: var(--caption-bg); color: var(--caption-ink); font: 1.4rem/1.45 var(--serif); padding: .8rem 1.15rem; border-radius: 12px; box-shadow: 0 10px 28px #000b; }
+.card.cap-l .caption { right: calc(100% + 30px); } .card.cap-r .caption { left: calc(100% + 30px); }
+.card .caption::before { content: ''; position: absolute; top: 50%; width: 0; height: 0; border: 12px solid transparent; transform: translateY(-50%); }
+.card.cap-l .caption::before { left: 100%; border-left-color: var(--caption-bg); } .card.cap-r .caption::before { right: 100%; border-right-color: var(--caption-bg); }
+.caption .cap-head { font: 600 12px var(--sans); text-transform: uppercase; letter-spacing: .06em; color: var(--caption-head); margin-bottom: .2rem; }
+.caption.whisper { background: var(--whisper-bg); color: var(--private); border: 2px dashed var(--private); font-style: italic; }
+.card.cap-l .caption.whisper::before { border-left-color: var(--private); } .card.cap-r .caption.whisper::before { border-right-color: var(--private); }
+.caption.whisper .cap-head { color: var(--private); font-style: normal; } .caption .unheard { color: var(--faint); }
+.caption.in-room { border-left: 6px solid var(--room-rim); } .caption.in-room .cap-head { color: #8a6f3c; }
+.caption.stale { opacity: .6; font-size: 1.1rem; }
+
+/* the middle of the table: the day, a vote's tally against its bar, the result, the night, the dawn, the winner */
+.table-centre { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 42%; text-align: center; z-index: 0; }
+.table-centre .sub { font: 15px var(--sans); color: #c4b597; margin-top: .35rem; }
+.table-centre .quiet, .table-centre .day-line { font: 1.6rem var(--serif); color: var(--st); }
+.vote-what { font: 1.7rem var(--serif); } .vote-what b { color: var(--evil); font-weight: normal; }
+.tally-big { color: var(--gold); line-height: 1.1; margin-top: .3rem; } .tally-big b { font: 5rem var(--serif); } .tally-big span { font: 1.5rem var(--serif); }
+.tally-big.fails { color: var(--dim); }
+.meter { display: flex; justify-content: center; gap: 12px; margin: .7rem 0 .4rem; }
+.meter .pip { position: relative; width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--pip-off); }
+.meter .pip.yes { background: var(--pip-yes); border-color: var(--pip-yes); }
+.meter .pip.need::after { content: ''; position: absolute; right: -10px; top: -12px; bottom: -12px; width: 3px; border-radius: 2px; background: var(--gold); }
+.night-big { font: 4.5rem var(--serif); color: var(--moon); letter-spacing: .04em; }
+.dawn-big { font: 2.7rem/1.25 var(--serif); color: var(--dawn); } .dawn-words { font: italic 1.7rem/1.45 var(--serif); color: var(--st); margin-top: 1rem; }
+.winner-big { font: 5rem var(--serif); } .winner-big.good { color: var(--good); } .winner-big.evil { color: var(--evil); }
+
+/* the Storyteller, apart, with its latest words */
+#stage .stage-st { grid-row: 1; grid-column: 1; display: flex; flex-direction: column; align-items: center; padding-top: 2.5vh; min-height: 0; overflow: hidden; }
+.stage-st .face { width: var(--st-face); flex: none; border-radius: 14px; background: var(--card-face); border: 3px solid #5a4c33; box-shadow: 0 6px 18px #0009; transition: box-shadow .35s, border-color .35s; }
+.stage-st .face .initial { font-size: calc(var(--st-face) * .45); color: var(--st); }
+.stage-st .name { margin-top: .5rem; font: 1.15rem var(--sans); text-transform: uppercase; letter-spacing: .14em; color: var(--st); }
+.st-words { margin-top: 1rem; width: 100%; }
+.st-line { font: italic 1.4rem/1.5 var(--serif); color: var(--st); border-left: 3px solid var(--st); padding-left: .9rem; }
+.st-line.older { opacity: .72; font-size: 1.2rem; }
+.stage-st.speaking .face { border-color: var(--speak); box-shadow: 0 0 0 3px var(--speak), 0 0 40px var(--speak-glow); }
+.stage-st.awake .face { border-color: var(--moon); box-shadow: 0 0 0 4px var(--moon), 0 0 50px rgba(154, 163, 216, .55); }
+.st-night { margin-top: 1rem; font: 15px/1.5 var(--sans); color: var(--private); } .st-night .seen-by { display: block; margin-bottom: .2rem; }
+
+/* night: the stage dims; the seat the Storyteller has woken glows faintly */
+#stage[data-phase="night"] { background: radial-gradient(ellipse at 58% 46%, var(--stage-night-glow), var(--stage-night) 72%); }
+#stage[data-phase="night"] .table::before { opacity: .3; }
+#stage[data-phase="night"] .card { filter: brightness(.42) saturate(.55); }
+#stage[data-phase="night"] .card.woken { filter: brightness(.85) saturate(.8); }
+.card.woken .face { border-color: var(--moon); box-shadow: 0 0 0 3px var(--moon), 0 0 26px rgba(154, 163, 216, .5); }
+
+/* the last lines, under the stage, newest first, fading as they go down */
+#stage .recent { grid-row: 2; grid-column: 1 / -1; border-top: 1px solid var(--line); padding: .35rem .4rem 0; display: flex; flex-direction: column; min-height: calc(8 * 1.6rem); }
+.recent .r-line { padding: 0; font-size: 1.05rem; line-height: 1.55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent .r-line .lean, .recent .r-line .text { display: inline; } .recent .r-line .lean { font: 14px var(--sans); }
+.recent .r-line[data-kind~="whisper"] { color: var(--private); } .recent .r-line[data-kind~="whisper"] .text { font-style: italic; margin-left: .4rem; }
+.recent .r-line[data-kind~="whisper"]::before { content: 'whisper'; font: 10px var(--sans); text-transform: uppercase; letter-spacing: .06em; color: var(--private); border: 1px dashed var(--private); border-radius: 3px; padding: 0 .3rem; margin-right: .5rem; }
+.recent .r-line[data-kind~="narration"] { color: var(--st); font-style: italic; }
+.recent .r-line[data-kind~="break"] { color: var(--moon); font: 13px/1.9 var(--sans); text-transform: uppercase; letter-spacing: .05em; }
+.recent .r-line[data-kind~="nomination"] { color: var(--evil); } .recent .r-line[data-kind~="vote-result"] { color: var(--gold); }
+.recent .r-line[data-kind~="in-room"] .place { font: 12px var(--sans); color: #a99bd0; }
+.recent .r-line:nth-child(2) { opacity: .9; } .recent .r-line:nth-child(3) { opacity: .8; } .recent .r-line:nth-child(4) { opacity: .7; }
+.recent .r-line:nth-child(5) { opacity: .6; } .recent .r-line:nth-child(6) { opacity: .5; } .recent .r-line:nth-child(7) { opacity: .42; } .recent .r-line:nth-child(8) { opacity: .35; }
+
+/* the drawers: the talk, the grimoire, the Storyteller's log and the agents slide over the stage's right edge, one at a time; the
+   panels are the Table view's own, kept laid out while hidden so their scroll and open rows stay */
+body[data-view="people"] #drawer-tabs { display: flex; position: absolute; top: 0; right: 0; bottom: 0; width: var(--rail-w); flex-direction: column; gap: 8px; padding: 12px 7px;
+  background: var(--panel); border-left: 1px solid var(--line); z-index: 21; }
+#drawer-tabs button { writing-mode: vertical-rl; padding: 16px 4px; font: 14px var(--sans); letter-spacing: .05em; }
+#drawer-tabs button[aria-expanded="true"] { background: var(--gold); color: var(--bg); border-color: var(--gold); }
+body[data-view="people"] #board { display: block; position: absolute; top: 0; right: var(--rail-w); bottom: 0; width: var(--drawer-w); height: auto; padding: 0; z-index: 20;
+  transform: translateX(calc(100% + var(--rail-w))); visibility: hidden; transition: transform .28s ease, visibility 0s linear .28s; box-shadow: -14px 0 34px #000c; background: var(--panel); }
+body[data-view="people"]:is([data-drawer="talk"], [data-drawer="grimoire"], [data-drawer="rulings"], [data-drawer="agents"]) #board { transform: none; visibility: visible; transition: transform .28s ease; }
+body[data-view="people"] #board > .panel { position: absolute; inset: 0; height: auto; max-height: none; border-radius: 0; visibility: hidden; }
+body[data-view="people"][data-drawer="talk"] #talk, body[data-view="people"][data-drawer="grimoire"] #grimoire,
+body[data-view="people"][data-drawer="rulings"] #rulings, body[data-view="people"][data-drawer="agents"] #agents { visibility: visible; }
+body[data-view="people"] .drawer-close { display: block; position: absolute; top: 10px; left: -78px; z-index: 2; background: var(--gold); color: var(--bg); border: 0; padding: 6px 12px; box-shadow: 0 2px 10px #000a; }
+
+/* the People view on a phone: the cards in two columns, the speaker's card across both with its line under the face, the drawers
+   over the whole screen, the tabs along the bottom */
+@media (max-width: 600px) {
+  :root { --card-w: 38vw; --st-face: 72px; }
+  body[data-view="people"] #stage { display: block; height: auto; padding: 8px 8px 64px; }
+  #stage .stage-st { flex-direction: row; align-items: flex-start; gap: .8rem; padding-top: 0; text-align: left; }
+  .stage-st .face { flex: none; } .stage-st .name { display: none; } .st-words { margin-top: 0; } .st-line { font-size: 1rem; } .st-line.older { font-size: .95rem; } .st-night { font-size: 12px; }
+  #stage .table { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 12px; padding: 14px 4px; }
+  #stage .table::before { display: none; }
+  .card { position: static; transform: none; width: auto; }
+  .card .face { width: 100%; } .card .name { font-size: 1.1rem; }
+  .card.speaking { grid-column: 1 / -1; } .card.speaking .face { width: 62%; transform: none; } .card.speaking .name { margin-top: .4rem; }
+  .card .caption, .card.cap-l .caption, .card.cap-r .caption { position: relative; top: auto; left: auto; right: auto; transform: none; width: auto; max-height: none; margin-top: .7rem; font-size: 1.05rem; }
+  .card .caption::before, .card.cap-l .caption::before, .card.cap-r .caption::before { left: 50%; right: auto; top: auto; bottom: 100%; transform: translateX(-50%); border-color: transparent; border-bottom-color: var(--caption-bg); }
+  .card .caption.whisper::before { border-bottom-color: var(--private); }
+  .table-centre { position: static; transform: none; width: auto; grid-column: 1 / -1; order: -1; }
+  .tally-big b { font-size: 3rem; } .vote-what { font-size: 1.15rem; } .night-big { font-size: 2.4rem; } .dawn-big { font-size: 1.4rem; } .dawn-words { font-size: 1.05rem; } .winner-big { font-size: 2.6rem; }
+  .meter { gap: 8px; } .meter .pip { width: 20px; height: 20px; }
+  .hand-mark { left: -10px; top: -10px; } .role-corner { right: -8px; top: -8px; }
+  #stage .recent { min-height: 0; } .recent .r-line { white-space: normal; font-size: .9rem; }
+  body[data-view="people"] #board { position: fixed; inset: 0 0 52px 0; width: auto; transform: translateY(100%); z-index: 40; }
+  body[data-view="people"] .drawer-close { left: auto; right: 8px; top: 6px; }
+  body[data-view="people"] #drawer-tabs { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: auto; height: 52px; flex-direction: row; padding: 6px; z-index: 41; border-left: 0; border-top: 1px solid var(--line); }
+  #drawer-tabs button { writing-mode: horizontal-tb; flex: 1; padding: 4px; font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .card.voicing .face, .stage-st.voicing .face, .card.flash .result { animation: none; } body[data-view="people"] #board { transition: none; } }
