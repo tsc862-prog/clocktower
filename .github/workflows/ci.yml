@@ -43,6 +43,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           GH_TOKEN: ${{ github.token }}
+      - name: Lore (voices, portrait briefs, seat names agree with docs/ROLES.md)
+        run: npm run lorecheck
       - {name: Build the page, run: npm run build}
       - name: "The page (every panel from the recorded game, scroll kept, the start controls, no control speaks for a seat)"
         run: npm run uismoke

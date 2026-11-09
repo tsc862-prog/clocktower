@@ -12,6 +12,7 @@
     "relay": "node scripts/relay.mjs",
     "notes": "node scripts/patchnotes.mjs",
     "rulescheck": "node scripts/rulescheck.mjs",
+    "lorecheck": "node scripts/lorecheck.mjs",
     "flakehunt": "node scripts/flakehunt.mjs",
     "relaycheck": "node scripts/relaycheck.mjs",
     "runnercheck": "node scripts/runnercheck.mjs",
