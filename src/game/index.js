@@ -4,6 +4,7 @@ export {answer, replay, validate, start} from './engine.js';
 export {PENDING_KINDS, optionKey, sameAnswer} from './mechanics.js';
 export {grimoire, roleName, aliveCount} from './grimoire.js';
 export {createScripted, suspicion} from './scripted.js';
+export {createScriptedTalk, playScripted} from './talk.js';
 export {createRng} from './rng.js';
 export {HOOKS, TELLINGS, PASSIVE} from './abilities.js';
 
