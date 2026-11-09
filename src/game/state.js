@@ -52,6 +52,7 @@ export function createState({seed = 1, seats, script = SCRIPT, roles = null, rou
     // seat's notes, and every api call that changed the game (api.restore replays them)
     clock: {day: 0, round: 1, roundsBeforeNominations: rounds, nominationsOpen: false, spoke: [], passedNominating: []},
     ballot: null, notes: {}, actions: [],
+    places: names.map(() => null), // by day: each seat's room id (src/data/rooms.js), null at the Square (#28)
   };
   hidden(state, 'script', script);
   hidden(state, 'roleIndex', roleIndex);
