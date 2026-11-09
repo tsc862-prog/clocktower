@@ -716,27 +716,27 @@ section('rooms in a real game: a line in a room stays in the room, the moves are
     const p = game.pending;
     if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game));
   }
-  const nm = i => game.seats[i].name, [O, T, I] = [0, 4, 2];
+  const nm = i => game.seats[i].name, [O, T, I] = [0, 4, 2], PARLOUR = api.where(game, 0).rooms.find(x => x.id === 'parlour').name; // the lore-keeper's name for it
   ok(api.roomsOpen(game) && game.seats.every(s => s.alive), `seed 7, day 1: the talk has begun and the rooms are open (${game.seats.map(s => s.name).join(', ')})`);
   const nbI = api.where(game, I).neighbours.map(nm);
   let r = call(O, 'where');
   ok(r.ok && r.place === 'the Square' && r.open && r.rooms.length === 3 && r.neighbours.length === 2, `where at the start of the day: ${JSON.stringify(r)}`);
   r = call(O, 'go', {room: 'parlour'});
-  ok(r.ok && r.place === 'the parlour', `${nm(O)} goes to the parlour: ${JSON.stringify(r)}`);
+  ok(r.ok && r.place === PARLOUR, `${nm(O)} goes to the parlour (${PARLOUR}): ${JSON.stringify(r)}`);
   r = call(O, 'invite', {player: nm(T)});
   ok(r.ok && JSON.stringify(r.with) === JSON.stringify([nm(T)]), `${nm(O)} invites ${nm(T)} into the parlour: ${JSON.stringify(r)}`);
   r = call(O, 'speak', {text: LINE});
-  ok(r.ok && r.heard === `in the parlour, heard by ${nm(T)}`, `${nm(O)} speaks in the parlour: ${r.heard}`);
+  ok(r.ok && r.heard === `in ${PARLOUR}, heard by ${nm(T)}`, `${nm(O)} speaks in the parlour: ${r.heard}`);
   r = call(O, 'whisper', {to: nm(T), text: 'x'});
   ok(!r.ok && /no whispers in a room/i.test(r.error), `a whisper from the room is refused: ${r.error}`);
   const tT = call(T, 'read_talk');
-  ok(tT.entries.some(e => e.type === 'say' && e.text === LINE && e.in === 'the parlour'), `${nm(T)} hears the line, marked in the parlour`);
+  ok(tT.entries.some(e => e.type === 'say' && e.text === LINE && e.in === PARLOUR), `${nm(T)} hears the line, marked in ${PARLOUR}`);
   const hI = header(I);
-  ok(/Moves: .*went to the parlour.*into the parlour/.test(hI) && new RegExp(`Away: ${nm(O)} and ${nm(T)} in the parlour`).test(hI), `${nm(I)}'s header names the moves and who is away: ${hI}`);
+  ok(new RegExp(`Moves: .*went to ${PARLOUR}.*into ${PARLOUR}`).test(hI) && new RegExp(`Away: ${nm(O)} and ${nm(T)} in ${PARLOUR}`).test(hI), `${nm(I)}'s header names the moves and who is away: ${hI}`);
   ok(hI.length < HEADER_CAP, `${nm(I)}'s header is under ${HEADER_CAP} (${hI.length})`);
   const tI = call(I, 'read_talk', {since: 0});
   ok(tI.entries.filter(e => e.type === 'move').length === 2 && !JSON.stringify(tI).includes(LINE), `${nm(I)}'s read_talk shows the two moves and not the line`);
-  ok(/You are in the parlour with/.test(call(T, 'what_is_asked').place || ''), `${nm(T)}'s what_is_asked names the room`);
+  ok(new RegExp(`You are in ${PARLOUR} with`).test(call(T, 'what_is_asked').place || ''), `${nm(T)}'s what_is_asked names the room`);
   // a whisper to a non-neighbour, named with the two neighbours
   const far = game.seats.map(s => s.index).find(j => j !== I && !api.where(game, I).neighbours.includes(j) && api.where(game, j).place == null);
   r = call(I, 'whisper', {to: nm(far), text: 'A word, please.'});
