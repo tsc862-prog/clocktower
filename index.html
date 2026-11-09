@@ -18,6 +18,7 @@
     <span id="source" class="source"></span>
     <label class="field pace" title="How far apart the runners' turns are; goes with the next start">pace <select id="pace" name="pace"></select></label>
     <span id="pace-note" class="dim pace-note"></span>
+    <span id="art-note" class="dim art-note" hidden title="Token images (PNG or WebP) from your own folder, public/tokens-local; the drawn token wherever there is none"></span>
     <span class="grow"></span>
     <span id="act-msg" class="dim" aria-live="polite"></span>
     <button id="new-game" disabled title="Needs the relay to start a new game over the wire">New game</button>
@@ -42,7 +43,7 @@
       <button class="follow" hidden>Follow the newest</button>
     </section>
     <section id="rulings" class="panel log" aria-label="The Storyteller's log">
-      <h2>Storyteller's log <small>every call and its reason</small></h2>
+      <h2><img class="st-portrait" hidden alt="" draggable="false">Storyteller's log <small>every call and its reason</small></h2>
       <div class="lines" tabindex="0"></div>
       <button class="follow" hidden>Follow the newest</button>
     </section>

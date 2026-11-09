@@ -152,7 +152,7 @@ async function channels() {
     api.say(g, P, `Only for this room: ${plant('room', 'Roommark')}.`);
     api.go(g, D, 'parlour');
     api.say(g, D, 'I came in late, and I am dead, but I am listening now.');
-    ok(g.log.filter(e => e.type === 'move' && e.room === 'parlour').length === 2, `${nm(P)} takes ${nm(Q)} to the parlour; ${nm(D)} (dead) joins late`);
+    ok(g.log.filter(e => e.type === 'move' && e.room === 'parlour').length === 2, `${nm(P)} takes ${nm(Q)} to the Vestry; ${nm(D)} (dead) joins late`);
     await T.drive(() => !!Cline && game().log.some(e => e.type === 'say' && e.text === Cline));
     ok(!!Cline, `${nm(C)} says a line at the table`);
 
@@ -203,7 +203,7 @@ async function channels() {
     for (const i of [A, B]) ok(J(await T.call(i, 'my_whispers')).includes(S.whisper) && (await talkOf(i)).includes(S.whisper), `${nm(i)} has the whisper (my_whispers, read_talk)`);
     for (const i of [P, Q]) ok((await talkOf(i)).includes(S.room), `${nm(i)}, in the room, hears the room line (read_talk)`);
     ok(/I came in late/.test(await talkOf(D)) && !(await talkOf(D)).includes(S.room), `${nm(D)}, the late joiner, hears the room from its arrival on, not before`);
-    ok(g.seats.every(s => api.events(g, s.index).filter(e => e.type === 'move' && e.room === 'parlour').length === 2), 'every seat sees who went to the parlour (presence is public)');
+    ok(g.seats.every(s => api.events(g, s.index).filter(e => e.type === 'move' && e.room === 'parlour').length === 2), 'every seat sees who went to the Vestry (presence is public)');
     // positive controls: A's secrets are in A's own channels, so a clean read above means something
     ok(heard[A].includes(S.ability) && Object.keys(S).filter(k => /^told/.test(k)).every(k => heard[A].includes(S[k])), `${nm(A)}'s own channels carry its ability and its night information`);
     ok(J(await T.call(A, 'my_notes')).includes(S.note), `${nm(A)}'s note is in its own my_notes`);

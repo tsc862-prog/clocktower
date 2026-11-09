@@ -5,3 +5,4 @@
 - Voices (2026-11-08, PR for #50, proposed, awaiting owner ears): Odette bf_emma 0.95, Bram am_michael 1.1, Ines af_bella 1.05, Corwin bm_george 0.9, Thea af_heart 1.0, Fitch bm_lewis 1.0, Yusuf am_fenrir 1.0, Storyteller bm_daniel 0.95. Engine: Kokoro-FastAPI at 127.0.0.1:8880. Data in src/data/voices.js, mirrored in docs/ROLES.md; npm run lorecheck keeps them in step.
 - Portraits: briefs in docs/ROLES.md and src/data/portraits.js, style line "painted portrait, muted palette, soft lamplight, plain dark background, head and shoulders" (proposed, owner may change). Never reference official art.
 - Tooling gotcha: in the Bash tool, long multi-heredoc commands failed to parse; write files with Write, keep shell calls short.
+- [Room names](room_names.md) — the Snug 2, the Vestry 3, the Taproom 4 (ids nook/parlour/backroom kept); proposed

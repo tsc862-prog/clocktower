@@ -259,13 +259,13 @@ section('rooms and neighbour whispers (#28)');
   const before = g.log.length;
   const r1 = api.go(g, 0, 'the Parlour');
   const mv = g.log.slice(before).filter(e => e.type === 'move');
-  ok(r1.place === 'parlour' && mv.length === 1 && mv[0].audience === 'all', 'go: Odette goes to the parlour (a room named loosely), a public move');
-  ok(g.seats.every(s => api.events(g, s.index).some(e => e.type === 'move' && e.room === 'parlour' && e.text === 'Odette went to the parlour.')) && api.events(g, ST).some(e => e.type === 'move'),
-    'presence is public: every seat and the Storyteller see "Odette went to the parlour."');
-  ok(api.view(g, 4).seats[0].room === 'parlour' && api.view(g, 0).place.room === 'parlour' && api.view(g, 0).place.name === 'the parlour', 'view: who is where, and my own place');
+  ok(r1.place === 'parlour' && mv.length === 1 && mv[0].audience === 'all', 'go: Odette goes to the Vestry (a room named loosely), a public move');
+  ok(g.seats.every(s => api.events(g, s.index).some(e => e.type === 'move' && e.room === 'parlour' && e.text === 'Odette went to the Vestry.')) && api.events(g, ST).some(e => e.type === 'move'),
+    'presence is public: every seat and the Storyteller see "Odette went to the Vestry."');
+  ok(api.view(g, 4).seats[0].room === 'parlour' && api.view(g, 0).place.room === 'parlour' && api.view(g, 0).place.name === 'the Vestry', 'view: who is where, and my own place');
   ok(!g.clock.spoke.includes(0), 'a move is not a turn');
   api.invite(g, 0, 1);
-  ok(g.places[1] === 'parlour' && g.log.at(-1).text === 'Odette called Bram into the parlour.' && JSON.stringify(api.view(g, 0).place.with) === JSON.stringify([1]), 'invite (room omitted: my own room): Bram joins Odette, in public');
+  ok(g.places[1] === 'parlour' && g.log.at(-1).text === 'Odette called Bram into the Vestry.' && JSON.stringify(api.view(g, 0).place.with) === JSON.stringify([1]), 'invite (room omitted: my own room): Bram joins Odette, in public');
   api.say(g, 0, 'Just the two of us: the word is quince.');
   const line = g.log.at(-1);
   ok(line.room === 'parlour' && JSON.stringify(line.audience) === JSON.stringify([0, 1]), 'a line in a room has the room and its occupants as the audience');
@@ -278,21 +278,21 @@ section('rooms and neighbour whispers (#28)');
   ok(!JSON.stringify(api.events(g, 2)).includes('quince'), 'a late joiner hears nothing said before it came in');
   api.say(g, 1, 'Ines, welcome. I am listening.');
   ok(api.events(g, 2).some(e => e.room === 'parlour' && /welcome/.test(e.text)) && JSON.stringify(g.log.at(-1).audience) === JSON.stringify([0, 1, 2]), 'and hears what is said once it is in');
-  ok(throws(() => api.go(g, 3, 'parlour'), /holds 3 and has 3.*full/), 'capacity: the parlour holds three');
+  ok(throws(() => api.go(g, 3, 'parlour'), /holds 3 and has 3.*full/), 'capacity: the Vestry holds three');
   api.invite(g, 3, 4, 'nook');
-  ok(g.places[3] === 'nook' && g.places[4] === 'nook' && g.log.at(-1).text === 'Corwin and Thea went to the nook.', 'invite from the Square: both go, one public line');
-  ok(throws(() => api.go(g, 5, 'nook'), /full/) && throws(() => api.invite(g, 5, 6, 'nook'), /no room for the two of you/), 'capacity: the nook holds two');
+  ok(g.places[3] === 'nook' && g.places[4] === 'nook' && g.log.at(-1).text === 'Corwin and Thea went to the Snug.', 'invite from the Square: both go, one public line');
+  ok(throws(() => api.go(g, 5, 'nook'), /full/) && throws(() => api.invite(g, 5, 6, 'nook'), /no room for the two of you/), 'capacity: the Snug holds two');
   ok(throws(() => api.invite(g, 5, 0, 'backroom'), /only someone at the Square/), 'a seat in another room cannot be invited away');
   ok(throws(() => api.invite(g, 5, 5, 'backroom'), /yourself/) && throws(() => api.invite(g, 5, 6), /Name a room/), 'invite needs another seat and, from the Square, a room');
   // whispers at the Square: the nearest living neighbour on each side, both at the Square
-  ok(throws(() => api.whisper(g, 5, 4, 'hi'), /Thea is in the nook/), 'a neighbour in a room cannot be whispered to');
+  ok(throws(() => api.whisper(g, 5, 4, 'hi'), /Thea is in the Snug/), 'a neighbour in a room cannot be whispered to');
   ok(throws(() => api.whisper(g, 5, 1, 'hi'), /only to your nearest living neighbours: Thea and Yusuf/), 'a whisper to a non-neighbour is refused, naming the two who are');
   api.whisper(g, 5, 6, 'Yusuf, a word.');
   ok(api.events(g, 6).some(e => e.type === 'whisper') && api.events(g, 3).some(e => e.type === 'whisper-seen' && e.from === 5 && e.to === 6), 'a neighbour whisper reaches its listener; the table (even in a room) sees it happen');
   api.leave(g, 2);
-  ok(g.places[2] === null && g.log.at(-1).text === 'Ines came back to the Square from the parlour.' && g.log.at(-1).audience === 'all', 'leave: back to the Square, in public');
+  ok(g.places[2] === null && g.log.at(-1).text === 'Ines came back to the Square from the Vestry.' && g.log.at(-1).audience === 'all', 'leave: back to the Square, in public');
   api.go(g, 2, 'backroom'); api.go(g, 2, 'parlour');
-  ok(g.log.at(-1).text === 'Ines left the back room for the parlour.', 'go from one room to another names both');
+  ok(g.log.at(-1).text === 'Ines left the Taproom for the Vestry.', 'go from one room to another names both');
   const plain = JSON.parse(JSON.stringify(g)), back = api.restore(plain);
   ok(JSON.stringify(back.places) === JSON.stringify(g.places) && JSON.stringify(back.log) === JSON.stringify(g.log), 'a plain copy restores the same places and the same log');
   // the round ends when every living seat has had a line or a pass anywhere
@@ -327,8 +327,8 @@ section('rooms and neighbour whispers (#28)');
   api.invite(g, 5, 6, 'nook');
   api.say(g, 5, 'Even dead, I have a view.');
   ok(g.places[5] === 'nook' && api.events(g, 6).some(e => e.room === 'nook' && /Even dead/.test(e.text)) && !JSON.stringify(api.events(g, 0)).includes('Even dead'), 'a dead seat goes to a room, invites, and talks there');
-  ok(g.places.filter(x => x === 'nook').length === 2 && api.view(g, 0).seats[5].room === 'nook', 'the table sees the dead seat in the nook');
-  api.endDay(g, 'ending day 2 with the nook full');
+  ok(g.places.filter(x => x === 'nook').length === 2 && api.view(g, 0).seats[5].room === 'nook', 'the table sees the dead seat in the Snug');
+  api.endDay(g, 'ending day 2 with the Snug full');
   ok(g.log.some(e => e.type === 'move' && e.closed && e.day === 2) && g.places.every(x => x === null), 'the Storyteller ending the day closes the rooms too');
 }
 {
@@ -338,7 +338,7 @@ section('rooms and neighbour whispers (#28)');
   settle(g, {});
   const pair = g.seats.slice(0, 2).map(s => s.index);
   api.invite(g, pair[0], pair[1], 'nook');
-  api.say(g, pair[0], 'A line for the nook and the watcher only.');
+  api.say(g, pair[0], 'A line for the Snug and the watcher only.');
   const w = be.watch(-1);
   ok(w.places && w.places.open && JSON.stringify(w.places.rooms.find(r => r.id === 'nook').seats) === JSON.stringify(pair) && w.places.square.length === 5, 'the watch view carries who is where');
   ok(w.events.some(e => e.type === 'say' && e.room === 'nook' && /watcher only/.test(e.text)) && w.events.some(e => e.type === 'move' && e.room === 'nook'), 'and the room line with its room, and the move');
