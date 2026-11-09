@@ -19,7 +19,7 @@
 //                        warm-up model call (the start gate); only the claiming runner
 //   POST /play/behavior/turn {player | role: 'storyteller', runner, rec}: a runner's turn line for the behavior logs
 //                        (scripts/behavior-log.mjs); only from the runner that holds the seat. 404 when the host keeps none.
-//   GET  /play/health    {ok, connected, phase, players: [{id, name, alive, link, claimed, runner?, ready}], storyteller: {...}, calls}; local tools and
+//   GET  /play/health    {ok, connected, gameId (a game backend: one id per dealt game, #66), phase, players: [{id, name, alive, link, claimed, runner?, ready}], storyteller: {...}, calls}; local tools and
 //                        the page's origin (CORS)
 //   POST /play/heard     {last, voice} (the page's origin only): the newest event id the page finished playing and whether its voice
 //                        is on; while it lags more than one spoken line, backend.pace holds soft wakes ({wake: null, holdMs}, capped)
@@ -245,10 +245,10 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
         const seed = int(b.seed, 1, 1e9), rounds = int(b.rounds, 0, 10);
         if (Number.isNaN(seed) || Number.isNaN(rounds)) return send(400, {ok: false, error: 'seed is a whole number from 1, rounds from 0 to 10'});
         const r = be.newGame(seed, rounds); lastLinks = ''; pushLinks();
-        log(`[play] the page began a new game: seed ${r.seed}, ${r.rounds} rounds (seat claims kept)`);
+        log(`[play] the page began a new game: seed ${r.seed}, ${r.rounds} rounds, game ${r.gameId} (seat claims kept; runners start fresh sessions)`);
         return send(200, {ok: true, ...r})}
       if (path === '/play/health' && req.method === 'GET') {const i = be.info();
-        return send(200, {ok: true, connected: !!i.connected, phase: i.phase || null, players: (i.players || []).map(h => {const r = runnerOf(h.id), rd = readyOf(h.id); return {...h, link: linkOf(h.id), claimed: !!claimOf(h.id), ...(r ? {runner: r} : {}), ready: rd ? rd.state : null}}), storyteller: storytellerInfo(), ...stats})}
+        return send(200, {ok: true, connected: !!i.connected, ...(i.gameId ? {gameId: i.gameId} : {}), phase: i.phase || null, players: (i.players || []).map(h => {const r = runnerOf(h.id), rd = readyOf(h.id); return {...h, link: linkOf(h.id), claimed: !!claimOf(h.id), ...(r ? {runner: r} : {}), ready: rd ? rd.state : null}}), storyteller: storytellerInfo(), ...stats})}
       if (path === '/mcp') {
         if (req.method !== 'POST') return send(405, {jsonrpc: '2.0', error: {code: -32000, message: 'Method not allowed (stateless server: POST only).'}, id: null});
         const body = await readBody(req), lazy = q.get('lazy') === '1';
@@ -351,7 +351,9 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
   const holderOf = id => {const c = claimOf(id); return c ? c.runner : null};
   // the supervisor's live pace change (scripts/runners.mjs) rides on the pace answer: {pace: {minGap?, heartbeat?}}
   let paceFor = null;
-  const withPace = (r, args, seat) => {if (!r || typeof r !== 'object') return {ok: false, error: 'no answer'}; const p = !args.brief && paceFor ? paceFor(seat) : null; return p ? {...r, pace: p} : r};
+  // a pace answer carries the pace knob's overrides and the game id (#66: a runner that sees the id change starts a fresh session)
+  const withPace = (r, args, seat) => {if (!r || typeof r !== 'object') return {ok: false, error: 'no answer'}; const p = !args.brief && paceFor ? paceFor(seat) : null, g = be.gameId;
+    return {...r, ...(p ? {pace: p} : {}), ...(g && !args.brief ? {gameId: g} : {})}};
   const dropRunner = prefix => {let n = 0; for (const [id, c] of claims) if (c.runner === prefix || c.runner.startsWith(prefix + ':')) {claims.delete(id); act.delete(id); n++}
     if (n) {log(`[play] runner ${prefix} gone: ${n} claim(s) dropped`); pushLinks()} return n};
   return {backend: be, stats, call, storytellerCall, storytellerInfo, linkOf, links, runnerOf, readyOf, claimed, holderOf, dropRunner, behavior, onPace: f => {paceFor = f}, onTurn: f => {turnHooks.add(f); return () => turnHooks.delete(f)}};

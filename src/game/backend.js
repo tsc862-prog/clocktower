@@ -10,8 +10,17 @@
 //   pace(id, {brief})            {ok, brief: header} from src/seats/player.js / storyteller.js.
 //   pace(id, {realMs, wake})     waits up to realMs for: 'now' (a decision waits on the seat), 'soft' (events it has not
 //                                been shown, and only for a seat that can act now: api.canAct; only with wake 'all'), else
-//                                'heartbeat' (wake 'all'; why names when the seat next acts: api.nextTurnText) or wake null. Once the
-//                                game is over and the seat has seen the end: {ok: false, gone: true}.
+//                                'heartbeat' (wake 'all'; why names when the seat next acts: api.nextTurnText) or wake null. The
+//                                Storyteller wakes 'now' whenever an act is due (storytellerDue of src/seats/storyteller.js: a
+//                                narration owed, a decision, end_day), never held for the voice, and soft only on new public
+//                                events it did not make itself. Once the
+//                                game is over: {ok: false, gone: true} at once, for every seat (#69: nothing is woken after the
+//                                win). Nominations (#69): a 'nomination' decision wakes the seats that may nominate one at a
+//                                time in seat order (from seat (day - 1) mod n), `stagger` ms apart; a seat that nominates or
+//                                passes moves the next one up. stagger 0 (the default): all at once.
+//   gameId                       one id per dealt game (#66): `<seed>-<deal time, UTC, yyyymmddThhmmssZ>` (".N" added when two
+//                                deals share a second); info(), the watch body and newGame() carry it. Runners keep a model
+//                                session only for the same id.
 //   scripted: true               a Storyteller decision nobody answers within `grace` ms (counted from the decision or the
 //                                Storyteller's last call) is answered by the scripted default, with that as its reason.
 // now: the clock, given from outside (the relay passes its own clock); the engine folder reads none.
@@ -23,6 +32,7 @@ import {PLAYER_TOOLS, ATTEMPT_INVITE} from '../data/player-tools.js';
 import {STORYTELLER_TOOLS} from '../data/storyteller-tools.js';
 import {playerHeader} from '../seats/player.js';
 import {storytellerHeader} from '../seats/storyteller.js';
+import * as stSeat from '../seats/storyteller.js'; // storytellerDue (PR #74), read behind a guard: the backend runs without it
 
 export const SCRIPTED_GRACE_MS = 2000, PACE_MAX_MS = 30000, PUSH_MS = 250;
 // The voice's clock (issue #50): a page that reported within HEARD_FRESH_MS with its voice on, and more than one spoken line ahead
@@ -32,9 +42,27 @@ const SPOKEN = new Set(['narration', 'dawn', 'nomination', 'vote', 'execution', 
 export const SCRIPTED_REASON = 'scripted default: no Storyteller answered in time';
 const ST = api.ST;
 
+// A UTC time stamp yyyymmddThhmmssZ from ms since 1970, by arithmetic (the engine folder constructs no Date): civil from days.
+export function utcStamp(ms) {
+  const p = n => String(n).padStart(2, '0'), d = Math.floor(ms / 864e5), s = Math.floor((ms - d * 864e5) / 1000);
+  const z = d + 719468, era = Math.floor(z / 146097), doe = z - era * 146097, yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100)), mp = Math.floor((5 * doy + 2) / 153), dd = doy - Math.floor((153 * mp + 2) / 5) + 1, mm = mp < 10 ? mp + 3 : mp - 9;
+  return `${yoe + era * 400 + (mm <= 2 ? 1 : 0)}${p(mm)}${p(dd)}T${p(Math.floor(s / 3600))}${p(Math.floor(s % 3600 / 60))}${p(s % 60)}Z`;
+}
+
 export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = SCRIPTED_GRACE_MS, players = PLAYER_TOOLS,
-  storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}, now = () => 0} = {}) {
+  storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}, now = () => 0, stagger = 0} = {}) {
   let game = newGame({seed, ...(seats ? {seats} : {}), ...(rounds != null ? {rounds} : {})});
+  // The game id (#66): the seed and the deal time from the clock given to us; a repeat within one second gets ".N".
+  let deals = 0, gameId = null;
+  const dealId = s => {deals++; const t = Number(now()) || 0, stamp = utcStamp(t), id = `${s}-${stamp}`;
+    return gameId && gameId.split('.')[0] === id ? `${id}.${deals}` : id};
+  gameId = dealId(seed);
+  // The nomination stagger (#69): {at: when the nomination decision opened, order: seat keys in seat order from (day - 1) mod n};
+  // it starts again each time the decision opens (after each vote).
+  let stag = null;
+  const nominating = () => {const p = game.pending; return !!p && p.kind === 'nomination' && game.phase === 'day' && !!game.clock && game.clock.nominationsOpen && !game.winner};
+  const newStag = () => {const n = game.seats.length, from = ((game.day || 1) - 1) % n; return {at: now(), order: game.seats.map((_, i) => (from + i) % n)}};
   let answerer = scripted ? createScripted(seed) : null;
   const heardWaiters = new Set();
   const socks = new Set(), waiters = new Set(), seen = {}, apis = {};
@@ -60,7 +88,19 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
   const seatOf = id => id === ST ? {index: ST, name: 'Storyteller'} : game.seats[id - 1] ? {index: id - 1, name: game.seats[id - 1].name} : null;
   const latest = key => {const ev = api.events(game, key); return ev.length ? ev.at(-1).id : -1};
   const unseen = key => latest(key) > (seen[key] ?? -1);
-  const mustAct = key => key === ST ? !!api.pendingFor(game, ST) : api.mustAct(game, key);
+  // The Storyteller's act that is due now (#74, #69): narrate owed at dawn, after an execution or at the end; a decision asked of it;
+  // end_day once everyone has nominated or passed. -> {tool, why} or null. Without the seat's storytellerDue: a pending decision only.
+  const stApi = api.forSeat(ST);
+  const stDue = () => {if (typeof stSeat.storytellerDue !== 'function') return null; try {return stSeat.storytellerDue(game, stApi) || null} catch {return null}};
+  // A due act that is not a decision (a narration owed, end_day) wakes the Storyteller now once; the same due again only by the
+  // heartbeat, so a Storyteller that lets it pass is not woken in a loop.
+  let stDueSaid = null;
+  const dueKey = d => d ? d.tool + ': ' + d.why : null;
+  const stDueNew = () => {const k = dueKey(stDue()); return k && k !== stDueSaid ? k : null};
+  const mustAct = key => key === ST ? !!api.pendingFor(game, ST) || !!stDueNew() : api.mustAct(game, key);
+  const stWhy = () => {const d = stDue(); return d ? `${d.tool}: ${d.why}` : game.pending ? `a ${game.pending.kind} decision waits on you` : 'something is due'};
+  // A soft wake for the Storyteller only on new public events it did not make itself (its own narrations and rulings do not count).
+  const stFresh = () => api.events(game, ST, seen[ST] ?? -1).some(e => e.type !== 'narration' && e.type !== 'ruling');
   // The api a seat's handler gets; reading events marks them seen (the pace's soft wake).
   const apiFor = key => apis[key] || (apis[key] = (() => {
     const a = api.forSeat(key), ev = a.events;
@@ -71,6 +111,7 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
   function changed() {
     const p = game.pending, id = p ? p.id : null, fresh = id !== pendingId;
     pendingId = id;
+    if (!nominating()) stag = null; else if (!stag) stag = newStag(); // the stagger starts when the nomination decision opens (again)
     for (const w of [...waiters]) w();
     if (fresh) arm();
     schedulePush();
@@ -86,7 +127,7 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     const told = api.events(game, ST, from), whispers = game.log.filter(e => (e.type === 'whisper' || e.type === 'say' && e.room != null) && e.id > from).map(({n, ...e}) => copy(e));
     const w = api.where(game, ST), places = {square: w.square, rooms: w.rooms, open: w.open};
     const withClip = e => clips.has(e.id) ? {...e, clip: clips.get(e.id)} : e;
-    return {ok: true, seed: game.config.seed, rounds: game.config.rounds, phase: g.phase, night: game.night, day: game.day,
+    return {ok: true, gameId, seed: game.config.seed, rounds: game.config.rounds, phase: g.phase, night: game.night, day: game.day,
       clock: {day: c.day, round: c.round, roundsBeforeNominations: c.roundsBeforeNominations, nominationsOpen: c.nominationsOpen, spoke: [...c.spoke], passedNominating: [...c.passedNominating]},
       pending: copy(game.pending), ballot: copy(game.ballot), grimoire: g, nightOrder: api.nightOrder(game), rulings: api.rulings(game),
       winner: copy(game.winner), last, canNewGame: true, places, events: [...told, ...whispers].sort((a, b) => a.id - b.id).map(withClip)};
@@ -158,6 +199,14 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     return c.nominationsOpen ? `day ${game.day}, nominations open` : `day ${game.day}, round ${c.round} of ${c.roundsBeforeNominations}`;
   };
 
+  // ms until this seat may be woken for the nomination decision (#69); 0 when it may be now (or there is no stagger).
+  function staggerLeft(key) {
+    if (!stagger || key === ST || !nominating()) return 0;
+    if (!stag) stag = newStag();
+    const ahead = stag.order.slice(0, stag.order.indexOf(key)).filter(k => mustAct(k)).length; // seats before this one still to decide
+    return ahead ? Math.max(0, stag.at + ahead * stagger - now()) : 0;
+  }
+
   async function pace(id, args = {}) {
     const key = keyOf(id);
     if (args.brief) {
@@ -167,11 +216,12 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     }
     const soft = !args.wake || args.wake === 'all';
     const check = () => {
-      if (mustAct(key)) return {ok: true, wake: 'now', why: key === ST ? `a ${game.pending.kind} decision waits on you` : api.legalNow(game, key), clock: clockText()};
+      if (game.winner) return {ok: false, gone: true, error: `The game is over: ${game.winner.text}.`};
+      if (staggerLeft(key) > 0) return null; // nominations: not this seat's moment yet
+      if (mustAct(key)) {if (key === ST && !api.pendingFor(game, ST)) stDueSaid = stDueNew(); return {ok: true, wake: 'now', why: key === ST ? stWhy() : api.legalNow(game, key), clock: clockText()}}
       // soft only for a seat that can act on what it has not seen (#29): one that had its turn this round waits for the next;
       // a seat never shown the game yet (a new runner) gets its first turn to read its role
-      if (unseen(key) && (game.winner || soft && (key === ST || seen[key] === undefined || api.canAct(game, key)))) return {ok: true, wake: 'soft', why: 'something happened at the table', clock: clockText()};
-      if (game.winner) return {ok: false, gone: true, error: `The game is over: ${game.winner.text}.`};
+      if (unseen(key) && soft && (seen[key] === undefined || (key === ST ? stFresh() : api.canAct(game, key)))) return {ok: true, wake: 'soft', why: 'something happened at the table', clock: clockText()};
       return null;
     };
     const mark = r => {if (r.ok) seen[key] = Math.max(seen[key] ?? -1, latest(key)); return r};
@@ -189,10 +239,13 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     const ms = Math.min(PACE_MAX_MS, Math.max(0, Number(args.realMs) || 0));
     r = await new Promise(res => {
       const w = () => {const x = check(); if (x) {clearTimeout(t); waiters.delete(w); res(x)}};
-      const t = setTimeout(() => {waiters.delete(w); res(null)}, ms);
+      const t = setTimeout(() => {waiters.delete(w); res(check())}, ms); // the last look: a staggered nomination may be due by now
       waiters.add(w);
+      const due = staggerLeft(key); // a seat waiting its nomination moment is looked at again when it comes
+      if (due > 0 && due < ms) {const t2 = setTimeout(w, due + 1); if (t2.unref) t2.unref()}
     });
     if (r) return hold(r);
+    if (staggerLeft(key) > 0) return {ok: true, wake: null, why: 'nominations go round in seat order: your moment comes', clock: clockText()};
     const quiet = key === ST ? 'a quiet beat' : `a quiet beat${(t => t ? ': nothing to do ' + t : '')(api.nextTurnText(game, key))}`;
     return soft ? hold({ok: true, wake: 'heartbeat', why: quiet, clock: clockText()}) : {ok: true, wake: null, why: 'nothing new', clock: clockText()};
   }
@@ -201,7 +254,8 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
   arm();
   return {
     get game() {return game},
-    info: () => ({connected: true, phase: clockText(), players: game.seats.map(s => ({id: s.index + 1, name: s.name, alive: s.alive})), storyteller: true}),
+    get gameId() {return gameId},
+    info: () => ({connected: true, gameId, phase: clockText(), players: game.seats.map(s => ({id: s.index + 1, name: s.name, alive: s.alive})), storyteller: true}),
     async call(id, tool, args) {
       const seat = seatOf(id);
       if (!seat) return {ok: false, error: `Seat #${id} is not at the table.`};
@@ -233,16 +287,16 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     },
     heardMark: () => heard ? {...heard} : null,
     // A fresh seeded game in place of this one (POST /play/game/new, after the supervisor's stop-all): same seats, so the relay's
-    // claims and links stay. -> {seed, rounds}
+    // claims and links stay. -> {gameId, seed, rounds}
     newGame(nextSeed = game.config.seed, nextRounds = game.config.rounds) {
       if (timer) clearTimeout(timer); timer = null;
       game = newGame({seed: nextSeed, ...(seats ? {seats} : {}), ...(nextRounds != null ? {rounds: nextRounds} : {})});
       answerer = scripted ? createScripted(nextSeed) : null;
       for (const k of Object.keys(seen)) delete seen[k];
       clips.clear(); asked.clear(); heard = null; for (const k of Object.keys(holdSince)) delete holdSince[k];
-      pendingId = null; pushed = -1; lastBallot = 'null'; changed();
-      log(`[game] a new game: seed ${nextSeed}`);
-      return {seed: game.config.seed, rounds: game.config.rounds};
+      pendingId = null; pushed = -1; lastBallot = 'null'; stag = null; stDueSaid = null; gameId = dealId(nextSeed); changed();
+      log(`[game] a new game: seed ${nextSeed}, game ${gameId}`);
+      return {gameId, seed: game.config.seed, rounds: game.config.rounds};
     },
     close() {closed = true; if (timer) clearTimeout(timer); timer = null; if (pushT) clearTimeout(pushT); pushT = null; for (const w of [...waiters]) waiters.delete(w)},
   };

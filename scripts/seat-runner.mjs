@@ -41,7 +41,7 @@ async function main() {
   const seat = (health.players || []).find(p => p.id === playerId);
   if (!seat) {say(`[agent] no seat #${playerId} at the table (seats: ${(health.players || []).map(p => p.name + ' #' + p.id).join(', ')})`); return 2}
   const fresh = () => ({playerId, playerName: seat.name, system: systemFor('player', seat.name), turns: 0, cost: 0, started: new Date().toISOString()});
-  const {sess, note} = loadSession(playerId, seat.name, fresh, {startNew: flag('new')}); if (note) say('[session] ' + note);
+  const {sess, note} = loadSession(playerId, seat.name, fresh, {startNew: flag('new'), gameId: health.gameId || undefined}); if (note) say('[session] ' + note); // #66: one session per dealt game
   const {runner: rs} = runnerSettings(sess, {provider: opt('provider', null), model: opt('model', null)}, {provider: env.AGENT_PROVIDER || 'ollama'});
   sess.runner = rs;
   // the mind: a local model, or a Chat Completions provider; a Claude seat is the player-builder's runner
@@ -74,7 +74,8 @@ async function main() {
     while (!stopping && turns < cap) {
       const w = await pacer.next();
       if (w.stopped || stopping) break;
-      if (w.dead || w.gone) {say(`[agent] stopped after ${turns} turns (${w.dead ? 'out of the game' : 'the seat is gone'}${w.why ? ': ' + String(w.why).slice(0, 60) : ''})`); return 0}
+      if (w.dead || w.gone) {say(`[agent] stopped after ${turns} turns (${w.dead ? 'out of the game' : 'the game is over'}${w.why ? ': ' + String(w.why).slice(0, 60) : ''})`); return 0}
+      if (w.gameId && sess.gameId && w.gameId !== sess.gameId) {rollSession(sess, s => setAside(s)); sess.gameId = w.gameId; saveSession(sess); say(`[session] new game ${w.gameId}: fresh session`)} // #66
       const roll = rollDue(sess, 0); if (roll) {rollSession(sess, s => setAside(s)); say(roll.line)}
       const b = await pacer.brief();
       const prompt = `Turn ${sess.turns + 1}.${wakeNote(w)}${briefText(b)}\nLook first, then act or pass.`;

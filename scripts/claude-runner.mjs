@@ -66,7 +66,9 @@ export async function runClaudeSeat({kind, opt, flag, env, base, runner, say, ct
   // the session: logs/agents/<id>.json or logs/agents/storyteller.json
   const game = env.CLOCKTOWER_GAME || 'clocktower';
   const fresh = () => ({...(st ? {game} : {playerId: seatId.player, playerName: seat.name}), sessionId: null, system: systemFor(st ? 'storyteller' : 'player', seat.name), turns: 0, costUsd: 0, lastTotal: 0, started: new Date().toISOString()});
-  const {sess, note} = st ? loadStorytellerSession(game, fresh, {startNew: flag('new')}) : loadSession(seatId.player, seat.name, fresh, {startNew: flag('new')});
+  // the game id the relay deals now (#66): a session is resumed only within the same dealt game
+  const gameId = health.gameId || undefined;
+  const {sess, note} = st ? loadStorytellerSession(game, fresh, {startNew: flag('new'), gameId}) : loadSession(seatId.player, seat.name, fresh, {startNew: flag('new'), gameId});
   if (note) say('[session] ' + note);
   if (!sess.sessionId) sess.system = systemFor(st ? 'storyteller' : 'player', seat.name); // a fresh conversation takes today's prompt
   const save = () => st ? saveStorytellerSession(sess, {url: base}) : saveSession(sess, {url: base});
@@ -94,7 +96,7 @@ export async function runClaudeSeat({kind, opt, flag, env, base, runner, say, ct
   const stop = why => {stopReq = true; stopWhy = stopWhy || why; if (turnAbort) turnAbort.abort()};
   if (ctl) ctl.stop = stop;
 
-  say(`${tag} playing ${seat.name}${st ? '' : ' #' + seatId.player}: ${model} (effort ${effort}) | ${sess.sessionId ? 'resuming session ' + sess.sessionId : 'new session'} | ${capText(cap)}, budget ${money(budget)} | ${paceText(pace)}${sdk.fake ? ' | fake SDK (checks)' : ''}`);
+  say(`${tag} playing ${seat.name}${st ? '' : ' #' + seatId.player}: ${model} (effort ${effort}) | ${sess.sessionId ? 'resuming session ' + sess.sessionId : 'new session'}${gameId ? ' (game ' + gameId + ')' : ''} | ${capText(cap)}, budget ${money(budget)} | ${paceText(pace)}${sdk.fake ? ' | fake SDK (checks)' : ''}`);
   const rollAt = rollPoint(st ? 'storyteller' : 'player', model, env);
   const childEnv = withCompactWindow({...process.env, ...(env.ANTHROPIC_API_KEY ? {ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY} : {}), CLAUDE_AGENT_SDK_CLIENT_APP: 'clocktower-seat/1.0'}, rollAt, env);
   delete childEnv.CLAUDECODE; delete childEnv.CLAUDE_CODE_ENTRYPOINT;
@@ -113,6 +115,7 @@ export async function runClaudeSeat({kind, opt, flag, env, base, runner, say, ct
       const w = await pacer.next();
       if (w.stopped || stopReq) {ended = stopWhy || 'stopped'; break}
       if (w.dead || w.gone) {ended = w.dead ? 'out of the game' : 'the game is over'; break}
+      if (w.gameId && sess.gameId && w.gameId !== sess.gameId) {rollSession(sess, aside); sess.gameId = w.gameId; save(); say(`[session] new game ${w.gameId}: fresh session`)} // #66: never carried into another game
       const rd = rollDue(sess, rollAt, {busy: w.wake === 'now'});
       if (rd) {rollSession(sess, aside); save(); say('  ' + rd.line)}
       const b = await pacer.brief(), prompt = turnPrompt(kind, sess.turns + 1, w, b, !!sess.rolled);
