@@ -9,7 +9,7 @@
 // Every refusal comes back as {ok: false, error} with what is open to the seat now. With no game behind the relay (the
 // stub backend: no ctx.game or ctx.api) look answers "no game yet" and the rest say so.
 import {clashesOf, seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf, shotOf,
-  placeText, placeNameOf, andList, claimsOf, roleChangeOf, staleNote, noteText} from '../seats/player.js';
+  placeText, placeNameOf, andList, claimsOf, roleChangeOf, staleNote, noteText, readsOf, nothingYet} from '../seats/player.js';
 
 const READ_CAP = 40; // read_talk and my_whispers show at most this many entries
 
@@ -74,7 +74,9 @@ function look(args, ctx) {
 // After a role change (the Scarlet Woman who became the Imp) the answer says so first, plainly (#71).
 function myRole(args, ctx) {
   const v = viewOf(ctx), r = v.role || {}, change = roleChangeOf(ctx.game, ctx.api, v, me(ctx));
+  const reads = readsOf(r.id), quiet = ['townsfolk', 'outsider'].includes(r.team) && nothingYet(r.id); // what a count shows (#89); nothing to tell on day 1 (#87)
   return {ok: true, name: v.name, ...(change ? {changed: change.text} : {}), role: r.name, team: r.team, side: sideOf(r.team), ability: r.ability,
+    ...(reads ? {reads} : {}), ...(quiet ? {day1: `The ${r.name} ${quiet}: on day 1 you have nothing to tell, and a question about it is not one you can answer yet.`} : {}),
     alive: !!v.alive, ghostVote: !!v.ghostVote,
     told: (v.told || []).map(x => ({night: x.night, text: String(x.text ?? '')})).filter(x => x.text)};
 }
@@ -118,8 +120,10 @@ function claims(args, ctx) {
   const none = (v.seats || []).map(s => s.name).filter(n => !ledger.some(p => p.player === n));
   const two = ledger.filter(p => p.claims.length > 1).map(p => p.player);
   return {ok: true, claims: ledger.map(p => ({player: p.player, roles: p.claims.map(c => ({role: c.role, day: c.day, said: c.said,
-      ...(c.times > 1 ? {times: c.times} : {}), ...(c.in ? {in: c.in} : {}), ...(c.whispered ? {whispered: `to ${c.whispered}`} : {})}))})),
+      ...(c.times > 1 ? {times: c.times} : {}), ...(c.unnamed ? {how: 'said, not named: the line tells what the ability does'} : {}), ...(c.in ? {in: c.in} : {}), ...(c.whispered ? {whispered: `to ${c.whispered}`} : {})}))})),
     ...(who ? {} : {noClaim: none}),
+    ...(who ? {} : {oneClaim: [...new Set(ledger.flatMap(p => p.claims.map(c => c.role)))].filter(role => !clashesOf(ledger).some(c => c.role === role))
+      .map(role => `${role}: ${ledger.find(p => p.claims.some(c => c.role === role)).player}, the one claim`)}),
     ...(who || !clashesOf(ledger).length ? {} : {sameRole: clashesOf(ledger).map(c => `${c.role}: claimed by ${listNames(c.players)}. Each character is in play at most once, so at most one of them is the ${c.role}.`)}),
     note: two.length ? `Named more than one role: ${listNames(two)}; the lines are above.`
       : 'Nobody has named two roles for themself. A player who claimed one role has not changed their claim.'};
@@ -336,7 +340,7 @@ export const PLAYER_TOOLS = [
   T('my_whispers', false, 'Every whisper you sent or received, oldest first.', {}, myWhispers),
   T('my_notes', false, 'Your own notes, oldest first. Nobody else can read them.', {}, myNotes),
   T('what_is_asked', false, 'The decision waiting on you, if any (a vote, a nomination, a night choice), with the legal answers.', {}, whatIsAsked),
-  T('claims', false, 'Every role each player has named for themself in your hearing, with the day and the exact line. Check here before you repeat what someone claimed.',
+  T('claims', false, 'Every role each player has claimed in your hearing, by name or by describing its ability, with the day and the exact line. Check here before you repeat what someone claimed.',
     {player: {type: 'string', optional: true, desc: 'Only this player (default: everyone).'}}, claims),
   T('who_voted', false, 'The open vote: who is nominated, who has voted so far and who has not.', {}, whoVoted),
   T('note', false, 'Write a private note to yourself (a claim you heard, a suspicion, a plan). Does not use your turn.',

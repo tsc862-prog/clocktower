@@ -13,7 +13,7 @@
 You are Odette, the Fortune Teller (townsfolk, good), alive.
 Day 1, round 2 of 3; nominations not open yet.        | Night 2. Nobody talks at night.
 Alive (7): Odette, Bram, ... Dead: ...
-New since your last look: 2 lines at the table, 1 whisper to you, 1 whisper seen, 1 dawn report. read_talk to see it.
+New (read_talk): 2 lines at the table, 1 whisper to you, 1 dawn report.   (>5 kinds: first four, then "N more")
 **WAITING ON YOU: Vote on Thea's nomination of Fitch: yes to execute, or no.**   (only when something waits)
 Useful now: vote, who_voted, read_talk.
 ```
@@ -68,3 +68,7 @@ Useful now: vote, who_voted, read_talk.
 - Player prompt (in the "Check before you repeat" paragraph): "Every character is in play at most once: one Mayor or none, never two. When two players claim the same role, at most one of them holds it; the other is lying, or is the Drunk, who believes a role that is not in play, so raise it as a contradiction. The demon's bluffs are characters not in play." Storyteller prompt got one sentence after "Pick from them".
 - Poison does not explain a role clash (it garbles information, not identity); the Drunk's believed role is never in play either, so a clash is a liar (or Drunk + liar).
 - Header claims line ends "Same role twice: Mayor: Odette and Corwin (at most one is). claims shows the lines." (aloud claims only, players in seat order); clashesOf(ledger) in player.js; claims tool field sameRole (whispers to me included).
+
+## Game 4 fixes (PR #97: #87, #88, #89, #92)
+- [Game 4 fixes](game4-fixes.md): day-1 "dodge" knowledge (LEARNS, nothingYet, readsOf), Poisoner line, Record line + nominator/nominee wording, claims by ability and by role; never name the Imp in the prompt (channelcheck).
+- Header order now: who, clock, alive, [stakes], news, [Moves by day, today only], [place], [invite|rooms], [Record], [Claims], [stale notes], [WAITING], [wait], [shot], [Poison], [nudge], Useful.

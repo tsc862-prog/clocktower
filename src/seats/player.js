@@ -73,6 +73,8 @@ export function cleanEvent(view, me, e) {
     case 'win': if (typeof e.team === 'string') out.team = e.team; break;
   }
   if (e.type === 'whisper-seen') out.text = `${out.from} whispered to ${out.to}.`;
+  else if (e.type === 'nomination' && out.by && out.target) out.text = nominationText(out.by, out.target); // both parts named (#89)
+  else if (e.type === 'virgin' && out.by && out.target) out.text = virginText(out.by, out.target);
   else if (typeof e.text === 'string') out.text = e.text;
   return out;
 }
@@ -94,7 +96,8 @@ export function whatsNew(game, seat, since, api) {
   const out = {since: from, last: evs.length ? evs[evs.length - 1].id : from, said, roomSaid,
     whispers: evs.filter(e => e.type === 'whisper' && e.from !== view.name).length, seen: n('whisper-seen'),
     nominations: n('nomination'), shots: n('slayer-shot'), votes: n('vote-result'), dawn: n('dawn'), deaths: evs.filter(e => DEATHS.includes(e.type)).length, narration: n('narration'),
-    told: n('told'), phase: n('phase'), moves: moved.length, moveTexts: moved.map(e => e.text).filter(Boolean)};
+    told: n('told'), phase: n('phase'), moves: moved.length,
+    moveTexts: moved.filter(e => e.day == null || e.day === view.day).map(e => e.text).filter(Boolean)}; // the header names today's moves only
   out.total = said + roomSaid + out.whispers + out.seen + out.nominations + out.shots + out.votes + out.dawn + out.deaths + out.narration + out.told + out.phase + out.moves;
   return out;
 }
@@ -113,7 +116,9 @@ export function newsLine(w) {
   add('narration', 'word from the Storyteller', 'words from the Storyteller');
   add('told', 'private word to you', 'private words to you');
   if (!parts.length && w.phase) parts.push('the phase changed');
-  return parts.length ? `New since your last look: ${parts.join(', ')} (read_talk).` : 'Nothing new since your last look.';
+  // a seat that has not read for a long while: the first four kinds, then a count (the header stays short)
+  if (parts.length > 5) {const rest = parts.splice(4).reduce((n, p) => n + (parseInt(p, 10) || 0), 0); parts.push(`${rest} more`)}
+  return parts.length ? `New (read_talk): ${parts.join(', ')}.` : 'Nothing new since your last look.';
 }
 
 // ---- the decision waiting on a seat, in plain words ----
@@ -201,7 +206,8 @@ export function roomsText(v) {
   if (v.phase !== 'day' || v.winner || !v.roomsOpen || !(v.rooms || []).length) return null;
   return `Rooms until nominations open: ${v.rooms.map(r => `${bare(r.name)} ${r.free > 0 ? `${r.free} free` : 'full'}`).join(', ')}.`;
 }
-// The moves since the last look, the newest few: "Moves: Odette and Bram went to the nook."
+// The moves since the last look, the newest few: "Moves: Odette and Bram went to the nook." Shown by day only: at night
+// everyone is at the Square and the moves tell nothing about now.
 export function movesText(news, max = 2) {
   const t = news?.moveTexts || [];
   if (!t.length) return null;
@@ -282,14 +288,96 @@ export function stakesLine(v) {
   return `Stakes: ${n} alive; the demon kills one a night; evil wins at 2. A wrong execution today: ${wrong}. Wrong executions to spare: ${spare || 'none'}.`;
 }
 
+// ---- what a role has to tell (#87, #89) ----
+// When a role learns something it can tell the table: 'first' on the first night only, 'nightly' every night from the
+// first, 'later' from night 2 on (or only when it dies at night), 'never' (it learns nothing at night, or nothing true).
+// Game 4 hanged a Monk on day 1 for not naming whom she would guard: a question her role could not answer yet.
+const LEARNS = {washerwoman: 'first', librarian: 'first', investigator: 'first', chef: 'first', empath: 'nightly', 'fortune-teller': 'nightly',
+  spy: 'nightly', undertaker: 'later', monk: 'later', ravenkeeper: 'later', imp: 'later'};
+const roleIdOf = name => SCRIPT.roles.find(r => r.name.toLowerCase() === String(name || '').toLowerCase())?.id || null;
+export const learnsOf = role => LEARNS[roleIdOf(role) || role] || 'never';
+// Why a role has nothing to tell on day 1, in a few words; null for a role that learned something on the first night.
+export function nothingYet(role) {
+  const id = roleIdOf(role) || role;
+  if (['monk', 'undertaker', 'imp'].includes(id)) return 'first acts on night 2';
+  if (id === 'ravenkeeper') return 'learns only if killed at night';
+  return learnsOf(id) === 'never' ? 'learns nothing at night' : null;
+}
+// What a role's information can and cannot show, one sentence each (my_role's "reads"); null for a role with none.
+const READS = {
+  washerwoman: 'One of your two names holds that townsfolk role; the other can be anyone, good or evil.',
+  librarian: 'One of your two names holds that outsider role; the other can be anyone. "No outsiders" names nobody.',
+  investigator: 'One of your two names is that minion; the other can be anyone, even good.',
+  chef: 'Your number counts pairs of evil players sitting side by side. It names nobody: 0 means no two evil sit together, not who is evil.',
+  empath: 'Your number counts the evil among your two nearest living neighbours that night; it does not say which one, and your neighbours change as players die.',
+  'fortune-teller': 'A yes means one of your two picks reads as the demon, and one good player reads as the demon to you all game; a no clears both of being the demon, nothing more.',
+  undertaker: 'You learn the role of the player executed that day; it says nothing about who voted or why.',
+  ravenkeeper: 'You learn one player\'s role, and only on the night you are killed.',
+  spy: 'You see the grimoire as it is that night; tell it only in a way that does not give you away.',
+};
+export const readsOf = role => READS[roleIdOf(role) || role] || null;
+
+// ---- the day's record, unambiguous (#89) ----
+// Game 4 reversed nominator and nominee of a Virgin's trap. Each nomination is said with both parts named; the record line
+// in the header keeps the days' deaths by day in that wording: who nominated whom, what fired, who died.
+export const nominationText = (by, target) => `${by} (nominator) nominated ${target} (nominee).`;
+export const virginText = (by, target) => `${by} (nominator) nominated ${target} (nominee); ${target} is the Virgin, so the trap fired: ${by}, the nominator, is executed at once.`;
+// From a seat's cleaned events: [{day, text}] for a Virgin's trap, a Slayer's shot that killed and an execution, oldest first.
+export function recordOf(evs) {
+  const out = [], died = new Set(evs.filter(e => e.type === 'death' && e.who).map(e => `${e.day}/${e.who}`));
+  for (let k = 0; k < evs.length; k++) {
+    const e = evs[k];
+    if (e.type === 'virgin') out.push({day: e.day, who: e.by, text: `${e.by} nominated ${e.target}, the Virgin's trap fired and ${e.by} (the nominator) died`});
+    else if (e.type === 'slayer-shot' && died.has(`${e.day}/${e.target}`)) out.push({day: e.day, text: `${e.by} shot ${e.target} as the Slayer and ${e.target} died`});
+    else if (e.type === 'execution' && !out.some(x => x.who === e.who && x.day === e.day)) out.push({day: e.day, text: `${e.who} was executed`});
+  }
+  return out;
+}
+// "Record: day 1, Ines nominated Odette, the Virgin's trap fired and Ines (the nominator) died; day 2, Corwin was executed."
+export function recordText(rec, max = 3) {
+  if (!rec?.length) return null;
+  const shown = rec.slice(-max).map(r => `day ${r.day ?? '?'}, ${r.text}`);
+  return `Record: ${rec.length > max ? `${rec.length - max} earlier (read_talk); ` : ''}${shown.join('; ')}.`;
+}
+
 // ---- a nudge for a quiet table (#31) ----
+// On day 1 a good seat whose role has nothing to tell yet is told so, with what to say instead (#87).
 function nudgeLine(v, asked, waiting) {
   if (v.phase !== 'day' || v.winner || waiting || stakesLine(v)) return null; // the stakes say more than a nudge
   if (asked?.kind === 'nomination' && !(v.today?.nominations || []).length)
     return 'Nobody nominated yet. With nothing solid, nominate someone anyway and let the vote decide: a day with no execution is a day given to the demon.';
-  if (v.day === 1 && v.alive !== false && !v.clock?.nominationsOpen && !asked)
+  if (v.day === 1 && v.alive !== false && !v.clock?.nominationsOpen && !asked) {
+    const why = ['townsfolk', 'outsider'].includes(v.role?.team) && nothingYet(v.role.id);
+    if (why) return `First day: the ${v.role.name} ${why}, so you have nothing to tell yet; say so if asked, and ask a player a question by name.`;
     return 'First day: say something about yourself or ask a player a question by name, rather than pass.';
+  }
   return null;
+}
+
+// ---- the Poisoner's targets (#88) ----
+// Game 4's Poisoner poisoned a guess, the demon's own kill and a Virgin whose trap had fired. At night, with the poison to
+// pick, the header sorts the other living players by what this seat heard: a claimed ability still working (worth it), one
+// already used (wasted), no claim. Public facts only: the claims the seat heard and the Virgin's and Slayer's public events.
+export function poisonOf(v, asked, ledger, evs) {
+  if (asked?.tool !== 'night_choice' || v.role?.id !== 'poisoner' || !(v.night > 1)) return null;
+  const team = new Set();
+  for (const t of v.told || []) if (t.what ? ['minion-info', 'demon-info'].includes(t.what) : /\b(?:demon|minions?)\b/i.test(t.text || ''))
+    for (const s of v.seats || []) if (new RegExp(String.raw`\b` + reEsc(s.name) + String.raw`\b`).test(String(t.text || ''))) team.add(s.name);
+  const fired = new Map((evs || []).filter(e => e.type === 'virgin').map(e => [e.target, `fired day ${e.day}`]));
+  const shot = new Map((evs || []).filter(e => e.type === 'slayer-shot').map(e => [e.by, `shot day ${e.day}`]));
+  const live = [], spent = [], none = [];
+  for (const s of (v.seats || []).filter(x => x.alive && x.name !== v.name && !team.has(x.name))) {
+    const cs = (ledger || []).find(p => p.player === s.name)?.claims || [];
+    const c = cs.filter(x => !x.whispered).at(-1) || cs.at(-1);
+    if (!c) {none.push(s.name); continue}
+    const id = roleIdOf(c.role);
+    const used = id === 'virgin' ? fired.get(s.name) : id === 'slayer' ? shot.get(s.name) : learnsOf(id) === 'first' ? 'first night only' : null;
+    if (used) spent.push(`${s.name} (${c.role}, ${used})`);
+    else if (['saint', 'recluse', 'drunk', 'butler'].includes(id)) none.push(s.name);
+    else live.push(`${s.name} (${c.role})`);
+  }
+  const parts = [live.length && `worth it on ${andList(live)}`, spent.length && `wasted on ${andList(spent)}`, none.length && `no working claim: ${andList(none)}`].filter(Boolean);
+  return `Poison: ${parts.join('; ')}. Never on the player your demon kills tonight.`;
 }
 
 // ---- claims (#67): every role a player named for itself, from the talk this seat heard ----
@@ -317,42 +405,106 @@ function selfClaims(text, speaker) {
     const before = t.slice(0, m.index), after = t.slice(m.index + m[0].length);
     const cut = Math.max(...['.', '!', '?', ';', ':', '\n'].map(c => before.lastIndexOf(c)));
     const clause = before.slice(cut + 1);
-    const p = clause.match(pre);
+    const p = clause.match(pre), my = clause.match(MY_BEFORE);
     const hit = p ? !NOT_SELF.test(clause.slice(0, p.index))
+      : my ? MY_AFTER.test(after) && !NOT_SELF.test(clause.slice(0, my.index))
       : lead.test(clause) && /^\s*(?:here\b|[,—-]\s*(?:and\s+)?i\s+(?:got|learned|learnt|saw|see|read|was\s+told|have|know))/i.test(after);
     const role = hit && roleByText(m[0]);
     if (role) out.push({role, said: (clause + m[0]).trim()});
   }
   return out;
 }
-// The roles a line claims for its speaker, each once, in the order said.
-export const claimsInLine = (text, speaker) => [...new Set(selfClaims(text, speaker).map(c => c.role))];
-// The ledger, in seat order: [{player, claims: [{role, day, id, said, times, in?, whispered?}]}], each role once per player
-// with the first line that claimed it. Lines at the table, in a room this seat was in, and whispers to or from this seat.
+// "my Virgin ability fired", "my Empath number": the role named as the speaker's own by what it does (#92)
+const MY_BEFORE = /\bmy\s+$/i;
+const MY_AFTER = /^\s*(?:ability|power|trap|shot|info|information|reading|readings|result|results|number|count|check|checks|pick|picks|protection|night)\b/i;
+
+// ---- claims said in other words (#92) ----
+// "Ines nominated me, and my trap fired", "I guard one player each night": the role is told by its ability, not its name.
+// Each pattern is first person and specific to one role; a line that claims a role by name is not read for these.
+const ABILITY_SAYS = [
+  ['Virgin', /\bmy\s+trap\b|\b(?:nominat\w*\s+me\b[^.!?]{0,40}\b(?:die|dies|died|executed)\b)|\bif\s+(?:a\s+townsfolk|anyone|someone|somebody|you)\s+nominates?\s+me\b/i],
+  ['Monk', /\bi\s+(?:guard|protect|shield)(?:ed|s)?\s+(?:one|a|another|someone|somebody|a\s+player|one\s+player|one\s+neighbou?r)\b|\bmy\s+(?:guard|protection)\b|\b(?:i\s+(?:hold|have|play)|my)\b[^.!?]{0,40}\brole\s+that\s+(?:guards|protects|shields)\b/i],
+  ['Soldier', /\b(?:the\s+demon\s+(?:can(?:no|['’])t|cannot|can\s+not)\s+kill\s+me|i\s+(?:can(?:no|['’])t|cannot)\s+(?:be\s+)?(?:killed|die)\s+(?:by\s+the\s+demon|at\s+night))\b/i],
+  ['Slayer', /\bmy\s+(?:one\s+)?shot\b|\bi\s+(?:can|could|will)\s+shoot\b/i],
+  ['Empath', /\b(?:no|zero|0|one|1|two|2|both)\s+(?:of\s+)?my\s+(?:two\s+)?(?:living\s+)?neighbou?rs\s+(?:is|are|was|were|registered?\s+as)\s+evil\b/i],
+  ['Chef', /\b(?:my|i\s+(?:got|learned|learnt|was\s+told))\b[^.!?]{0,40}\b(?:no|zero|0|one|1|two|2)\s+(?:pairs?\s+of\s+evil|evil\s+pairs?|two\s+evil\s+players?\s+(?:sit|sat)|evil\s+players?\s+(?:sit|sat))/i],
+  ['Fortune Teller', /\bi\s+(?:checked|picked|tested|read)\s+\w+\s+and\s+\w+\b[^.!?]{0,40}\bdemon\b/i],
+  ['Ravenkeeper', /\bif\s+i\s+(?:die|am\s+killed|get\s+killed)\s+(?:at|in\s+the)\s+night\b[^.!?]{0,30}\b(?:learn|pick|choose|see)\b/i],
+  ['Saint', /\bif\s+(?:i\s+(?:am|['’]m|get)|you)\s+(?:executed|hang|hanged|execute\s+me)\b[^.!?]{0,30}\b(?:good|we|the\s+town|town)\s+loses?\b/i],
+  ['Butler', /\bmy\s+master\b/i],
+  ['Librarian', /\bi\s+(?:learned|learnt|was\s+told|got)\s+(?:that\s+)?there\s+(?:are|were)\s+no\s+outsiders\b/i],
+];
+// a Virgin's trap told in the negative ("nominated me and nobody died") claims nothing
+const SAID_NOT = {Virgin: /\b(?:nobody|no\s+one|not|never|didn['’]t|did\s+not|wasn['’]t)\b/i};
+function saidClaims(text) {
+  const t = String(text ?? ''), out = [];
+  for (const sentence of t.split(/(?<=[.!?;])\s+/)) {
+    for (const [role, re] of ABILITY_SAYS) {
+      const m = sentence.match(re);
+      if (!m || SAID_NOT[role]?.test(m[0]) || NOT_SELF.test(sentence.slice(0, m.index))) continue;
+      if (!out.some(c => c.role === role)) out.push({role, said: sentence.trim(), unnamed: true});
+    }
+  }
+  return out;
+}
+// The roles a line claims for its speaker, each once, in the order said: by name, else by what the ability does.
+export const claimsInLine = (text, speaker) => {
+  const named = selfClaims(text, speaker);
+  return [...new Set((named.length ? named : saidClaims(text)).map(c => c.role))];
+};
+// The same with how: [{role, unnamed}] (unnamed: said by the ability, not the name).
+const claimsWithHow = (text, speaker) => {
+  const named = selfClaims(text, speaker);
+  if (named.length) return [...new Set(named.map(c => c.role))].map(role => ({role, unnamed: false}));
+  return saidClaims(text).map(c => ({role: c.role, unnamed: true}));
+};
+// The ledger, in seat order: [{player, claims: [{role, day, id, said, times, unnamed?, in?, whispered?}]}], each role once per
+// player with the first line that claimed it (a role first said by its ability and later named keeps the naming line).
+// Lines at the table, in a room this seat was in, and whispers to or from this seat. unnamed: told by what the ability does,
+// not by name ("my trap fired", "I guard one player a night", #92).
 export function claimsOf(view, me, events) {
   const by = new Map();
   for (const e of cleanEvents(view, me, events)) {
     if (!['say', 'whisper'].includes(e.type) || !e.from || typeof e.text !== 'string') continue;
-    for (const role of claimsInLine(e.text, e.from)) {
+    for (const {role, unnamed} of claimsWithHow(e.text, e.from)) {
       if (!by.has(e.from)) by.set(e.from, []);
       const list = by.get(e.from), prev = list.find(c => c.role === role);
-      if (prev) {prev.times++; continue}
-      list.push({role, day: e.day ?? null, id: e.id, said: e.text, times: 1, ...(e.type === 'whisper' ? {whispered: e.to} : e.in ? {in: e.in} : {})});
+      if (prev) {prev.times++; if (prev.unnamed && !unnamed) {delete prev.unnamed; prev.said = e.text} continue}
+      list.push({role, day: e.day ?? null, id: e.id, said: e.text, times: 1, ...(unnamed ? {unnamed: true} : {}),
+        ...(e.type === 'whisper' ? {whispered: e.to} : e.in ? {in: e.in} : {})});
     }
   }
   const order = (view?.seats || []).map(s => s.name);
   return [...by.entries()].sort((x, y) => order.indexOf(x[0]) - order.indexOf(y[0])).map(([player, claims]) => ({player, claims}));
 }
-// "Claims so far: Odette Ravenkeeper (day 1), Bram Librarian (day 1) then Washerwoman (day 2). claims shows the lines."
-// Only what was said aloud (the table or a room): a whispered claim stays in the claims tool. A role two or more players
-// named for themselves (#81) is marked: each character is in play at most once, so at most one of them holds it.
-export function claimsText(ledger) {
+// The claims line, by role in the order first claimed:
+// "Claims (one player per role): Mayor: Corwin (day 1); Monk: Ines (said not named). No night answer to give yet:
+// Mayor and Monk (silence there is no dodge)." The day is left out for a claim made today.
+// "one player per role" says it plainly (#92: seats said "the only Mayor left" with no second Mayor ever). A role two or more
+// players named for themselves (#81) is marked "twice: at most one is". Only what was said aloud (the table or a
+// room): a whispered claim stays in the claims tool. day: the day when it is day; on day 1 the claimed roles that have
+// nothing to tell yet are named (#87). today: the day count, to leave out the day of a claim made today.
+export function claimsText(ledger, day, today = day) {
   const pub = (ledger || []).map(p => ({player: p.player, claims: p.claims.filter(c => !c.whispered)})).filter(p => p.claims.length);
   if (!pub.length) return null;
-  const one = c => `${c.role}${c.day != null ? ` (day ${c.day})` : ''}`;
-  const clash = clashesOf(pub).map(c => `${c.role}: ${c.players.length > 1 ? c.players.slice(0, -1).join(', ') + ' and ' + c.players.at(-1) : c.players[0]} (at most one is)`);
-  return `Claims so far: ${pub.map(p => `${p.player} ${p.claims.map(one).join(' then ')}`).join(', ')}. ` +
-    (clash.length ? `Same role twice: ${clash.join('; ')}. ` : '') + 'claims shows the lines.';
+  const roles = new Map();
+  for (const p of pub) for (const c of p.claims) {
+    if (!roles.has(c.role)) roles.set(c.role, {first: c.id ?? 0, day: c.day, players: [], unnamed: true});
+    const r = roles.get(c.role);
+    if ((c.id ?? 0) < r.first) {r.first = c.id ?? 0; r.day = c.day}
+    r.players.push(p.player);
+    if (!c.unnamed) r.unnamed = false;
+  }
+  const list = [...roles.entries()].sort((x, y) => x[1].first - y[1].first);
+  const twice = list.some(([, r]) => r.players.length > 1);
+  const parts = list.map(([role, r]) => {
+    const marks = [r.players.length > 1 ? 'twice: at most one is' : '', r.unnamed ? 'said not named' : '', r.day != null && r.day !== today ? `day ${r.day}` : ''].filter(Boolean);
+    return `${role}: ${andList(r.players)}${marks.length ? ` (${marks.join(', ')})` : ''}`;
+  });
+  const two = pub.filter(p => p.claims.length > 1).map(p => `${p.player} named ${p.claims.map(c => c.role).join(' then ')}`);
+  const quiet = day === 1 ? list.map(([role]) => role).filter(role => nothingYet(role)) : [];
+  return (`Claims (one player per role${twice ? ' unless marked' : ''}): ${parts.join('; ')}. ` + (two.length ? `${two.join('; ')}. ` : '') +
+    (quiet.length ? `No night answer to give yet: ${andList(quiet)} (silence there is no dodge).` : '')).trim();
 }
 // The roles named by two or more players, in the order first claimed: [{role, players: [names in seat order]}]. Every
 // character is in play at most once, so two claims to one role are a contradiction, never two holders (#81).
@@ -462,7 +614,7 @@ export function inviteOf(game, a, v, me, asked, ledger, notesList) {
   }
   if (!pick) return null;
   const rn = room.name || placeNameOf(v, room.id);
-  return {...pick, room: room.id, text: `Take ${pick.name} to ${rn} to talk in private (${pick.why}): invite ${pick.name}, room ${bare(rn)}. Entering costs no turn; the rooms close when nominations open.`};
+  return {...pick, room: room.id, text: `Take ${pick.name} to ${rn} to talk in private (${pick.why}): invite ${pick.name}, room ${bare(rn)}. Free; rooms close when nominations open.`};
 }
 
 const TEAM_SIDE = {townsfolk: 'good', outsider: 'good', minion: 'evil', demon: 'evil'};
@@ -484,7 +636,10 @@ export function playerHeader(game, seat, api) {
   let notesList = [];
   try {notesList = (typeof a.notes === 'function' && a.notes(game, me)) || []} catch {notesList = []}
   let ledger = [];
+  let evs = [];
+  try {evs = cleanEvents(v, me, a.events(game, me, -1))} catch {evs = []}
   try {ledger = claimsOf(v, me, a.events(game, me, -1))} catch {ledger = []}
+  const poison = poisonOf(v, asked, ledger, evs);
   const invite = inviteOf(game, a, v, me, asked, ledger, notesList);
   const lines = [
     `You are ${v.name}, the ${role.name || 'unknown role'} (${role.team || '?'}, ${sideOf(role.team)}), ${life}.${change ? ` You were the ${change.was} until ${change.when || 'lately'}.` : ''}`,
@@ -492,11 +647,12 @@ export function playerHeader(game, seat, api) {
     `Alive (${living.length}): ${listNames(living)}.${dead.length ? ` Dead: ${listNames(dead)}.` : ''}`,
     ...(stakes ? [stakes] : []),
     newsLine(news),
-    ...[movesText(news), placeText(v), invite ? invite.text : roomsText(v), claimsText(ledger), notesText(staleNotes(notesList, v))].filter(Boolean),
+    ...[v.phase === 'day' ? movesText(news) : null, placeText(v), invite ? invite.text : roomsText(v), recordText(recordOf(evs)), claimsText(ledger, v.phase === 'day' ? v.day : null, v.day), notesText(staleNotes(notesList, v))].filter(Boolean),
   ];
   if (asked && !asked.done) lines.push(`**WAITING ON YOU: ${asked.text}**`);
   if (waiting) lines.push(waiting.text);
   if (shot) lines.push(shot.text);
+  if (poison) lines.push(poison);
   if (nudge) lines.push(nudge);
   const useful = usefulTools(v, asked, news, waiting, shot);
   lines.push(`Useful now: ${useful.join(', ')}.${useful.includes('speak') ? ' Speak without your name in front.' : ''}`);

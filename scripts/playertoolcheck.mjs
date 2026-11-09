@@ -13,7 +13,7 @@ import {PLAYER_TOOLS, TOOL_NAMES, ATTEMPT_INVITE} from '../src/data/player-tools
 import {PLAYER_TOOL_LINES, systemFor} from '../src/data/prompts.js';
 import {playerHeader, whatsNew, useApi, claimsInLine} from '../src/seats/player.js';
 import * as api from '../src/game/api.js';
-import {newGame, createScripted} from '../src/game/index.js';
+import {newGame, createScripted, playScripted} from '../src/game/index.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 let fails = 0, passes = 0;
@@ -630,6 +630,8 @@ section('integration: a real game through the real api, every seat with its own 
   ok(BOUND.test(tryMsg(() => ctxs[0].api.notes(game, 1)) || ''), "a seat's bound api refuses another seat's notes");
   ok(BOUND.test(tryMsg(() => ctxs[0].api.grimoire(game)) || ''), 'a seat has no grimoire');
   const talk = call(0, 'read_talk', {since: 0});
+  const noms = talk.entries.filter(e => e.type === 'nomination');
+  ok(noms.length >= 1 && noms.every(e => e.text === `${e.by} (nominator) nominated ${e.target} (nominee).`), `in the real game each nomination names both parts (#89): ${JSON.stringify(noms[0])}`);
   console.log(`    | a real game, seed 7, to day ${game.day}: ${JSON.stringify({...done, bad: undefined})}; ${seats[0].name}'s header now:`);
   console.log(header(0).split('\n').map(l => '    | ' + l).join('\n'));
 }
@@ -781,7 +783,7 @@ section('game 3 fixes: claims checked before repeated (#67), a reason to use a r
   r = run(g, 'claims', {}, 0);
   ok(r.claims.find(p => p.player === 'Fitch')?.roles[0]?.whispered === 'to Odette', 'a claim whispered to me is listed, marked as whispered');
   const h = playerHeader(g, 4, fakeApi);
-  ok(/Claims so far: Odette Ravenkeeper \(day 1\), Bram Chef \(day 1\) then Washerwoman \(day 2\)\. claims shows the lines\./.test(h), `the header's claims line: ${h}`);
+  ok(/Claims \(one player per role\): Chef: Bram; Ravenkeeper: Odette; Washerwoman: Bram \(day 2\)\. Bram named Chef then Washerwoman\./.test(h), `the header's claims line: ${h}`);
   ok(!/Fitch Monk/.test(playerHeader(g, 0, fakeApi)), 'a whispered claim stays out of the header line');
   const quiet = fakeGame('night'); quiet.events = quiet.events.filter(e => e.type !== 'say');
   ok(!/Claims so far/.test(playerHeader(quiet, 0, fakeApi)), 'no claims, no claims line');
@@ -798,10 +800,10 @@ section('game 3 fixes: claims checked before repeated (#67), a reason to use a r
   const ev2 = e => g2.events.push({id: g2.events.length, ...e});
   ev2(say(3, "I'm the Mayor, so keep me alive.")); ev2(say(6, 'Empath here. I got a 0.'));
   let h2 = playerHeader(g2, 4, fakeApi);
-  ok(/Corwin Mayor \(day 1\)/.test(h2) && !/Same role twice/.test(h2), `one Mayor claim alone shows no clash mark: ${h2}`);
+  ok(/one player per role\): .*Mayor: Corwin[;.]/.test(h2) && !/twice/.test(h2), `one Mayor claim alone shows no clash mark: ${h2}`);
   ev2(say(0, "I'm the Mayor, and Corwin is lying.", 2));
   h2 = playerHeader(g2, 4, fakeApi);
-  ok(/Same role twice: Mayor: Odette and Corwin \(at most one is\)\. claims shows the lines\./.test(h2) && !/Empath: /.test(h2), `two Mayor claims are marked as a clash, the Empath is not: ${h2}`);
+  ok(/one player per role unless marked\): .*Mayor: Odette and Corwin \(twice: at most one is\)/.test(h2) && /Empath: Yusuf[;.]/.test(h2), `two Mayor claims are marked as a clash, the Empath is not: ${h2}`);
   ok(h2.length <= HEADER_CAP, `the header with a clash stays under ${HEADER_CAP} (${h2.length})`);
   const r2 = run(g2, 'claims', {}, 4);
   clean(r2, 'claims');
@@ -824,7 +826,7 @@ section('game 3 fixes: claims checked before repeated (#67), a reason to use a r
   t = takeOf(playerHeader(g, 0, fakeApi));
   ok(t[0] === 'Yusuf' && /spoke against you/.test(t[2]), `the newest line against me wins: ${t}`);
   const hT = playerHeader(g, 0, fakeApi);
-  ok(/Entering costs no turn/.test(hT) && !/Rooms until/.test(hT) && hT.length < HEADER_CAP, `the invite line replaces the rooms line and the header stays under the cap (${hT.length})`);
+  ok(/Free; rooms close when nominations open./.test(hT) && !/Rooms until/.test(hT) && hT.length < HEADER_CAP, `the invite line replaces the rooms line and the header stays under the cap (${hT.length})`);
   g = fakeGame('day'); g.events.push({id: g.events.length, ...say(3, 'Odette, why so quiet?')});
   ok(!/Take Corwin/.test(playerHeader(g, 0, fakeApi)), 'a player already in a room is not offered');
   g = fakeGame('day'); run(g, 'note', {text: 'Thea was kind; Fitch seems evil to me.'});
@@ -903,6 +905,138 @@ section('game 3 fixes: claims checked before repeated (#67), a reason to use a r
     ok(!call(s.index, 'my_role').changed && !/You were the/.test(playerHeader(game, s.index)) && !/Scarlet Woman" \(/.test(playerHeader(game, s.index)),
       `${s.name} sees nothing of ${nm(SW)}'s change or notes`);
   }
+}
+
+section("game 4 fixes: no dodge on day 1 (#87), the Poisoner's targets (#88), the log read right (#89), claims in other words (#92)");
+{
+  // #92: a claim made by describing the ability is a claim, marked "said, not named"; a line about someone else is not
+  const cases = [['Ines nominated me, and my Virgin ability fired.', 'Odette', 'Virgin'], ['Ines nominated me and my trap fired.', 'Odette', 'Virgin'],
+    ['Bram nominated me yesterday and nobody died.', 'Odette', ''], ['If anyone nominates me, they die on the spot.', 'Odette', 'Virgin'],
+    ['I hold a townsfolk role that guards one neighbour each night from the demon.', 'Ines', 'Monk'], ['I guard one player each night.', 'Ines', 'Monk'],
+    ['Two of my neighbours are evil, sadly.', 'Thea', 'Empath'], ['My first-night read was that no two evil players sit side by side.', 'Thea', 'Chef'],
+    ['Thea says no two evil players sit side by side.', 'Bram', ''], ["The demon can't kill me, so test me.", 'Corwin', 'Soldier'], ["Odette's trap fired on Ines.", 'Fitch', ''],
+    ['My Empath number was 1.', 'Thea', 'Empath'], ['If I am executed, good loses.', 'Fitch', 'Saint'], ['I learned there are no outsiders.', 'Fitch', 'Librarian']];
+  for (const [t, s, want] of cases) ok(claimsInLine(t, s).join() === want, `claimsInLine(${JSON.stringify(t)}) is ${JSON.stringify(want)}: ${JSON.stringify(claimsInLine(t, s))}`);
+  const g = fakeGame('day');
+  const ev = e => g.events.push({id: g.events.length, ...e});
+  ev(say(2, 'I hold a townsfolk role that guards one neighbour each night from the demon.'));
+  ev(say(3, "I'm the Mayor; keep me alive."));
+  let h = playerHeader(g, 4, fakeApi);
+  ok(/Claims \(one player per role\): Chef: Bram; Monk: Ines \(said not named\); Mayor: Corwin\. No night answer to give yet: Monk and Mayor \(silence there is no dodge\)\./.test(h),
+    `the claims line: by role, each by one player, a claim said not named, and the roles with nothing to tell on day 1: ${h}`);
+  const r = run(g, 'claims', {}, 4);
+  clean(r, 'claims');
+  const monk = r.claims.find(p => p.player === 'Ines')?.roles[0];
+  ok(monk?.role === 'Monk' && /said, not named/.test(monk.how) && r.oneClaim.includes('Mayor: Corwin, the one claim'), `the claims tool: the Monk said not named, the Mayor the one claim: ${JSON.stringify(r)}`);
+  ev(say(2, "Fine: I'm the Monk.", 1));
+  ok(!run(g, 'claims', {}, 4).claims.find(p => p.player === 'Ines').roles[0].how && !/said not named/.test(playerHeader(g, 4, fakeApi)), 'once named, the claim is named');
+  g.day = 2;
+  h = playerHeader(g, 4, fakeApi);
+  ok(!/No night answer/.test(h) && /Monk: Ines \(day 1\)/.test(h), `on day 2 the day-1 mark is gone and the claims of day 1 carry their day: ${h}`);
+  const sys = systemFor('player', 'Thea');
+  ok(/never "the only Mayor left"/.test(sys) && /has claimed that role; claims lists it as said, not named/.test(sys), 'the prompt: no "only Mayor left", an ability described is a claim');
+}
+{
+  // #87: the Monk on day 1 is told she has nothing to tell yet; an evil seat and an information role keep the usual nudge
+  const as = (role, team, ability = 'x') => ({...fakeApi, view: (x, s) => ({...fakeApi.view(x, s), role: {id: role, name: role[0].toUpperCase() + role.slice(1), team, ability}})});
+  const g = fakeGame('day');
+  const h = playerHeader(g, 2, as('monk', 'townsfolk'));
+  ok(/First day: the Monk first acts on night 2, so you have nothing to tell yet; say so if asked, and ask a player a question by name\./.test(h), `the Monk's day 1 nudge: ${h}`);
+  ok(/First day: the Mayor learns nothing at night/.test(playerHeader(g, 2, as('mayor', 'townsfolk'))), 'the Mayor learns nothing at night');
+  ok(/First day: say something about yourself/.test(playerHeader(g, 2, as('chef', 'townsfolk'))), 'the Chef has something to tell: the usual nudge');
+  ok(/First day: say something about yourself/.test(playerHeader(g, 2, as('baron', 'minion'))), 'an evil seat is not told its role has nothing to tell');
+  const mr = tool('my_role').handler({}, {...ctxFor(g, 2), api: as('monk', 'townsfolk')});
+  ok(/first acts on night 2: on day 1 you have nothing to tell/.test(mr.day1) && !mr.reads, `my_role for the Monk: ${JSON.stringify(mr)}`);
+  const sys = systemFor('player', 'Ines');
+  ok(/A question a role cannot answer yet is not evidence/.test(sys) && /Monk and the Undertaker first act on night 2/.test(sys) && /Never nominate on an unanswered question alone/.test(sys) && /one standard/.test(sys),
+    'the prompt: an unanswered question is no evidence, the roles with nothing on day 1, one standard, never nominate on it alone');
+}
+{
+  // #89: my_role says what a count can and cannot show; read_talk and the header word the Virgin's trap with both parts named
+  const chef = {...fakeApi, view: (x, s) => ({...fakeApi.view(x, s), role: {id: 'chef', name: 'Chef', team: 'townsfolk', ability: 'x'}})};
+  const g = fakeGame('day');
+  const mr = tool('my_role').handler({}, {...ctxFor(g, 4), api: chef});
+  ok(/It names nobody: 0 means no two evil sit together, not who is evil/.test(mr.reads) && !mr.day1, `my_role for the Chef: ${JSON.stringify(mr)}`);
+  ok(/does not say which one/.test(tool('my_role').handler({}, {...ctxFor(g, 4), api: {...fakeApi, view: (x, s) => ({...fakeApi.view(x, s), role: {id: 'empath', name: 'Empath', team: 'townsfolk'}})}}).reads), 'my_role for the Empath');
+  const ev = e => g.events.push({id: g.events.length, ...e});
+  ev({type: 'nomination', by: 1, target: 0, day: 1, audience: 'all', text: 'Bram nominates Odette.'});
+  ev({type: 'virgin', seat: 1, target: 0, day: 1, audience: 'all', text: 'Bram is executed at once for nominating Odette.'});
+  ev({type: 'execution', seat: 1, day: 1, audience: 'all', text: 'Bram is executed.'});
+  g.seats[1].alive = false;
+  const t = run(g, 'read_talk', {since: 0}, 4).entries;
+  ok(t.find(e => e.type === 'nomination')?.text === 'Bram (nominator) nominated Odette (nominee).', `read_talk names both parts of a nomination: ${JSON.stringify(t.find(e => e.type === 'nomination'))}`);
+  ok(t.find(e => e.type === 'virgin')?.text === 'Bram (nominator) nominated Odette (nominee); Odette is the Virgin, so the trap fired: Bram, the nominator, is executed at once.', `read_talk words the trap: ${JSON.stringify(t.find(e => e.type === 'virgin'))}`);
+  g.day = 2;
+  const h = playerHeader(g, 4, fakeApi);
+  ok(/Record: day 1, Bram nominated Odette, the Virgin's trap fired and Bram \(the nominator\) died\./.test(h) && !/Bram was executed/.test(h), `the header's record line: ${h}`);
+  ok(!/Record:/.test(playerHeader(fakeGame('day'), 4, fakeApi)), 'no deaths by day, no record line');
+  const sys = systemFor('player', 'Fitch');
+  ok(/check every statement about the log against the log/.test(sys) && /the nominator dies, never the Virgin/.test(sys) && /A count names nobody/.test(sys), 'the prompt: check the log, the trap kills the nominator, a count names nobody');
+}
+{
+  // #88: the Poisoner, at night with the poison to pick, sees whose claimed ability still works and whose is spent
+  const poisoner = {...fakeApi, view: (x, s) => ({...fakeApi.view(x, s), role: {id: 'poisoner', name: 'Poisoner', team: 'minion', ability: 'x'},
+    told: [{night: 1, what: 'role', text: 'You are the Poisoner (minion): x'}, {night: 1, what: 'minion-info', text: 'The demon is Corwin.'}]})};
+  const g = fakeGame('night');
+  const ev = e => g.events.splice(g.events.length - 1, 0, {...e}); // before the night's phase line
+  ev({type: 'virgin', seat: 1, target: 0, day: 1, audience: 'all'}); ev({type: 'execution', seat: 1, day: 1, audience: 'all', text: 'Bram is executed.'});
+  ev(say(0, 'Bram nominated me, and my trap fired.')); ev(say(5, "I'm the Librarian; there are no outsiders."));
+  ev(say(4, 'Empath here, I got a 1.')); ev(say(2, 'I guard one player each night.')); ev(say(3, "I'm the Soldier."));
+  g.events.forEach((e, k) => {e.id = k});
+  g.seats[1].alive = false;
+  g.pending[6] = {...g.pending[0], seat: 6, role: 'poisoner', question: 'Yusuf (Poisoner): pick a player to poison tonight.', options: [0, 1, 2, 3, 4, 5, 6], count: 1};
+  const h = playerHeader(g, 6, poisoner);
+  ok(/Poison: worth it on Ines \(Monk\) and Thea \(Empath\); wasted on Odette \(Virgin, fired day 1\) and Fitch \(Librarian, first night only\)\. Never on the player your demon kills tonight\./.test(h),
+    `the Poisoner's line: live and spent abilities, not the demon: ${h}`);
+  ok(!/Corwin/.test(h.split('\n').find(l => l.startsWith('Poison:')) || 'Corwin'), 'the demon is never offered as a target');
+  ok(h.length <= HEADER_CAP, `the Poisoner's night header stays under ${HEADER_CAP} (${h.length})`);
+  ok(!/^Poison:/m.test(playerHeader(g, 0, fakeApi)), 'a good seat never sees the poison line');
+  g.night = 1; ok(!/^Poison:/m.test(playerHeader(g, 6, poisoner)), 'night 1: nobody has claimed yet, no poison line');
+  const sys = systemFor('player', 'Yusuf');
+  ok(/wasted on an ability already spent/.test(sys) && /on the player the demon kills that night/.test(sys) && /agree in a room with your team-mate/.test(sys), "the prompt: poison a live ability, never a spent one or the demon's kill, agree by day");
+}
+{
+  // a full day-2 header as game 4 had it: rooms, place, an invite, a record, five claims with marks, the talk read on day 1
+  const g = fakeGame('day');
+  const ev = e => g.events.push({id: g.events.length, ...e});
+  ev({type: 'virgin', seat: 1, target: 0, day: 1, audience: 'all'}); ev({type: 'execution', seat: 1, day: 1, audience: 'all'});
+  ev({type: 'slayer-shot', seat: 5, target: 6, day: 1, audience: 'all'});
+  g.seats[1].alive = false; g.day = 2;
+  run(g, 'read_talk', {}, 0);
+  ev(say(0, 'Bram nominated me, and my trap fired.', 2)); ev(say(5, "I'm the Librarian; there are no outsiders.", 2));
+  ev(say(4, 'Empath here, I got a 1.', 2)); ev(say(6, "I'm the Mayor.", 2)); ev(say(3, "I'm the Mayor, not Yusuf.", 2)); ev(say(4, 'Thea is lying, Odette.', 2));
+  const h = playerHeader(g, 0, fakeApi);
+  ok(h.length <= HEADER_CAP, `a full day-2 header stays under ${HEADER_CAP} (${h.length})`);
+  console.log(`    | a full day-2 header (${h.length}):`);
+  console.log(h.split('\n').map(l => '    | ' + l).join('\n'));
+}
+
+{
+  // game 4's deal (seed 31: Odette Virgin, Bram Imp, Ines Monk, Yusuf Poisoner) played by the scripted seats; each seat reads
+  // the talk before its header, as a runner does. The Monk's day 1 says she has nothing to tell yet; the Poisoner's nights
+  // carry the poison line and never offer the demon; every header stays under the cap.
+  const first = newGame({seed: 31}), sc = createScripted(31);
+  for (let n = 0; n < 500 && !(first.phase === 'day' && api.roomsOpen(first)); n++) {
+    const p = first.pending; if (p.seat === api.ST) api.answer(first, api.ST, sc(first), 'scripted'); else api.answer(first, p.seat, sc(first));
+  }
+  const monk = first.seats.findIndex(s => s.role === 'monk');
+  ok(monk >= 0 && /First day: the Monk first acts on night 2, so you have nothing to tell yet/.test(playerHeader(first, monk)), `the Monk's day 1 header: ${monk >= 0 ? playerHeader(first, monk) : 'no Monk'}`);
+  const game = newGame({seed: 31});
+  const role = id => game.seats.findIndex(s => s.role === id);
+  const POIS = role('poisoner'), IMP = role('imp');
+  const seen = {poison: [], max: 0, at: ''};
+  playScripted(game, 31, {onDecision: () => {
+    for (const s of game.seats) {
+      tool('read_talk').handler({}, {game, seat: {index: s.index, name: s.name}, api: api.forSeat(s.index), log: () => {}});
+      const h = playerHeader(game, s.index);
+      if (h.length > seen.max) {seen.max = h.length; seen.at = h}
+      const pl = h.split('\n').find(l => l.startsWith('Poison:'));
+      if (s.index === POIS && pl) seen.poison.push(pl);
+    }
+  }});
+  ok(POIS >= 0 && IMP >= 0, 'seed 31 deals a Poisoner and an Imp');
+  ok(seen.poison.length >= 1 && seen.poison.every(l => !l.includes(game.seats[IMP].name)), `the Poisoner's nights carry the poison line, never the demon: ${JSON.stringify(seen.poison)}`);
+  ok(seen.max <= HEADER_CAP, `seed 31 played out, each seat reading before its header: the longest header is ${seen.max} (cap ${HEADER_CAP})${seen.max > HEADER_CAP ? ': ' + seen.at : ''}`);
 }
 
 section('nothing under src/ imports node: or scripts/');
