@@ -33,3 +33,8 @@
 - Reads PORTRAITS/PORTRAIT_STYLE from src/data/portraits.js (placeholder briefs, marked, if missing; accept refuses placeholder-made images). Default model black-forest-labs/FLUX.1-schnell (Apache-2.0) via router fal-ai/fal-ai/flux/schnell, body {prompt,image_size,seed,output_format:png}; env ART_MODEL, ART_PROVIDER (fal-ai|hf-inference), ART_PROVIDER_ID, ART_LICENCE, HF_ROUTER_URL, ART_ROOT. UNVERIFIED against the live router (no token here): first real run is the test. Eldmoor's route (fal-ai through the router with HF_TOKEN) was proven there.
 - Output: assets/incoming/portraits/<Name>.png + .json (git-ignored); accept -> assets/portraits/<Name>.png, index.json {version:1, portraits:{Name:{file,model,provider,licence,promptHash,seed,size,sha256,date}}}, a line per name in docs/CREDITS.md.
 - Heredocs with apostrophes in Git Bash tool commands broke twice: write files with the Write tool.
+
+## Voice timing (issue #50 part 4, PR #62)
+- backend.js: setVoice({clip(name,text)}) hook; on each push, new spoken events (say incl. rooms, narration/dawn/nomination/vote/execution/no-execution/slayer-shot/virgin/win, day death; never whispers) ask for a clip, then socket {type:'clip', id:<event id>, clip:{id,ms}}; watch events carry `clip`. ms is generation time, not duration.
+- POST /play/heard {last, voice} (page origin only) -> backend.heard -> {last, at, voice}; pace holds soft/heartbeat wakes ({wake:null, holdMs<=1500}) when fresh (<90 s), voice true, >1 spoken line ahead; cap 30 s per seat; never 'now'. /tts/status adds clipsOnSay, heard. Check: npm run voicetimingcheck (fake clock via gameBackend({now})).
+- req() in relaycheck returns the parsed body plus status/headers (no .json()).
