@@ -485,6 +485,16 @@ section('the night thoughts (#111): the backend');
   await new Promise(r => setTimeout(r, 400));
   ok(clipped.some(c => c.name === 'Odette' && c.text === SECRET) && clipped.some(c => c.name === 'Bram' && /ponders/.test(c.text)), `a thought is spoken in its seat's voice (${clipped.filter(c => c.name !== 'Storyteller').map(c => c.name)})`);
   be.close();
+  // #125: a scripted backend with the think tool and no seat answering carries the thoughts scene to day 1 after the grace; a thought given in time stays
+  const be3 = gameBackend({seed: 5, scripted: true, grace: 60}); // the default player tools, think included
+  for (let n = 0; n < 200 && be3.game.phase !== 'day' && be3.game.pending?.kind !== 'thoughts'; n++) await new Promise(r => setTimeout(r, 25));
+  ok(be3.game.pending?.kind === 'thoughts', 'the scripted game reaches the thoughts scene');
+  ok((await be3.call(1, 'think', {text: 'Odette thinks in time.'})).ok, 'Odette thinks in time');
+  for (let n = 0; n < 100 && be3.game.phase !== 'day'; n++) await new Promise(r => setTimeout(r, 25));
+  ok(be3.game.phase === 'day' && be3.game.day === 1, 'with no seat answering, the scripted thoughts scene is answered empty after the grace and day 1 comes');
+  const th3 = be3.game.log.filter(e => e.type === 'thought');
+  ok(th3.length === 1 && th3[0].text === 'Odette thinks in time.', `a thought given within the grace keeps its text; the empty ones log nothing (${th3.length})`);
+  be3.close();
   // a table without a think tool has no thought to give: the backend answers the scene empty and the night runs on
   const be2 = gameBackend({seed: 1, players: tools.filter(t => t.name !== 'think'), storyteller: sttools});
   await toThoughts(be2);

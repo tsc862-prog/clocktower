@@ -209,6 +209,18 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     if (!answerer || closed) return;
     if (timer) {clearTimeout(timer); timer = null}
     const p = game.pending;
+    if (p && p.seat === 'table' && p.kind === 'thoughts') { // #125: a scripted table's thoughts scene nobody answers in time is answered empty, as a scripted seat has none
+      timer = setTimeout(() => {
+        timer = null;
+        if (closed || game.pending !== p) return;
+        let n = 0;
+        try {for (const i of p.seats) if (game.pending === p && api.pendingFor(game, i)?.mine === null) {api.think(game, i, ''); n++}} catch (e) {log(`[game] scripted thoughts failed: ${e.message}`); return}
+        log(`[game] scripted thoughts for ${n} seats`);
+        changed();
+      }, Math.max(0, grace));
+      if (timer.unref) timer.unref();
+      return;
+    }
     if (!p || p.seat !== ST) return;
     timer = setTimeout(() => {
       timer = null;
