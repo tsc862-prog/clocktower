@@ -1,0 +1,1 @@
+- [Measures per game](measures-per-game.md) — games 1 and 3 side by side, review method, recurring failure kinds, issue numbers
