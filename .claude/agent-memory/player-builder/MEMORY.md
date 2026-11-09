@@ -72,3 +72,6 @@ Useful now: vote, who_voted, read_talk.
 ## Game 4 fixes (PR #97: #87, #88, #89, #92)
 - [Game 4 fixes](game4-fixes.md): day-1 "dodge" knowledge (LEARNS, nothingYet, readsOf), Poisoner line, Record line + nominator/nominee wording, claims by ability and by role; never name the Imp in the prompt (channelcheck).
 - Header order now: who, clock, alive, [stakes], news, [Moves by day, today only], [place], [invite|rooms], [Record], [Claims], [stale notes], [WAITING], [wait], [shot], [Poison], [nudge], Useful.
+
+## Night thoughts (#111 part 3, think tool)
+- [Night thoughts](night-thoughts.md): think (act true) answers the thoughts pending and notes "Night N, my thought: ..."; the thinker's my_notes is the one allowed home of its thought (channelcheck 3b exempts it).

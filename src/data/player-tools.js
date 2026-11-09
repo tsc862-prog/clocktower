@@ -1,7 +1,7 @@
 // The tools a player agent uses to play one seat. Shared by the relay's MCP server (scripts/relay-mcp.mjs), the local
 // tool loop (scripts/local-agent.mjs) and the docs. Each tool:
 //   {name, desc, act, args: {argName: {type: 'string'|'integer'|'number'|'array' (of strings), desc, optional?, enum?}}, handler}
-// act: true for a tool that spends the turn (speak, whisper, nominate, vote, a night choice, slay, pass), false for a read
+// act: true for a tool that spends the turn (speak, whisper, nominate, vote, a night choice, slay, think, pass), false for a read
 // and for a move between places (go, invite, leave: moves are free, #28).
 // handler(args, ctx): ctx = {game, seat: {index, name}, api, log} (the slice 3 contract). A handler reads and acts only
 // through the api's seat-scoped functions and copies out only the fields a player may see, so a token, another seat's
@@ -325,6 +325,23 @@ function slay(args, ctx) {
   return {ok: true, shot: name, public: seen.map(e => e.text).filter(Boolean),
     result: alive ? `${name} is still alive; read_talk shows anything that follows.` : `${name} dies.`};
 }
+// The night's thought before dawn (#111): answers the thoughts scene and keeps the thought in the seat's own notes, its only
+// memory of it (the thought itself reaches nobody at the table, the thinker included). Empty text is a thought kept to oneself.
+function think(args, ctx) {
+  const v = viewOf(ctx), p = pendingOf(ctx);
+  if (!p || p.kind !== 'thoughts') return refuse(ctx, v.phase === 'day'
+    ? 'think is for the end of the night, when you are asked for your thought; by day, speak to the table or write a note.'
+    : 'Nobody has asked for your thought yet: it comes as the night ends. Use note to remember something now.');
+  if (p.mine != null) return refuse(ctx, 'You have given your thought for tonight already.');
+  const text = stripOwnName(args.text, ctx.seat?.name || v.name);
+  const r = ctx.api.think(ctx.game, me(ctx), text) || {};
+  const kept = String(r.thought ?? text).trim();
+  if (!kept) return {ok: true, thought: '', note: 'You keep your thoughts to yourself tonight.'};
+  let noted = true;
+  try {ctx.api.note(ctx.game, me(ctx), `Night ${v.night}, my thought: ${kept}`)} catch {noted = false}
+  return {ok: true, thought: kept, ...(r.cut ? {cut: `cut to ${r.cut} characters`} : {}),
+    note: noted ? 'Kept in your notes. Nobody at the table hears it.' : 'Nobody at the table hears it.'};
+}
 function pass(args, ctx) {
   ctx.api.pass(ctx.game, me(ctx));
   return {ok: true, passed: true};
@@ -365,6 +382,8 @@ export const PLAYER_TOOLS = [
     {pick: {type: 'array', desc: 'The name or names you choose, as the question asks.'}}, nightChoice),
   T('slay', true, 'The Slayer\'s shot, by day, at any moment, once a game: shoot a player in front of everyone (the demon dies of it). "hold" keeps it for later.',
     {target: {type: 'string', desc: 'The player you shoot, or "hold" to keep the shot.'}}, slay),
+  T('think', true, 'Your thought as the night ends, for yourself: one to three sentences, first person, what you did or learned tonight and what it means for tomorrow. Nobody at the table hears it.',
+    {text: {type: 'string', desc: 'Your thought, in the first person, at most 400 characters.'}}, think),
   T('pass', true, 'Do nothing this round: stay quiet now, or decline to nominate.', {}, pass),
 ];
 export const TOOL_NAMES = PLAYER_TOOLS.map(t => t.name);

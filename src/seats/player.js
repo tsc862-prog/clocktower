@@ -150,6 +150,11 @@ export function askedOf(game, view, me, p) {
     return {kind: 'vote', nominee, nominator, tool: 'vote',
       text: `Vote on ${nominator}'s nomination of ${nominee}: yes to execute, or no.${ghost}`};
   }
+  if (p.kind === 'thoughts') { // the night's thought before dawn (#111): once answered, nothing waits
+    if (p.mine != null) return null;
+    const tonight = String(p.tonight || '').trim();
+    return {kind: 'thoughts', tool: 'think', tonight, text: `${String(p.question || 'The night is ending. In a sentence or two, what are you thinking?').trim()}${tonight ? ` Tonight: ${tonight}` : ''}`};
+  }
   if (p.kind === 'nomination') {
     const targets = nominationTargets(view, me, p);
     if (!targets.length) return null;
@@ -219,6 +224,7 @@ function baseTools(v, asked, news, waiting) {
   // the dead are never in toSpeak: pass means nothing to them; they may still speak and whisper
   if (v.alive === false && v.phase === 'day' && asked?.kind !== 'vote' && asked?.tool !== 'night_choice') return news?.total ? ['read_talk', 'speak', 'whisper'] : ['speak', 'whisper', 'read_talk'];
   if (asked?.tool === 'night_choice') return ['night_choice', 'what_is_asked', 'my_role'];
+  if (asked?.kind === 'thoughts') return ['think', 'my_role', 'my_notes', 'read_talk'];
   if (asked?.kind === 'vote' && !asked.done) return ['vote', 'who_voted', 'read_talk'];
   if (asked?.kind === 'nomination') return ['nominate', 'pass', 'read_talk'];
   if (v.phase === 'ended') return ['look', 'read_talk'];
@@ -615,6 +621,22 @@ export function inviteOf(game, a, v, me, asked, ledger, notesList) {
   if (!pick) return null;
   const rn = room.name || placeNameOf(v, room.id);
   return {...pick, room: room.id, text: `Take ${pick.name} to ${rn} to talk in private (${pick.why}): invite ${pick.name}, room ${bare(rn)}. Free; rooms close when nominations open.`};
+}
+
+// ---- the forced answer: an everyone-at-once scene the seat is slow on ----
+// When the game waits on every seat at once (a vote, the night's thoughts, #111) and this seat's turn has not answered, a runner
+// may ask for the answer in one structured call: {tool, ask, schema}, the schema's properties being the tool's own arguments
+// (vote {yes}, think {text}). The ask carries only what the seat's own header says. Null when no such scene waits on the seat.
+export const THOUGHT_ASK = 'Your thought as the night ends, one sentence.';
+export function forcedAsk(game, seat, api) {
+  const a = apiOr(api), me = seatIndex(seat), v = a.view(game, me);
+  const asked = askedOf(game, v, me, a.pendingFor(game, me));
+  if (!asked || asked.done) return null;
+  const obj = props => ({type: 'object', properties: props, required: Object.keys(props), additionalProperties: false});
+  if (asked.kind === 'vote') return {tool: 'vote', ask: `${asked.text} Answer "yes" or "no".`, schema: obj({yes: {type: 'string', enum: ['yes', 'no']}})};
+  if (asked.kind === 'thoughts') return {tool: 'think', ask: `${THOUGHT_ASK}${asked.tonight ? ` Tonight: ${asked.tonight}` : ''} First person, for yourself alone.`,
+    schema: obj({text: {type: 'string', maxLength: 400}})};
+  return null;
 }
 
 const TEAM_SIDE = {townsfolk: 'good', outsider: 'good', minion: 'evil', demon: 'evil'};
