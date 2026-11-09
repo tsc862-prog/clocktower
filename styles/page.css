@@ -219,3 +219,26 @@ img.ghost-coin.spent { opacity: .4; filter: grayscale(1); }
 .line.say.in-room .place { font: 12px var(--sans); color: #a99bd0; letter-spacing: .02em; }
 .line.move { font: 12px var(--sans); color: var(--dim); padding: .1rem 0 .1rem 1.2rem; }
 .line.move::before { content: '\2192  '; color: var(--faint); }
+
+/* the day's rooms (#28) while they are open: a tag on a seat away from the Square, the rooms as discs off the table's edge, one line
+   of who is where (src/ui/square.js, roomDisc in src/ui/tokens.js) */
+:root { --room-rim: #8a7a5c; --room-face: #2a2433; --room-person: #3a3446; --room-ink: #e8e2d4; --room-tag: #d8c27a; --room-tag-ink: #14121a; }
+.seat.away .life { padding-top: 10px; } .seat.away .seat-marker { opacity: .62; } .seat.away .seat-marker .sm-rim { stroke: var(--room-rim); stroke-dasharray: 6 5; stroke-width: 3; }
+.away-tag { position: absolute; left: 50%; bottom: -9px; transform: translateX(-50%); white-space: nowrap; font: 600 11px var(--sans);
+  padding: 0 .4rem; border-radius: 999px; background: var(--room-tag); color: var(--room-tag-ink); box-shadow: 0 1px 3px #0008; }
+.rooms-strip[hidden] { display: none; }
+.rooms-strip { margin: -.6rem auto 0; text-align: center; }
+.rooms { display: flex; justify-content: center; gap: 2.2rem; }
+.room { display: flex; flex-direction: column; align-items: center; width: 7rem; }
+.room-disc { width: 88px; height: 88px; }
+.room-disc .rd-rim { fill: var(--room-face); stroke: var(--room-rim); stroke-width: 3; }
+.room-disc.is-empty .rd-rim { stroke-dasharray: 7 6; opacity: .7; }
+.room-disc .rd-face { fill: var(--room-person); } .room-disc .rd-ring { fill: none; stroke: var(--room-rim); stroke-width: 1.5; }
+.room-disc .rd-initial { fill: var(--room-ink); font-family: var(--serif); }
+.room-name { font: 600 13px var(--sans); color: var(--room-tag); margin-top: .15rem; } .room.empty .room-name { color: var(--dim); }
+.room-count { font: 11px var(--sans); color: var(--faint); }
+.rooms-line { margin: .5rem auto .2rem; font-size: 1rem; color: #cbb89a; max-width: 46rem; }
+@media (max-width: 600px) {
+  .rooms { gap: .6rem; } .room { width: 5.2rem; } .room-disc { width: 48px; height: 48px; } .room-name { font-size: 11px; }
+  .rooms-line { font-size: .85rem; } .away-tag { font-size: 9px; bottom: -7px; } .seat.away .st { padding-top: 7px; }
+}

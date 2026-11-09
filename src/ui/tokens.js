@@ -6,6 +6,7 @@
 //   reminderToken(t)     a small disc beside a seat in the grimoire (poisoned, drunk, protected, master, red herring, dead, ...)
 //   ghostCoin(unspent)   the ghost vote, a small coin
 //   handMarker(state)    a hand in a vote: 'up' raised, 'down' kept down, 'none' still to cast
+//   roomDisc(room, who)  a room off the table's edge, its occupants inside as portraits or initials (--room-* colours)
 // Colours live in styles/page.css as custom properties (--rim-townsfolk, --rim-outsider, --rim-minion, --rim-demon, --tk-face,
 // --tk-ink, --tk-shroud, ...): the icons below draw with two classes only, `a` (the ink) and `b` (the accent: the rim's colour), and
 // `s`/`sb` for strokes in the same two colours. Every icon sits in a 100 x 100 box, inside the face (centre 50,44, room down to y 62;
@@ -55,9 +56,18 @@ export const REMINDER_ICONS = {
   'is-the-demon': '<path class="a" d="M30 22l12 18-9 5zM70 22L58 40l9 5z"/><circle class="a" cx="50" cy="52" r="12"/>',
 };
 
+// Where the occupants sit inside a room's disc, by how many are there (a room holds four at most): [cx, cy, r] per place.
+export const ROOM_SLOTS = {
+  1: [[50, 50, 22]],
+  2: [[33, 50, 15], [67, 50, 15]],
+  3: [[50, 31, 14], [33, 61, 14], [67, 61, 14]],
+  4: [[34, 34, 13], [66, 34, 13], [34, 66, 13], [66, 66, 13]],
+};
+const slotClips = Object.entries(ROOM_SLOTS).map(([n, l]) => l.map(([x, y, r], i) => `<clipPath id="ct-room-${n}-${i}"><circle cx="${x}" cy="${y}" r="${r}"/></clipPath>`).join('')).join('');
+
 // Arcs the names run along, defined once per page (installDefs) and referenced by every token.
 const DEFS = '<defs><path id="ct-arc-low" d="M18 50a32 32 0 0 0 64 0"/><path id="ct-arc-seat" d="M15 50a35 35 0 1 1 70 0a35 35 0 1 1 -70 0"/>' +
-  '<clipPath id="ct-face-clip"><circle cx="50" cy="50" r="30"/></clipPath></defs>';
+  '<clipPath id="ct-face-clip"><circle cx="50" cy="50" r="30"/></clipPath>' + slotClips + '</defs>';
 export function installDefs(doc = globalThis.document) {
   if (!doc || !doc.body || doc.getElementById('ct-defs')) return;
   const box = doc.createElement('div');
@@ -89,7 +99,23 @@ export function seatMarker(name, {dead = false, shroud = null, portrait = null} 
     (dead ? shroud ? `<image class="shroud shroud-art" href="${esc(shroud)}" x="26" y="18" width="48" height="56" preserveAspectRatio="xMidYMid meet"/>` : '<path class="shroud" d="M38 25h24v40L50 56 38 65z"/>' : '') + '</svg>';
 }
 
-// reminderToken('poisoned', {title: 'poisoned · by Odette', off}) -> a small disc
+// roomDisc({id, name, size}, [{name, portrait}]) -> a room off the table's edge: a disc with its occupants inside, each a small
+// circle with their portrait or their initial; an empty room is a plain disc with a dashed rim. A room holds four at most; the disc
+// shows the first four.
+export function roomDisc(room, people = []) {
+  const shown = people.slice(0, 4), slots = ROOM_SLOTS[shown.length] || [];
+  const who = shown.map((p, i) => {
+    const [x, y, r] = slots[i], n = String(p.name || '?');
+    return `<g class="rd-person"><title>${esc(n)}</title><circle class="rd-face" cx="${x}" cy="${y}" r="${r}"/>` +
+      `<text class="rd-initial" x="${x}" y="${(y + r * 0.42).toFixed(1)}" text-anchor="middle" style="font-size:${(r * 1.15).toFixed(1)}px">${esc(n.slice(0, 1))}</text>` +
+      (p.portrait ? `<image class="rd-portrait" href="${esc(p.portrait)}" x="${x - r}" y="${y - r}" width="${2 * r}" height="${2 * r}" clip-path="url(#ct-room-${shown.length}-${i})" preserveAspectRatio="xMidYMid slice"/>` : '') +
+      `<circle class="rd-ring" cx="${x}" cy="${y}" r="${r}"/></g>`;
+  }).join('');
+  return `<svg class="token room-disc${shown.length ? '' : ' is-empty'}" viewBox="0 0 100 100" data-room="${esc(room.id)}" role="img" aria-label="${esc(room.name)}: ${shown.length ? esc(shown.map(p => p.name).join(', ')) : 'empty'}">` +
+    `<circle class="rd-rim" cx="50" cy="50" r="47"/>${who}</svg>`;
+}
+
+// reminderToken('poisoned',{title: 'poisoned · by Odette', off}) -> a small disc
 export function reminderToken(token, {title = '', off = false, label = ''} = {}) {
   const icon = REMINDER_ICONS[token] || `<text class="initial" x="50" y="56" text-anchor="middle">${esc(String(token).slice(0, 1).toUpperCase())}</text>`;
   return `<svg class="token reminder-token rem-${esc(token)}${off ? ' off' : ''}" viewBox="0 0 100 100" role="img" aria-label="${esc(label || token)}">` +
