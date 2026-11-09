@@ -1,7 +1,7 @@
 # player-builder memory
 
 ## The tool table (slice 3, src/data/player-tools.js)
-- 14 tools. Reads (act false): look, my_role, read_talk(since?), my_whispers, my_notes, what_is_asked, who_voted, note(text). Acts (act true): speak(text), whisper(to, text), nominate(target), vote(yes: "yes"|"no" as a string), night_choice(pick: array of names), pass.
+- 15 tools. Reads (act false): look, my_role, read_talk(since?), my_whispers, my_notes, what_is_asked, who_voted, note(text). Acts (act true): speak(text), whisper(to, text), nominate(target), vote(yes: "yes"|"no" as a string), night_choice(pick: array of names), slay(target | "hold"), pass.
 - `note` is act false on purpose: writing a note never spends the turn.
 - Arg types the relay understands: string, integer, number, array (of strings), object. No boolean: vote takes "yes"/"no" and the handler also reads true/false/y/n.
 - Every handler is `guarded`: no ctx.api/ctx.game (the relay's stub backend) -> look answers {ok, phase: 'no game yet', seats: []} (relaycheck depends on it), others say "No game yet". Any throw -> {ok: false, error: message + " Open to you now: ..."}.
@@ -36,3 +36,12 @@ Useful now: vote, who_voted, read_talk.
 - A seat that passed on nominating has no nomination pending but may still nominate: nominate calls the api anyway when nominations are open.
 - view.clock.toSpeak (living only): the header says whether my turn this round is still mine.
 - Integration case in playertoolcheck: seed 7, rounds 1, to day 3 through the tools (say, repeat refused, whisper, passes, 2 nominations, 14 votes, 5 night choices).
+
+## The Slayer's standing shot (#37, after rules PR #45)
+- The api: dayActionFor(game, seat) non-null while the shot may fire (day, talk begun, the table's nomination pending: not during a vote); dayAction(game, seat, idx|null) fires or keeps ({kept:true}); pendingFor shows it as choose {standing:true} only after the seat's round turn.
+- shotOf(game, api, v, me) in player.js is the one source. askedOf returns null for a standing pending (never WAITING ON YOU). Header line "Your shot is unspent: slay <name> any time today, or hold it." after the wait text; usefulTools(..., shot) = the list without the shot + 'slay'. waitingOf judges the wait as if no shot (the api's canAct is true with one) and says "nothing else to do".
+- what_is_asked: asked "standing" (tool slay, options + "hold") when nothing else waits, else a standing field. night_choice with one name and no real choose falls back to slay ("nobody" holds).
+- slay's answer is public only: the event texts plus "X dies." or "X is still alive" (same text whether or not a Storyteller ruling on the target is still pending, so a Recluse is not hinted).
+- A one-name night_choice by day now fires a shot: channelcheck's hostile probes use two names. whatsNew counts slayer-shot as "shots", not deaths (virgin and the shot used to double-count with their death/execution).
+- Escaping gotcha again: \' inside a node heredoc template literal lost its backslash; edit quote-bearing JS strings with the Edit tool.
+
