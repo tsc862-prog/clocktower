@@ -108,6 +108,11 @@ const loopback = a => /^(127\.|::1$|::ffff:127\.)/.test(String(a || ''));
 const OWN_END = /^(?:\[[\d:]+\] )?\[(?:agent|storyteller)\] stopped after \d+ turns[^()]*\(([^)]{1,80})\)/, BUDGET_WHY = /^((?:session|game) )?budget reached/;
 const stripAnsi = s => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
 const num = v => v === undefined || v === null || v === '' ? null : Number(v);
+export const PACE_LIMITS = {minGap: [5, 600], heartbeat: [10, 1440]}; // the pace knob: real seconds between turns, game minutes of quiet
+// A pace value from a body: null when absent, else {v} or {error}.
+const paceNum = (b, k) => {if (b[k] === undefined || b[k] === null || b[k] === '') return {v: null};
+  const v = Number(b[k]), [lo, hi] = PACE_LIMITS[k];
+  return Number.isFinite(v) && v >= lo && v <= hi ? {v} : {error: `${k} must be from ${lo} to ${hi}${k === 'minGap' ? ' seconds' : ' game minutes'}`}};
 export const SESSION_BUDGET_MAX = 500; // dollars: the most a session budget may be set to
 
 // Check a start request against the kinds, providers and caps. players: the game's player seats. Returns {req} or {error, code}.
@@ -123,6 +128,7 @@ export function checkStart(b, players, {running = [], max = MAX_RUNNERS, budgets
   const mt = num(b.maxTurns), bu = num(b.budget);
   if (mt !== null && !(Number.isInteger(mt) && mt >= 1 && mt <= K.caps.maxTurns)) return {error: `maxTurns must be a whole number from 1 to ${K.caps.maxTurns}`, code: 400};
   if (bu !== null && !(Number.isFinite(bu) && bu >= .01 && bu <= K.caps.budget)) return {error: `budget must be from $0.01 to $${K.caps.budget.toFixed(2)}`, code: 400};
+  for (const k of ['minGap', 'heartbeat']) {const p = paceNum(b, k); if (p.error) return {error: p.error, code: 400}; if (p.v !== null) req[k] = p.v}
   if (b.fresh === true) req.fresh = true; // this start only: never saved to the active list, so a resume does not wipe a session
   req.maxTurns = mt; // null: until stopped (a paid mind until its budget is spent)
   req.budget = local ? null : bu ?? (budgets && budgets[kind] != null ? budgets[kind] : K.defaults.budget); // a local model costs nothing
@@ -151,6 +157,8 @@ export function runnerArgs(req, base) {
   if (req.provider) a.push('--provider', req.provider);
   if (req.model) a.push('--model', req.model);
   if (req.fresh) a.push('--new');
+  if (req.minGap != null) a.push('--min-gap', String(req.minGap));
+  if (req.heartbeat != null) a.push('--heartbeat', String(req.heartbeat));
   return a;
 }
 
@@ -232,6 +240,12 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
     if (!play.claimed(seat)) return 'starting';
     return play.linkOf(seat) === 'connected' ? 'live' : 'waiting';
   }
+  // the pace a runner plays at: what it was started with, then what a live change set (null for each: its own default)
+  const paceOf = r => ({minGap: r.paceLive && r.paceLive.minGap != null ? r.paceLive.minGap : r.minGap ?? null, heartbeat: r.paceLive && r.paceLive.heartbeat != null ? r.paceLive.heartbeat : r.heartbeat ?? null});
+  // The runner's pace poll (relay-mcp onPace): a live change comes back as {minGap?, heartbeat?} for the runner to adopt.
+  const paceFor = seat => {const r = running().find(x => (RUNNER_KINDS[x.kind].seat || x.player) === seat); return r && r.paceLive ? r.paceLive : null};
+  const paceSaved = r => {const p = paceOf(r); return {...(p.minGap != null ? {minGap: p.minGap} : {}), ...(p.heartbeat != null ? {heartbeat: p.heartbeat} : {})}};
+  if (play.onPace) play.onPace(paceFor);
   function view(r) {
     const seat = RUNNER_KINDS[r.kind].seat || r.player, mind = play.runnerOf(seat);
     return {key: r.key, kind: r.kind, player: r.player ?? null, name: r.name, state: stateOf(r), pid: r.pid,
@@ -241,7 +255,7 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
       ...(r.budgetOut ? {budgetSpent: true, spentWhy: r.budgetOut.why} : {}),
       maxTurns: r.maxTurns ?? null, turnCap: r.maxTurns != null ? 'up to ' + r.maxTurns + ' turns' : 'until stopped',
       ...(((mind && mind.provider) || r.provider) === 'ollama' ? {numCtx: numCtxFrom(env)} : {}),
-      ...ctxView(r), ...turnRate(r), pace: r.pace || null, budget: r.budget, lastTurn: r.lastTurn || null, lines: r.lines.slice(-8), error: r.error || null, exit: r.exit ?? null,
+      ...ctxView(r), ...turnRate(r), pace: r.pace || null, paceNow: paceOf(r), budget: r.budget, lastTurn: r.lastTurn || null, lines: r.lines.slice(-8), error: r.error || null, exit: r.exit ?? null,
       log: relative(ROOT, r.logFile).replace(/\\/g, '/')};
   }
   // the session's size in thousands of tokens, from the `ctx 83k` of its turn lines
@@ -256,7 +270,7 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
   // (--resume-runners). A stop from the page, a crash or a runner that finished leaves the list; a host shutdown does not.
   function saveActive() {
     if (closing || !enabled) return;
-    const rs = running().filter(r => !r.stopping && !r.budgetOut && !r.fresh).map(r => ({kind: r.kind, player: r.player ?? null, name: r.name, provider: r.provider || null, model: r.model || null, maxTurns: r.maxTurns ?? null, budget: r.budget ?? null}));
+    const rs = running().filter(r => !r.stopping && !r.budgetOut && !r.fresh).map(r => ({kind: r.kind, player: r.player ?? null, name: r.name, provider: r.provider || null, model: r.model || null, maxTurns: r.maxTurns ?? null, budget: r.budget ?? null, ...paceSaved(r)}));
     try {mkdirSync(dir, {recursive: true}); const tmp = activeFile + '.tmp'; writeFileSync(tmp, JSON.stringify({saved: new Date(now()).toISOString(), runners: rs, ...(spentOut.size ? {spent: [...spentOut.values()]} : {})}, null, 1)); renameSync(tmp, activeFile)} catch {}
   }
 
@@ -337,6 +351,8 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
       game = gameShares(v, game.share); log(`[runners] game budget $${v.toFixed(2)} (the Storyteller's share $${game.pools.storyteller.toFixed(2)} set apart)`)}
     let out = {session: sessionView(), game: gameView()};
     if (b.key != null) {const r = table.get(String(b.key)); if (!r || r.done) return {error: 'no such live runner', code: 404};
+      const pm = paceNum(b, 'minGap'), ph = paceNum(b, 'heartbeat'); if (pm.error || ph.error) return {error: pm.error || ph.error, code: 400};
+      if (pm.v !== null || ph.v !== null) {r.paceLive = {...r.paceLive, ...(pm.v !== null ? {minGap: pm.v} : {}), ...(ph.v !== null ? {heartbeat: ph.v} : {})}; log(`[runners] ${r.key} pace: at least ${paceOf(r).minGap ?? 'default'} s apart, heartbeat ${paceOf(r).heartbeat ?? 'default'} min (adopted at its next poll)`)}
       const K = RUNNER_KINDS[r.kind], mt = num(b.maxTurns), bu = num(b.budget); let later = false;
       if ('maxTurns' in b) {if (mt !== null && !(Number.isInteger(mt) && mt >= 1 && mt <= K.caps.maxTurns)) return {error: `maxTurns must be a whole number from 1 to ${K.caps.maxTurns}`, code: 400};
         const own = r.maxTurns ?? Infinity; r.capTurns = mt; if (mt == null ? own !== Infinity : mt > own) later = true}
@@ -432,7 +448,7 @@ export function attachRunners(server, {play, enabled = false, origin = 'http://l
       if (x.kind === 'player') {const h = players().find(y => y.id === x.player);
         if (!h) {skip('not at the table'); continue}
         if (x.name && h.name !== x.name) {skip(`seat #${x.player} is now ${h.name} (a new game?)`); continue}}
-      const r = startRequest({kind: x.kind, ...(x.kind === 'player' ? {player: x.player} : {}), provider: x.provider || undefined, model: x.model || undefined, maxTurns: x.maxTurns ?? undefined, budget: x.budget ?? undefined}, 'resume');
+      const r = startRequest({kind: x.kind, ...(x.kind === 'player' ? {player: x.player} : {}), provider: x.provider || undefined, model: x.model || undefined, maxTurns: x.maxTurns ?? undefined, budget: x.budget ?? undefined, minGap: x.minGap ?? undefined, heartbeat: x.heartbeat ?? undefined}, 'resume');
       if (r.code === 200) {out.resumed.push(r.obj.runner.key); log(`[runners] resumed ${what}`)} else skip(r.obj.error || 'refused');
     }
     saveActive();

@@ -65,14 +65,20 @@ export const localWorked = r => r && r.looped && !r.tools ? null : r && r.gameDo
 // makePacer({base, player | role: 'storyteller', runner, heartbeat, minGap, log, stopped}) -> {next(), turnDone(), state}
 //   next(): waits for the next turn. -> {wake:'now'|'soft'|'heartbeat', why, table, clock} or {dead} / {gone, why} / {stopped}
 //   turnDone(): call when a turn ends (the gap and the heartbeat count from here).
-export function makePacer({base, player, role = undefined, runner, heartbeat = PACE_DEFAULTS.heartbeat, minGap = PACE_DEFAULTS.minGap, pollMs = POLL_REAL_MS, log = () => {}, stopped = () => false, fetchImpl = fetch}) {
+export function makePacer({base, player, role = undefined, runner, heartbeat: heartbeat0 = PACE_DEFAULTS.heartbeat, minGap: minGap0 = PACE_DEFAULTS.minGap, pollMs = POLL_REAL_MS, log = () => {}, stopped = () => false, fetchImpl = fetch}) {
+  let heartbeat = heartbeat0, minGap = minGap0; // the supervisor may change both live: the pace answer's `pace` overrides
   let lastEnd = null, since = null, nows = [], legacy = false, said = false;
   const st = {waiting: false, wake: null};
   async function pace(wake, realMs) {
     try {
-      const r = await fetchImpl(base + '/play/pace', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({player, role, runner, since, minutes: heartbeat, wake, realMs}), signal: AbortSignal.timeout(realMs + 20000)});
+      const r = await fetchImpl(base + '/play/pace', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({player, role, runner, since, minutes: heartbeat, minGap, heartbeat, wake, realMs}), signal: AbortSignal.timeout(realMs + 20000)});
       if (r.status === 404) return {unsupported: true};
       const j = await r.json().catch(() => ({ok: false, error: 'bad answer'}));
+      if (j && j.pace && typeof j.pace === 'object') {
+        const g = Number(j.pace.minGap), h = Number(j.pace.heartbeat);
+        if (Number.isFinite(g) && g >= 0 && g !== minGap) {log(`[pace] min gap now ${g} s`); minGap = g}
+        if (Number.isFinite(h) && h > 0 && h !== heartbeat) {log(`[pace] heartbeat now ${h} game min`); heartbeat = h}
+      }
       if (j && j.ok === false && /unknown tool pace|not found/i.test(String(j.error || ''))) return {unsupported: true};
       return j;
     } catch (e) {return {ok: false, offline: true, error: e.message}}

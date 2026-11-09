@@ -290,7 +290,7 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
         if (be.pace) {try {r = await be.pace(STORYTELLER_KEY, args)} catch (e) {r = {ok: false, error: String(e.message || e)}}}
         else if (args.brief) r = {ok: true, brief: {phase: 'no game yet', seat: 'Storyteller'}};
         else {await new Promise(res => setTimeout(res, args.realMs)); r = args.wake === 'all' ? {ok: true, wake: 'heartbeat', why: 'no game yet: a quiet beat'} : {ok: true, wake: null, why: 'no game yet'}}
-        return send(200, r && typeof r === 'object' ? r : {ok: false, error: 'no answer'})}
+        return send(200, withPace(r, args, STORYTELLER_KEY))}
       if ((path === '/play/call' || path === '/play/narrate' || path === '/play/pace') && (stAsked || holdsStoryteller(rid)))
         return send(403, {ok: false, error: 'The Storyteller seat has no player tools: it speaks to the players only in the game.'});
       if ((path === '/play/claim' || path === '/play/release') && stAsked) {
@@ -316,7 +316,7 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
         const holder = heldBy(player, rid); if (holder) return send(409, refusedSeat(player, holder));
         const a = b.args && typeof b.args === 'object' ? b.args : b, args = a.brief ? {brief: true} : {realMs: Math.min(PACE_MAX_MS, Math.max(0, Number(a.realMs) || 10000)), wake: a.wake === 'now' || a.wake === 'must' ? a.wake : 'all'};
         let r; try {r = await be.call(player, 'pace', args)} catch (e) {r = {ok: false, error: String(e.message || e)}}
-        return send(200, r && typeof r === 'object' ? r : {ok: false, error: 'no answer'})}
+        return send(200, withPace(r, args, player))}
       if (path === '/play/narrate') {
         const holder = heldBy(player, rid); if (holder) return send(409, refusedSeat(player, holder));
         if (player != null && typeof b.text === 'string' && b.text.trim()) {be.narrate(player, b.text.trim()); vlog({ts: new Date().toISOString(), player, narrate: b.text.slice(0, 600)})}
@@ -341,7 +341,10 @@ export function attachPlay(server, {backend = null, origin = 'http://localhost:5
   // a runner process that is gone (a stopped child cannot always release on its way out).
   const claimed = id => !!claimOf(id);
   const holderOf = id => {const c = claimOf(id); return c ? c.runner : null};
+  // the supervisor's live pace change (scripts/runners.mjs) rides on the pace answer: {pace: {minGap?, heartbeat?}}
+  let paceFor = null;
+  const withPace = (r, args, seat) => {if (!r || typeof r !== 'object') return {ok: false, error: 'no answer'}; const p = !args.brief && paceFor ? paceFor(seat) : null; return p ? {...r, pace: p} : r};
   const dropRunner = prefix => {let n = 0; for (const [id, c] of claims) if (c.runner === prefix || c.runner.startsWith(prefix + ':')) {claims.delete(id); act.delete(id); n++}
     if (n) {log(`[play] runner ${prefix} gone: ${n} claim(s) dropped`); pushLinks()} return n};
-  return {backend: be, stats, call, storytellerCall, storytellerInfo, linkOf, links, runnerOf, readyOf, claimed, holderOf, dropRunner, behavior, onTurn: f => {turnHooks.add(f); return () => turnHooks.delete(f)}};
+  return {backend: be, stats, call, storytellerCall, storytellerInfo, linkOf, links, runnerOf, readyOf, claimed, holderOf, dropRunner, behavior, onPace: f => {paceFor = f}, onTurn: f => {turnHooks.add(f); return () => turnHooks.delete(f)}};
 }
