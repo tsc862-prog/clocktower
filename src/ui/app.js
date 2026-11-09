@@ -35,7 +35,7 @@ function storedPace() {try {const v = globalThis.localStorage && localStorage.ge
 export const VIEW_KEY = 'clocktower.view', ROLES_KEY = 'clocktower.roles', VIEWS = ['people', 'table'], DRAWERS = ['talk', 'grimoire', 'rulings', 'agents'];
 const stored = k => {try {return globalThis.localStorage ? localStorage.getItem(k) : null} catch {return null}};
 const store = (k, v) => {try {if (globalThis.localStorage) localStorage.setItem(k, v)} catch {}};
-const FRAME_NAMES = {talk: 'day 1, talking', vote: 'day 1, a vote', night: 'a night', dawn: 'dawn', end: 'the end'};
+const FRAME_NAMES = {talk: 'day 1, talking', vote: 'day 1, a vote', night: 'a night', dawn: 'dawn', rooms: 'day 2, in the rooms', end: 'the end'};
 
 export function createApp({client, view = null, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end', artLoad = imageLoad, pageFetch = undefined, audio = undefined, voiceFile = undefined, voiceTick = undefined, clipWait = undefined}) {
   const $ = id => document.getElementById(id);
@@ -229,7 +229,7 @@ export function createApp({client, view = null, fixture = null, runnersFixture =
     }
   }
   // the recorded moments: the recording's own, and a night and a dawn cut from its end
-  const moments = fixture ? (() => {const m = {...fixture.frames, ...fixtureMoments(fixture.frames.end)}, order = ['talk', 'vote', 'night', 'dawn', 'end'];
+  const moments = fixture ? (() => {const m = {...fixture.frames, ...fixtureMoments(fixture.frames.end)}, order = ['talk', 'vote', 'night', 'dawn', 'rooms', 'end'];
     return Object.fromEntries([...order.filter(k => m[k]), ...Object.keys(m).filter(k => !order.includes(k))].map(k => [k, m[k]]))})() : null;
   function showFrame(name) {
     if (!fixture) return;

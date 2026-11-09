@@ -3,6 +3,7 @@
 // page would read at three moments to src/ui/fixtures/game.json:
 //   talk     day 1, mid-round: talk and a whisper, no vote yet
 //   vote     the first vote of the game with some hands cast and some still to come
+//   rooms    day 2, the evil pair gone to the Snug and one seat alone in the Vestry, a line said in a room (#80)
 //   end      the game over, every event
 // Each frame is watchView(game): the body the page asks of the backend as GET /play/watch (not served yet; see the slice 6 PR).
 // The page builds every panel from these frames until the route exists, and npm run uismoke checks the panels against them.
@@ -11,6 +12,7 @@ import {writeFileSync, mkdirSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import * as api from '../src/game/api.js';
+import SCRIPT, {EVIL} from '../src/data/script.js';
 import {newGame} from '../src/game/state.js';
 import {createScripted} from '../src/game/scripted.js';
 import {createRng} from '../src/game/rng.js';
@@ -26,12 +28,12 @@ const ST = api.ST, copy = v => v == null ? v : JSON.parse(JSON.stringify(v));
 // table's sentence for it as `text`, the day clock, the open ballot and the coming night's waking order.
 export function watchView(game, since = -1) {
   const g = api.grimoire(game), c = game.clock;
-  const st = api.events(game, ST, since), whispers = game.log.filter(e => e.type === 'whisper' && e.id > since).map(({n, ...e}) => copy(e));
+  const st = api.events(game, ST, since), whispers = game.log.filter(e => (e.type === 'whisper' || e.type === 'say' && e.room != null) && e.id > since).map(({n, ...e}) => copy(e));
   const events = [...st, ...whispers].sort((a, b) => a.id - b.id);
   return {ok: true, seed: game.config.seed, rounds: game.config.rounds, phase: g.phase, night: game.night, day: game.day,
     clock: {day: c.day, round: c.round, roundsBeforeNominations: c.roundsBeforeNominations, nominationsOpen: c.nominationsOpen, spoke: [...c.spoke], passedNominating: [...c.passedNominating]},
     pending: copy(game.pending), ballot: copy(game.ballot), grimoire: g, nightOrder: api.nightOrder(game), rulings: api.rulings(game),
-    winner: copy(game.winner), last: game.log.length ? game.log.at(-1).id : -1, events};
+    winner: copy(game.winner), last: game.log.length ? game.log.at(-1).id : -1, events, places: (({square, rooms, open}) => ({square, rooms, open}))(api.where(game, ST))};
 }
 
 const LINES = [
@@ -77,13 +79,21 @@ export function record(seed = FIXTURE_SEED, rounds = 2) {
     if (game.phase === 'day' && !game.clock.nominationsOpen) {
       const c = game.clock, next = alive().find(i => !c.spoke.includes(i));
       if (c.spoke.length === 0 && rng.chance(0.7)) {
-        const live = alive(), a = rng.pick(live), b = rng.pick(api.where(game, a).canWhisper); // whispers are between neighbours (#28)
-        api.whisper(game, a, b, WHISPERS[whispered++ % WHISPERS.length]);
+        const live = alive().filter(i => game.places[i] == null), a = rng.pick(live), to = api.where(game, a).canWhisper; // whispers are between neighbours at the Square (#28)
+        if (to.length) api.whisper(game, a, rng.pick(to), WHISPERS[whispered++ % WHISPERS.length]);
+      }
+      // day 2: the evil pair takes the Snug and one seat sits alone in the Vestry (no rng: the same seed plays the same game)
+      if (game.day === 2 && c.round === 1 && c.spoke.length === 0 && !game.log.some(e => e.type === 'move')) {
+        const evil = alive().filter(i => EVIL.includes(SCRIPT.roles.find(r => r.id === game.seats[i].role)?.team));
+        if (evil.length >= 2) api.invite(game, evil[0], evil[1], 'nook');
+        const alone = alive().find(i => game.places[i] == null && !evil.includes(i));
+        if (alone != null) api.go(game, alone, 'parlour');
       }
       let spoke = false;
       if (rng.chance(0.85)) try {api.say(game, next, LINES[said++ % LINES.length]); spoke = true} catch {} // a line the seat said lately: it passes
       if (!spoke) api.pass(game, next);
       if (!frames.talk && game.day === 1 && game.log.some(e => e.type === 'whisper') && game.clock.spoke.length === 3) frames.talk = watchView(game);
+      if (!frames.rooms && game.day === 2 && game.log.some(e => e.type === 'say' && e.room != null) && game.clock.spoke.length >= 4) frames.rooms = watchView(game);
       continue;
     }
     if (p.kind === 'nomination') {
