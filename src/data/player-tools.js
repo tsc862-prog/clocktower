@@ -9,7 +9,7 @@
 // Every refusal comes back as {ok: false, error} with what is open to the seat now. With no game behind the relay (the
 // stub backend: no ctx.game or ctx.api) look answers "no game yet" and the rest say so.
 import {seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf, shotOf,
-  placeText, placeNameOf, andList} from '../seats/player.js';
+  placeText, placeNameOf, andList, claimsOf, roleChangeOf, staleNote, noteText} from '../seats/player.js';
 
 const READ_CAP = 40; // read_talk and my_whispers show at most this many entries
 
@@ -71,9 +71,10 @@ function look(args, ctx) {
       executed: nameOf(v, t.executed) ?? null},
     ...(v.winner ? {winner: v.winner.team || String(v.winner)} : {})};
 }
+// After a role change (the Scarlet Woman who became the Imp) the answer says so first, plainly (#71).
 function myRole(args, ctx) {
-  const v = viewOf(ctx), r = v.role || {};
-  return {ok: true, name: v.name, role: r.name, team: r.team, side: sideOf(r.team), ability: r.ability,
+  const v = viewOf(ctx), r = v.role || {}, change = roleChangeOf(ctx.game, ctx.api, v, me(ctx));
+  return {ok: true, name: v.name, ...(change ? {changed: change.text} : {}), role: r.name, team: r.team, side: sideOf(r.team), ability: r.ability,
     alive: !!v.alive, ghostVote: !!v.ghostVote,
     told: (v.told || []).map(x => ({night: x.night, text: String(x.text ?? '')})).filter(x => x.text)};
 }
@@ -94,9 +95,33 @@ function myWhispers(args, ctx) {
   const list = cleanEvents(v, i, ctx.api.events(ctx.game, i, -1)).filter(e => e.type === 'whisper');
   return {ok: true, whispers: list.slice(-READ_CAP), ...(list.length ? {} : {note: 'No whispers to or from you yet.'})};
 }
+// A note the game has overtaken (a living player noted as dead, a role that is no longer mine) keeps its words and gets a mark (#71).
 function myNotes(args, ctx) {
-  const list = ctx.api.notes(ctx.game, me(ctx)) || [];
-  return {ok: true, notes: list.map(n => (typeof n === 'string' ? n : String(n?.text ?? ''))), ...(list.length ? {} : {note: 'No notes yet.'})};
+  const v = viewOf(ctx), list = ctx.api.notes(ctx.game, me(ctx)) || [];
+  const notes = list.map(noteText), marks = notes.map(t => staleNote(t, v));
+  const stale = marks.map((m, k) => m && `note ${k + 1}: ${m.why}`).filter(Boolean);
+  return {ok: true, notes: notes.map((t, k) => marks[k] ? `${t} [out of date: ${marks[k].why}]` : t),
+    ...(stale.length ? {outOfDate: `${stale.join('; ')}. Write a fresh note with what is true now.`} : {}), ...(list.length ? {} : {note: 'No notes yet.'})};
+}
+// Every role a player has named for itself in your hearing, with the day and the exact line (#67): check here before you
+// repeat what someone claimed, and quote the lines before you say someone changed a claim.
+function claims(args, ctx) {
+  const v = viewOf(ctx), i = me(ctx);
+  let ledger = claimsOf(v, i, ctx.api.events(ctx.game, i, -1));
+  const who = String(args.player ?? '').trim();
+  if (who) {
+    const f = findSeat(v, who);
+    if (f.error) return refuse(ctx, f.error);
+    ledger = ledger.filter(p => p.player === f.seat.name);
+    if (!ledger.length) return {ok: true, claims: [], note: `${f.seat.name} has named no role for themself in your hearing.`};
+  }
+  const none = (v.seats || []).map(s => s.name).filter(n => !ledger.some(p => p.player === n));
+  const two = ledger.filter(p => p.claims.length > 1).map(p => p.player);
+  return {ok: true, claims: ledger.map(p => ({player: p.player, roles: p.claims.map(c => ({role: c.role, day: c.day, said: c.said,
+      ...(c.times > 1 ? {times: c.times} : {}), ...(c.in ? {in: c.in} : {}), ...(c.whispered ? {whispered: `to ${c.whispered}`} : {})}))})),
+    ...(who ? {} : {noClaim: none}),
+    note: two.length ? `Named more than one role: ${listNames(two)}; the lines are above.`
+      : 'Nobody has named two roles for themself. A player who claimed one role has not changed their claim.'};
 }
 // A standing day ability (the Slayer's shot) is not a decision waiting: it shows as asked "standing" when nothing else
 // waits, and as a "standing" field beside a decision that does (#37).
@@ -310,6 +335,8 @@ export const PLAYER_TOOLS = [
   T('my_whispers', false, 'Every whisper you sent or received, oldest first.', {}, myWhispers),
   T('my_notes', false, 'Your own notes, oldest first. Nobody else can read them.', {}, myNotes),
   T('what_is_asked', false, 'The decision waiting on you, if any (a vote, a nomination, a night choice), with the legal answers.', {}, whatIsAsked),
+  T('claims', false, 'Every role each player has named for themself in your hearing, with the day and the exact line. Check here before you repeat what someone claimed.',
+    {player: {type: 'string', optional: true, desc: 'Only this player (default: everyone).'}}, claims),
   T('who_voted', false, 'The open vote: who is nominated, who has voted so far and who has not.', {}, whoVoted),
   T('note', false, 'Write a private note to yourself (a claim you heard, a suspicion, a plan). Does not use your turn.',
     {text: {type: 'string', desc: 'The note, one or two sentences.'}}, note),

@@ -170,6 +170,7 @@ async function channels() {
     const variants = i => {const other = names.filter((_, k) => k !== i);
       return {
         look: [{}, {player: A + 1}, {seat: A}], my_role: [{}, {player: A + 1}, {name: nm(A)}], read_talk: [{}, {since: 0}, {since: -5}, {since: 'x'}, {since: 1e9}, {since: 0, player: A + 1}],
+        claims: [{}, {player: nm(A)}, {player: String(A)}], // every role each seat named for itself in this seat's hearing (#67)
         my_whispers: [{}, {to: nm(A)}, {player: A + 1}], my_notes: [{}, {seat: A}, {player: A + 1}, {name: nm(A)}], what_is_asked: [{}, {player: A + 1}], who_voted: [{}],
         note: [{text: ''}], speak: [{text: ''}], whisper: [{to: nm(i), text: 'x'}, {to: 'Storyteller', text: 'x'}, {to: String(A), text: 'x'}, ...other.slice(0, 2).map(o => ({to: o, text: ''}))],
         nominate: [{target: nm(A)}, {target: 'Storyteller'}, {target: String(A)}], vote: [{yes: 'yes'}, {yes: 'maybe'}], night_choice: [{pick: [nm(A), 'Storyteller']}, {pick: other}], // never one name: by day one name fires a Slayer's shot (#37)

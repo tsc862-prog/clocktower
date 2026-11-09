@@ -11,7 +11,7 @@ import {join, dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {PLAYER_TOOLS, TOOL_NAMES, ATTEMPT_INVITE} from '../src/data/player-tools.js';
 import {PLAYER_TOOL_LINES, systemFor} from '../src/data/prompts.js';
-import {playerHeader, whatsNew, useApi} from '../src/seats/player.js';
+import {playerHeader, whatsNew, useApi, claimsInLine} from '../src/seats/player.js';
 import * as api from '../src/game/api.js';
 import {newGame, createScripted} from '../src/game/index.js';
 
@@ -205,7 +205,7 @@ section('the table');
   const TYPES = ['string', 'integer', 'number', 'array', 'object'];
   ok(JSON.stringify(TOOL_NAMES) === JSON.stringify(PLAYER_TOOLS.map(t => t.name)), 'TOOL_NAMES is the table in order');
   ok(new Set(TOOL_NAMES).size === TOOL_NAMES.length, 'tool names are unique');
-  const want = ['look', 'my_role', 'read_talk', 'my_whispers', 'my_notes', 'what_is_asked', 'who_voted', 'note', 'where', 'go', 'invite', 'leave', 'speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'pass'];
+  const want = ['look', 'my_role', 'read_talk', 'my_whispers', 'my_notes', 'what_is_asked', 'who_voted', 'note', 'where', 'claims', 'go', 'invite', 'leave', 'speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'pass'];
   for (const n of want) ok(TOOL_NAMES.includes(n), `the table has ${n}`);
   const acts = ['speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'pass'];
   for (const t of PLAYER_TOOLS) {
@@ -642,7 +642,7 @@ section('rooms on the fake: where, go, invite, leave, the header, read_talk, whi
   let g = fakeGame('day');
   let h = playerHeader(g, 0, fakeApi);
   ok(/You are at the Square; whisper only to your neighbours Yusuf and Bram\. Away: Ines and Corwin in the nook\./.test(h), `the header names my place, my neighbours and who is away: ${h}`);
-  ok(/Rooms, closing when nominations open: nook full, parlour 3 free, back room 4 free\./.test(h), 'the header names the rooms, what is free, and that they close at nominations');
+  ok(/Rooms until nominations open: nook full, parlour 3 free, back room 4 free\./.test(h), 'the header names the rooms, what is free, and that they close at nominations');
   ok(/Moves: Ines and Corwin went to the nook\./.test(h), 'the header names who went off together since my last look');
   ok(useOf(h).includes('invite') && !useOf(h).includes('leave'), `at the Square with the rooms open, invite is useful: ${useOf(h)}`);
   let r = run(g, 'read_talk');
@@ -757,6 +757,136 @@ section('rooms in a real game: a line in a room stays in the room, the moves are
 }
 function andNames(xs) {return xs.length < 2 ? xs[0] : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`}
 
+
+section('game 3 fixes: claims checked before repeated (#67), a reason to use a room (#68), notes that know they are stale (#71)');
+{
+  // #67: Odette claimed one role; Bram says she changed it; Corwin repeats it. claims shows the truth.
+  const g = fakeGame('day');
+  const ev = e => g.events.push({id: g.events.length, ...e});
+  ev(say(0, "I'm the Ravenkeeper, so I'm not the Scarlet Woman."));
+  ev(say(1, 'Odette changed her claim from Washerwoman to Ravenkeeper.', 2));
+  ev(say(1, "I'm the Washerwoman, and I saw that coming.", 2));
+  ev(say(3, 'Odette has claimed two roles, Washerwoman then Ravenkeeper.', 2));
+  let r = run(g, 'claims', {}, 4);
+  clean(r, 'claims');
+  const of = n => r.claims.find(p => p.player === n)?.roles || [];
+  ok(r.ok && of('Odette').length === 1 && of('Odette')[0].role === 'Ravenkeeper' && of('Odette')[0].day === 1 && of('Odette')[0].said === "I'm the Ravenkeeper, so I'm not the Scarlet Woman.",
+    `claims: Odette named one role, with her exact line: ${JSON.stringify(of('Odette'))}`);
+  ok(of('Bram').map(c => `${c.role}/${c.day}`).join(',') === 'Chef/1,Washerwoman/2', `claims: Bram named two roles, Chef on day 1 then Washerwoman on day 2: ${JSON.stringify(of('Bram'))}`);
+  ok(!of('Corwin').length && r.noClaim.includes('Corwin') && /Bram/.test(r.note) && !/Odette/.test(r.note), `a line about someone else's claim is not a claim; the note names only Bram: ${r.note}`);
+  r = run(g, 'claims', {player: 'odet'}, 4);
+  ok(r.ok && r.claims.length === 1 && r.claims[0].roles.length === 1, 'claims for one player, by a prefix of the name');
+  ok(!run(g, 'claims', {player: 'Nobody'}, 4).ok, 'claims for a player who does not exist is refused');
+  ok(!JSON.stringify(run(g, 'claims', {}, 4)).includes('Poisoner'), 'a whisper between two others claims nothing for this seat');
+  r = run(g, 'claims', {}, 0);
+  ok(r.claims.find(p => p.player === 'Fitch')?.roles[0]?.whispered === 'to Odette', 'a claim whispered to me is listed, marked as whispered');
+  const h = playerHeader(g, 4, fakeApi);
+  ok(/Claims so far: Odette Ravenkeeper \(day 1\), Bram Chef \(day 1\) then Washerwoman \(day 2\)\. claims shows the lines\./.test(h), `the header's claims line: ${h}`);
+  ok(!/Fitch Monk/.test(playerHeader(g, 0, fakeApi)), 'a whispered claim stays out of the header line');
+  const quiet = fakeGame('night'); quiet.events = quiet.events.filter(e => e.type !== 'say');
+  ok(!/Claims so far/.test(playerHeader(quiet, 0, fakeApi)), 'no claims, no claims line');
+  const cases = [["I'm the Ravenkeeper, so I'm not the Scarlet Woman.", 'Odette', 'Ravenkeeper'], ['I am Bram, the Washerwoman.', 'Bram', 'Washerwoman'],
+    ['Empath here. I got a 1.', 'Thea', 'Empath'], ['As the Investigator, I learned something.', 'Ines', 'Investigator'], ["I'm not sure, but I'm the Fortune-Teller.", 'Odette', 'Fortune Teller'],
+    ["If I'm the Imp, why say so?", 'Fitch', ''], ["You think I'm the Imp? No.", 'Fitch', ''], ['My Washerwoman claim came from an earlier game.', 'Odette', ''],
+    ['Odette has now claimed Ravenkeeper.', 'Bram', ''], ['I saw Odette or Ines as the Ravenkeeper.', 'Bram', '']];
+  for (const [t, s, want] of cases) ok(claimsInLine(t, s).join() === want, `claimsInLine(${JSON.stringify(t)}) is ${JSON.stringify(want)}: ${JSON.stringify(claimsInLine(t, s))}`);
+  const sys = systemFor('player', 'Corwin');
+  ok(/look it up with claims/.test(sys) && /quote both of their lines/.test(sys), 'the prompt: check a claim with claims before repeating it, quote both lines before saying it changed');
+  ok(/claims \(every role/.test(PLAYER_TOOL_LINES), 'the tool lines name claims');
+}
+{
+  // #68: the header names one player to take to a room when the seat has a reason, and nobody when it has none
+  const takeOf = h => (h.match(/Take (\w+) to the (\w+) to talk in private \(([^)]*)\): invite \1, room \2\./) || []).slice(1);
+  let g = fakeGame('day');
+  ok(!/Take \w+ to/.test(playerHeader(g, 0, fakeApi)), 'no reason, no invite line');
+  ok(/Rooms until nominations open/.test(playerHeader(g, 0, fakeApi)), 'with no reason the rooms line is still there');
+  g.events.push({id: g.events.length, ...say(1, 'Odette, what did you learn last night?')});
+  let t = takeOf(playerHeader(g, 0, fakeApi));
+  ok(t[0] === 'Bram' && t[1] === 'parlour' && /asked you a question/.test(t[2]), `someone asked me a question: ${t}`);
+  g.events.push({id: g.events.length, ...say(6, 'I think Odette is lying about her night.')});
+  t = takeOf(playerHeader(g, 0, fakeApi));
+  ok(t[0] === 'Yusuf' && /spoke against you/.test(t[2]), `the newest line against me wins: ${t}`);
+  const hT = playerHeader(g, 0, fakeApi);
+  ok(/Entering costs no turn/.test(hT) && !/Rooms until/.test(hT) && hT.length < HEADER_CAP, `the invite line replaces the rooms line and the header stays under the cap (${hT.length})`);
+  g = fakeGame('day'); g.events.push({id: g.events.length, ...say(3, 'Odette, why so quiet?')});
+  ok(!/Take Corwin/.test(playerHeader(g, 0, fakeApi)), 'a player already in a room is not offered');
+  g = fakeGame('day'); run(g, 'note', {text: 'Thea was kind; Fitch seems evil to me.'});
+  t = takeOf(playerHeader(g, 0, fakeApi));
+  ok(t[0] === 'Fitch' && /your notes doubt Fitch/.test(t[2]), `my own notes doubt a player: ${t}`);
+  g = fakeGame('day'); g.events.push({id: g.events.length, ...say(4, "I'm the Fortune Teller, for what it is worth.")});
+  t = takeOf(playerHeader(g, 0, fakeApi));
+  ok(t[0] === 'Thea' && /claims to be the Fortune Teller too/.test(t[2]), `a player claims my own role: ${t}`);
+  // the evil team: the partner the Storyteller named, ahead of any accuser
+  const evilApi = {...fakeApi, view: (x, s) => ({...fakeApi.view(x, s), role: {id: 'poisoner', name: 'Poisoner', team: 'minion', ability: 'x'},
+    told: [{night: 1, what: 'role', text: 'You are the Poisoner (minion): x'}, {night: 1, what: 'minion-info', text: 'The demon is Fitch.'}]})};
+  g = fakeGame('day'); g.events.push({id: g.events.length, ...say(6, 'I think Odette is lying.')});
+  t = takeOf(playerHeader(g, 0, evilApi));
+  ok(t[0] === 'Fitch' && /Fitch is on your team/.test(t[2]), `the evil seat is offered its demon first: ${t}`);
+  ok(!/on your team/.test(playerHeader(g, 0, fakeApi)), 'a good seat is never told someone is on its team');
+  for (const st of ['night', 'nominations', 'vote', 'ended']) ok(!/Take \w+ to/.test(playerHeader(fakeGame(st), 0, evilApi)), `${st}: no invite line`);
+  g = fakeGame('day'); g.places[0] = 'parlour'; ok(!/Take \w+ to/.test(playerHeader(g, 0, evilApi)), 'in a room already: no invite line');
+  const sys = systemFor('player', 'Ines');
+  ok(/costs no turn/.test(sys) && /team-mate when you are evil/.test(sys) && /one player who claimed a role/.test(sys) && /press one player/.test(sys) && !/says something too/.test(sys),
+    'the prompt says when a room is worth it and that it costs no turn, and no longer warns seats off');
+}
+{
+  // #71: a note the game has overtaken is marked, in the header and in my_notes; the words stay the seat's own
+  const g = fakeGame('day');
+  run(g, 'note', {text: 'Bram claims Chef.'});
+  run(g, 'note', {text: 'Thea is dead too.'});
+  run(g, 'note', {text: 'Bluff plan: I am the Empath if pressed.'});
+  run(g, 'note', {text: 'I am Odette, the Empath.'});
+  const h = playerHeader(g, 0, fakeApi);
+  ok(/Stale notes: note 2 "Thea is dead" \(Thea is alive\); note 4 "I am Odette, the Empath" \(you are the Fortune Teller now\)\. Write a fresh note\./.test(h), `the header marks the stale notes: ${h}`);
+  ok(h.length < HEADER_CAP, `with the notes line the header stays under ${HEADER_CAP} (${h.length}): ${h}`);
+  const r = run(g, 'my_notes');
+  ok(r.notes[0] === 'Bram claims Chef.' && r.notes[1] === 'Thea is dead too. [out of date: Thea is alive]' && r.notes[2] === 'Bluff plan: I am the Empath if pressed.' && /note 2: Thea is alive; note 4/.test(r.outOfDate),
+    `my_notes keeps the words and marks the stale ones: ${JSON.stringify(r)}`);
+  g.seats[4].alive = false;
+  ok(!/note 2/.test(playerHeader(g, 0, fakeApi)), 'once Thea is dead the note is true again');
+  run(g, 'note', {text: 'Yusuf is still alive.'}); g.seats[6].alive = false;
+  ok(/"Yusuf is still alive" \(Yusuf is dead\)/.test(playerHeader(g, 0, fakeApi)), 'a dead player noted as alive is marked');
+  ok(!/Stale notes/.test(playerHeader(fakeGame('day'), 0, fakeApi)), 'no notes, no notes line');
+  ok(/marks a note stale, write a fresh one/.test(systemFor('player', 'Fitch')) && /told apart from what you guess/.test(systemFor('player', 'Fitch')), 'the prompt: facts apart from guesses, rewrite a stale note');
+}
+{
+  // #71 and #68 in a real game: seed 23 deals Bram the Scarlet Woman and Fitch the Imp, as game 3 did
+  const game = newGame({seed: 23, rounds: 1}), sc = createScripted(23);
+  const ctx = i => ({game, seat: {index: i, name: game.seats[i].name}, api: api.forSeat(i), log: () => {}});
+  const call = (i, name, args = {}) => tool(name).handler(args, ctx(i));
+  const step = () => {const p = game.pending; if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game))};
+  for (let n = 0; n < 500 && !(game.phase === 'day' && api.roomsOpen(game)); n++) step();
+  const SW = game.seats.findIndex(s => s.role === 'scarlet-woman'), IMP = game.seats.findIndex(s => s.role === 'imp'), nm = i => game.seats[i].name;
+  ok(SW >= 0 && IMP >= 0, `seed 23 deals a Scarlet Woman (${nm(SW)}) and an Imp (${nm(IMP)})`);
+  const SNUG = api.where(game, SW).rooms.find(x => x.id === 'nook').name.replace(/^the\s+/i, '');
+  let h = playerHeader(game, SW);
+  ok(new RegExp(`Take ${nm(IMP)} to the ${SNUG} to talk in private \\(${nm(IMP)} is on your team\\): invite ${nm(IMP)}, room ${SNUG}\\.`).test(h), `the minion is offered a room with its demon: ${h}`);
+  ok(h.length < HEADER_CAP, `${nm(SW)}'s header with the invite is under ${HEADER_CAP} (${h.length})`);
+  const good = game.seats.findIndex(s => s.role === 'ravenkeeper');
+  ok(!/Take \w+ to/.test(playerHeader(game, good)), `${nm(good)}, good with no reason yet, is offered nobody`);
+  let r = call(SW, 'invite', {player: nm(IMP), room: SNUG});
+  ok(r.ok && r.with.includes(nm(IMP)), `the invite the header spells out works as written: ${JSON.stringify(r)}`);
+  call(SW, 'leave'); call(IMP, 'leave');
+  call(SW, 'note', {text: `I am ${nm(SW)}, Scarlet Woman (evil minion). The demon is ${nm(IMP)}.`});
+  ok(!/Stale notes/.test(playerHeader(game, SW)) && !call(SW, 'my_role').changed, 'before the change the note is true and my_role says nothing changed');
+  for (const s of game.seats) if (!game.clock.nominationsOpen) call(s.index, 'pass');
+  call(good, 'nominate', {target: nm(IMP)});
+  for (let n = 0; n < 50 && game.pending?.kind === 'vote'; n++) {const s = game.pending.seats.find(x => api.pendingFor(game, x)?.mine === null); if (s == null) break; call(s, 'vote', {yes: 'yes'})}
+  for (let n = 0; n < 500 && game.phase !== 'night' && game.pending; n++) {
+    if (game.pending.kind === 'nomination') {for (const s of game.seats) if (api.pendingFor(game, s.index)?.kind === 'nomination') call(s.index, 'pass'); continue}
+    step();
+  }
+  ok(game.seats[SW].role === 'imp' && !game.seats[IMP].alive, `${nm(IMP)} is executed and ${nm(SW)} becomes the Imp`);
+  const mr = call(SW, 'my_role');
+  ok(mr.changed === 'You were the Scarlet Woman; you are the Imp now, since day 1.' && mr.role === 'Imp', `my_role says the change plainly: ${mr.changed}`);
+  h = playerHeader(game, SW);
+  ok(new RegExp(`^You are ${nm(SW)}, the Imp \\(demon, evil\\), alive\\. You were the Scarlet Woman until day 1\\.`).test(h), `the header's first line says the change: ${h.split('\n')[0]}`);
+  ok(new RegExp(`Stale notes: note 1 "I am ${nm(SW)}, Scarlet Woman" \\(you are the Imp now\\)`).test(h), `the header marks the old note: ${h}`);
+  for (const s of game.seats) if (s.index !== SW) {
+    ok(!call(s.index, 'my_role').changed && !/You were the/.test(playerHeader(game, s.index)) && !/Scarlet Woman" \(/.test(playerHeader(game, s.index)),
+      `${s.name} sees nothing of ${nm(SW)}'s change or notes`);
+  }
+}
 
 section('nothing under src/ imports node: or scripts/');
 {
