@@ -145,6 +145,18 @@ export function makePacer({base, player, role = undefined, runner, heartbeat: he
   return {next, ready, brief, turnDone() {lastEnd = Date.now(); since = null}, state: st};
 }
 
+// What is due from the Storyteller now (#90, #91), asked of its own `look` tool (a read: no model, no cost; storytellerDue of
+// src/seats/storyteller.js). post(path, body, ms) is the runner's Storyteller post. -> {tool, why} when something is due, null when
+// nothing is, undefined when the game did not say (an older relay, an error): a caller then plays the turn as before.
+export async function storytellerDueNow(post) {
+  try {
+    const r = await post('/play/storyteller', {tool: 'look', args: {}}, 8000);
+    if (!r || r.ok === false || !('due' in r)) return undefined;
+    if (r.dueTool) return {tool: r.dueTool, why: String(r.due || '')};
+    return r.due === 'nothing' ? null : undefined;
+  } catch {return undefined}
+}
+
 // The state header as prompt text: fresh from the game every turn, so a model never plays from a stale picture.
 export const briefText = b => b ? '\nThe game now: ' + JSON.stringify(b).slice(0, 1500) : '';
 // The line a turn prompt carries about why it started (the seat's own events only).

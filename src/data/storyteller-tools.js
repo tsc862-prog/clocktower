@@ -12,7 +12,7 @@ import {createScripted} from '../game/scripted.js';
 import {
   describePending, valueWords, grimoireRows, grimoireLine, tableEvents, eventWords, clockWords, openVote, waitingOn,
   roleFromWord, seatFromWord, roleLabel, seatLabel, phaseOf, toolsNow, KIND_WORDS, malfunctionWords, narrationError, nominationsWords, offeredWords,
-  narrationOwed, storytellerDue,
+  narrationOwed, storytellerDue, scriptedNarration,
 } from '../seats/storyteller.js';
 
 const ME = 'storyteller';
@@ -38,6 +38,9 @@ export function reasonFactsError(game, p, reason) {
   const r = String(reason || ''), n = (p.options || []).length;
   if (n > 1 && (!p.count || n > p.count) && /\bonly\s+(?:legal\s+|possible\s+|available\s+|valid\s+|offered\s+)?(?:option|choice|answer)\b|\bno other (?:option|choice)|\bsole (?:legal )?option|\bsingle (?:legal )?option/i.test(r)) {
     return `Your reason says there is only one option, but ${offeredWords(p)}. Give the reason this pick helps the game.`;
+  }
+  if (p.kind === 'mayor-bounce' && /\bengine'?s?\s+truth\b|\btrue\s+outcome\b|\bthe\s+truth\b|\b(?:rules?|engine)\s+(?:says?|requires?|demands?)\b|\bno\s+bounce\s+is\s+(?:possible|allowed)\b/i.test(r)) {
+    return 'Where the kill on the Mayor lands is your call, not a rule: there is no true outcome to follow. Say what you weighed (how close the game is, who a bounce would hit) and why this landing helps the game.';
   }
   if (p.kind === 'info' || p.kind === 'register') {
     const says = /\b(?:(?:not|never|neither|nor|isn't|wasn't|aren't)\s+(?:\w+\s+)?)?(poisoned|drunk)\b/i.exec(r);
@@ -166,7 +169,7 @@ const TOOLS = [
       const p = tryApi(() => api.pendingFor(game, ME)), yours = !!(p && p.ok !== false);
       return {ok: true, phase: clockWords(game), seats: (game.seats || []).map(s => ({name: s.name, alive: s.alive})),
         waitingOn: yours ? 'you: ' + (KIND_WORDS[p.kind] || p.kind) : waitingOn(game), useful: toolsNow(game, yours, !!narrationOwed(game, api)),
-        due: storytellerDue(game, api)?.why || 'nothing'};
+        ...(d => ({due: d?.why || 'nothing', dueTool: d?.tool || null}))(storytellerDue(game, api))};
     }},
   {name: 'grimoire', act: false, args: {},
     desc: 'The grimoire: every seat with its name, true role, the role it believes it is when different (the Drunk), alive or dead, ghost vote, and the tokens on it with who placed them; the demon\'s bluffs.',
@@ -196,7 +199,7 @@ const TOOLS = [
     desc: 'The decision waiting on you in plain words: what kind, which seat it concerns, the truth, every legal option numbered (a long list grouped by seat and role), why it is asked, and whether the ability malfunctions (drunk or poisoned). When nothing waits on you, says what the game waits on.',
     handler: (args, {game, api}) => tryApi(() => {
       const p = api.pendingFor(game, ME);
-      if (!p) return {ok: true, pending: null, waitingOn: waitingOn(game)};
+      if (!p) return {ok: true, pending: null, waitingOn: waitingOn(game), due: storytellerDue(game, api)?.why || 'nothing'};
       const d = describePending(game, p, {max: 400});
       const full = args.full === true || /^(true|yes|1)$/i.test(String(args.full ?? ''));
       if (!full && d.count > GROUP_OVER) {
@@ -250,9 +253,19 @@ const TOOLS = [
       return {ok: true, decided: KIND_WORDS[p.kind] || p.kind, answer: words, reason: why, next: waitingOn(game)};
     }},
   {name: 'fallback', act: true, args: {reason: REASON},
-    desc: 'Answer the decision waiting on you with the scripted default (true information, the plain choice), logged as a ruling that says so. For when you have no better call to make.',
+    desc: 'Answer the decision waiting on you with the scripted default (true information, the plain choice), logged as a ruling that says so; with no decision waiting but a narration owed, narrate it plainly (the bare facts). For when you have no better call to make.',
     handler: ({reason}, {game, api, log}) => {
-      const {p, refusal} = mine(game, api); if (refusal) return refusal;
+      const {p, refusal} = mine(game, api);
+      if (refusal) {
+        const owed = narrationOwed(game, api), line = scriptedNarration(game, owed);
+        if (!line) return refusal;
+        const r = reasonError(reason); if (r) return no(r);
+        const res = tryApi(() => {api.narrate(game, line); return null});
+        if (res) return res;
+        const why = `Scripted default: ${reasonOf(reason)}`;
+        log('storyteller-call', {tool: 'fallback', kind: 'narration', narrated: owed.kind, text: line, reason: why});
+        return {ok: true, narrated: line, owed: owed.kind, reason: why, scripted: true};
+      }
       const r = reasonError(reason) || reasonFactsError(game, p, reason); if (r) return no(r);
       const v = tryApi(() => ({value: scriptedFor(game)(game)}));
       if (v.ok === false) return v;
@@ -275,7 +288,7 @@ const TOOLS = [
         const named = [...inPlay].map(id => roleLabel(game, id)).filter(n => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(t));
         if (named.length) return no(`While the game runs the table learns roles only from the players: leave out ${named.join(', ')} and say what happened.`);
       }
-      const wrong = narrationError(game, t); if (wrong) return no(wrong);
+      const wrong = narrationError(game, t, api); if (wrong) return no(wrong);
       const res = tryApi(() => {api.narrate(game, t); return null});
       if (res) return res;
       log('storyteller-call', {tool: 'narrate', text: t});
