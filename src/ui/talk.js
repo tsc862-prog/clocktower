@@ -35,7 +35,7 @@ export function talkLine(e, names, rooms = roomNames(null)) {
       return {cls: 'event ' + e.type, html: esc(e.text)};
     case 'death': return e.phase === 'day' ? {cls: 'event death', html: esc(e.text)} : {cls: 'private death', html: `<span class="seen-by">ST sees</span> ${n(e.seat)} (${esc(roleName(e.role))}) dies in the night${e.by != null ? `, killed by ${n(e.by)}` : ''}.`};
     case 'win': return {cls: 'win', html: esc(e.text)};
-    case 'thought': return {cls: 'private thought', html: `<span class="seen-by">${n(e.seat)} thinks, for you only</span> <span class="text">${esc(e.text)}</span>`};
+    case 'thought': return {cls: 'private thought', html: `<span class="seen-by">${n(e.seat)} thinks, unheard</span> <span class="text">${esc(e.text)}</span>`};
     case 'told': return {cls: 'private told', html: `<span class="seen-by">told ${n(e.seat)}</span> ${esc(e.text)}`};
     case 'aside': return {cls: 'private aside', html: `<span class="seen-by">${esc(e.who)}'s aside, for you only</span> ${esc(e.text)}`};
   }

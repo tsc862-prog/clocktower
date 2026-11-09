@@ -66,7 +66,7 @@ const THOUGHTS = {
   good: ['Nothing came to me tonight but the clock. Tomorrow I listen for who is too sure of themselves.',
     'What I learned fits two stories. I will tell it plainly at first light and see who flinches.',
     'Someone at that table is lying with a steady voice. I mean to find the one who never asks a question.'],
-  evil: ['Another name crossed off. Tomorrow I agree with the loudest voice and let them hang each other.',
+  evil: ['Another name crossed off. Tomorrow I agree with the loudest voice and let them vote each other down.',
     'They are looking the wrong way. I will keep my claim simple and my vote late.'],
 };
 export function nightWithThoughts(end) {

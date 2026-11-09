@@ -880,7 +880,7 @@ console.log('voices');
     na.end(); await settle();
     {const l = document.querySelectorAll('#stage .st-night .nl').map(x => x.textContent);
       ok(l.length <= NIGHT_N && l.includes(`${nn[6]} thinks: ${T2.text}`) && l.some(t => t.startsWith('The Storyteller ')), `the night's list in the same prose (${l.length} lines)`)}
-    ok(!!document.querySelector('#talk .line.thought') && /thinks, for you only/.test(document.querySelector('#talk .line.thought').textContent), 'the talk lists the thoughts with the night, marked as the watcher\'s alone');
+    ok(!!document.querySelector('#talk .line.thought') && /thinks, unheard/.test(document.querySelector('#talk .line.thought').textContent), 'the talk lists the thoughts with the night, marked as the watcher\'s alone');
 
     // seven thoughts and the night's prose in one push: none dropped
     const d0 = np.voice.state.dropped;
