@@ -3,15 +3,16 @@
 // (scripts/mock-ollama.mjs), so a mock game plays the same whichever mind sits in a seat. No model, no randomness.
 //
 // A player looks, asks what is asked of it, then: answers a night choice (the first option that is not itself, or "nobody"
-// when that is offered), votes yes, nominates when it is the last living seat in seat order and nobody has been nominated
-// today (the first other living seat), else passes on nominating; with nothing asked, says one line in its speaking round.
+// when that is offered), gives a canned one-line thought as the night ends (#111), votes yes, nominates when it is the last
+// living seat in seat order and nobody has been nominated today (the first other living seat), else passes on nominating;
+// with nothing asked, says one line in its speaking round.
 // The Storyteller asks what waits on it and answers it with the first legal option(s) and a reason.
 // nextCall(kind, seen) -> {tool, args} | {text}; seen: [{tool, args, result}] this turn, oldest first.
 let lines = 0, idle = 0;
 // idle words that differ turn to turn, so a quiet seat's narration is never a repeat (an empty turn to the local loop)
 const IDLE = ['listens to the table.', 'keeps quiet for now.', 'watches the others closely.', 'thinks over what was said.', 'waits for a better moment.', 'studies the faces around the room.'];
 const last = (seen, tool) => [...seen].reverse().find(s => s.tool === tool);
-const ACTS = new Set(['speak', 'whisper', 'nominate', 'vote', 'night_choice', 'pass', 'decide', 'fallback', 'narrate', 'end_day', 'close_vote', 'open_nominations']);
+const ACTS = new Set(['speak', 'whisper', 'nominate', 'vote', 'night_choice', 'think', 'pass', 'decide', 'fallback', 'narrate', 'end_day', 'close_vote', 'open_nominations']);
 export const MOCK_REASON = 'The first legal option keeps this mock game moving along.';
 
 export function nextCall(kind, seen = []) {
@@ -34,6 +35,7 @@ export function nextCall(kind, seen = []) {
     const others = opts.filter(o => o !== me), pick = (others.length >= n ? others : opts).slice(0, n);
     return {tool: 'night_choice', args: {pick}};
   }
+  if (a.asked === 'thoughts') return {tool: 'think', args: {text: `I am ${me || 'a player'}, and tonight I keep my own counsel until the dawn.`}}; // the night's thought (#111)
   if (a.asked === 'vote' && a.tool === 'vote') return {tool: 'vote', args: {yes: 'yes'}};
   if (a.asked === 'nomination') {
     const none = !((L.today && L.today.nominations) || []).length, target = (a.options || []).find(o => o !== me);
