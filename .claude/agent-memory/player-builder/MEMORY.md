@@ -1,7 +1,7 @@
 # player-builder memory
 
 ## The tool table (slice 3, src/data/player-tools.js)
-- 19 tools. Reads (act false): look, my_role, read_talk(since?), my_whispers, my_notes, what_is_asked, who_voted, note(text), where. Moves (act false, free): go(room), invite(player, room?), leave. Acts (act true): speak(text), whisper(to, text), nominate(target), vote(yes: "yes"|"no" as a string), night_choice(pick: array of names), slay(target | "hold"), pass.
+- 20 tools (claims added in #75). Reads (act false): look, my_role, read_talk(since?), claims(player?), my_whispers, my_notes, what_is_asked, who_voted, note(text), where. Moves (act false, free): go(room), invite(player, room?), leave. Acts (act true): speak(text), whisper(to, text), nominate(target), vote(yes: "yes"|"no" as a string), night_choice(pick: array of names), slay(target | "hold"), pass.
 - `note` is act false on purpose: writing a note never spends the turn.
 - Arg types the relay understands: string, integer, number, array (of strings), object. No boolean: vote takes "yes"/"no" and the handler also reads true/false/y/n.
 - Every handler is `guarded`: no ctx.api/ctx.game (the relay's stub backend) -> look answers {ok, phase: 'no game yet', seats: []} (relaycheck depends on it), others say "No game yet". Any throw -> {ok: false, error: message + " Open to you now: ..."}.
@@ -53,3 +53,13 @@ Useful now: vote, who_voted, read_talk.
 - speak returns `heard`; whisper pre-checks view.place.neighbours and refuses with both names + "invite them to a room"; cleanEvent drops entries whose audience array omits the seat; read_talk: move {seats,to,from,by,text}, room line `in`.
 - channelcheck probes go/invite only with nonexistent rooms (a probe must move nobody); leave is exempt beside pass.
 - Not yet measured in a played game: whether seats over-use rooms or speak alone in one.
+
+## Game 3 fixes (PR #75: #67 claims, #68 rooms, #71 stale notes)
+- Game 3 lesson: Haiku seats repeat an accusation about someone's claim without reading the log (4 seats, a good Ravenkeeper executed); rooms offered 63 times with no named reason were used 0 times; notes go stale silently (a Scarlet Woman turned Imp kept "I am the Scarlet Woman" for two days).
+- claims: selfClaims/claimsInLine in player.js, a matcher over SCRIPT role names: "I'm (Name,) the X", "I am", "my role is", "I claim", clause-initial "as the X", "X here" / "X, I got". NOT_SELF words before "I'm" (if, not, think, says, claims, ...) and "not" between kill it. Ledger from cleanEvents, so privacy holds; header shows aloud claims only, whispered ones stay in the tool.
+- inviteOf: reason order partner (told what minion-info/demon-info, evil only) > today's line naming me (doubt word = spoke against, "?" = asked) > notes doubt (name nearest the doubt word) > someone claims my role. Needs an empty room with 2 free; the line replaces the rooms line. Not yet measured in a played game.
+- roleChangeOf reads told events "You are now the X" (day/night from the event: day >= night means by day); header line 1 adds "You were the X until day N"; my_role gets `changed`.
+- staleNote: living name + is/was dead/died/executed/killed or "(dead)"; dead name "is (still) alive"; a self-claim of another role unless the note has a bluff word (bluff, claim, story, lie...). Header "Stale notes: note N \"bit\" (why)".
+- Header cap 900 got tight: news line now ends "(read_talk)", rooms line "Rooms until nominations open:", nudges give way to the stakes line. The next line needs another cut.
+- Patch note lines: rulescheck fails any "- " line over 280 chars.
+- channelcheck (infra's) requires every player tool in its hostile `variants`: a new tool means a one-line out-of-area edit there.

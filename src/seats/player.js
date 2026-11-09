@@ -5,6 +5,7 @@
 // The api: src/game/api.js. A test may hand in another (a fake) with useApi(api) or as the last argument; useApi(null)
 // goes back to the game's.
 import * as gameApi from '../game/api.js';
+import {SCRIPT} from '../data/script.js';
 let API = gameApi;
 export const useApi = api => {API = api || gameApi; return API};
 const apiOr = api => api || API;
@@ -112,7 +113,7 @@ export function newsLine(w) {
   add('narration', 'word from the Storyteller', 'words from the Storyteller');
   add('told', 'private word to you', 'private words to you');
   if (!parts.length && w.phase) parts.push('the phase changed');
-  return parts.length ? `New since your last look: ${parts.join(', ')}. read_talk to see it.` : 'Nothing new since your last look.';
+  return parts.length ? `New since your last look: ${parts.join(', ')} (read_talk).` : 'Nothing new since your last look.';
 }
 
 // ---- the decision waiting on a seat, in plain words ----
@@ -198,7 +199,7 @@ export function placeText(v) {
 // The rooms while they are open: how many places each has free, and that they close when nominations open.
 export function roomsText(v) {
   if (v.phase !== 'day' || v.winner || !v.roomsOpen || !(v.rooms || []).length) return null;
-  return `Rooms, closing when nominations open: ${v.rooms.map(r => `${bare(r.name)} ${r.free > 0 ? `${r.free} free` : 'full'}`).join(', ')}.`;
+  return `Rooms until nominations open: ${v.rooms.map(r => `${bare(r.name)} ${r.free > 0 ? `${r.free} free` : 'full'}`).join(', ')}.`;
 }
 // The moves since the last look, the newest few: "Moves: Odette and Bram went to the nook."
 export function movesText(news, max = 2) {
@@ -283,12 +284,170 @@ export function stakesLine(v) {
 
 // ---- a nudge for a quiet table (#31) ----
 function nudgeLine(v, asked, waiting) {
-  if (v.phase !== 'day' || v.winner || waiting) return null;
+  if (v.phase !== 'day' || v.winner || waiting || stakesLine(v)) return null; // the stakes say more than a nudge
   if (asked?.kind === 'nomination' && !(v.today?.nominations || []).length)
     return 'Nobody nominated yet. With nothing solid, nominate someone anyway and let the vote decide: a day with no execution is a day given to the demon.';
   if (v.day === 1 && v.alive !== false && !v.clock?.nominationsOpen && !asked)
     return 'First day: say something about yourself or ask a player a question by name, rather than pass.';
   return null;
+}
+
+// ---- claims (#67): every role a player named for itself, from the talk this seat heard ----
+// A claim is a line in which the speaker names a role of the script for itself: "I'm the Ravenkeeper", "I am Bram, the
+// Washerwoman", "As the Empath, ...", "Chef here.". "I'm not the X", "if I'm the X", "you think I'm the X" and a role named
+// for someone else are not claims. Built only from the seat's own events (cleanEvents), so a whisper between two others or
+// a line said in a room elsewhere never makes a claim here. Game 3 executed a good seat on "she changed her claim" when she
+// had made one; the ledger is what a seat checks before it repeats such a thing.
+const ROLE_NAMES = SCRIPT.roles.map(r => r.name).sort((x, y) => y.length - x.length);
+const reEsc = x => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const roleRe = name => name.split(/\s+/).map(reEsc).join('[\\s-]*');
+const ROLE_FIND = new RegExp(String.raw`\b(?:` + ROLE_NAMES.map(roleRe).join('|') + String.raw`)\b`, 'gi');
+const roleByText = t => ROLE_NAMES.find(n => new RegExp('^' + roleRe(n) + '$', 'i').test(t.trim())) || null;
+const ART = String.raw`(?:\s+(?:the|a|an|your|our))?`;
+const LEAD = String.raw`(?:\bi\s*['’]\s*m|\bi\s+am|\bim)(?:\s+(?:really|actually|truly|just|also|still|definitely|honestly|indeed|claiming(?:\s+to\s+be)?))*`;
+// the words before "I'm" that make it someone else's claim, a doubt or a supposition, not mine
+const NOT_SELF = /\b(?:if|unless|whether|suppose|supposing|pretend|pretending|not|never|think|thinks|thought|say|says|said|believe|believes|suspect|suspects|accuse|accuses|accused|call|calls|claims|claimed|maybe|perhaps)\b[^,]*$/i;
+function selfClaims(text, speaker) {
+  const t = String(text ?? ''), out = [];
+  const nm = speaker ? String.raw`(?:\s+` + reEsc(speaker) + String.raw`\s*,)?` : '';
+  const pre = new RegExp(String.raw`(?:` + LEAD + nm + ART + String.raw`|\bmy\s+role\s+is` + ART + String.raw`|\bi\s+claim(?:\s+to\s+be)?` + ART
+    + String.raw`|(?:^|,|\band\s+)\s*as` + ART + String.raw`)\s+$`, 'i');
+  const lead = new RegExp(String.raw`^\s*(?:` + (speaker ? reEsc(speaker) + String.raw`(?:\s+here)?\s*[,—-]?\s*` : '') + String.raw`)?(?:the\s+)?$`, 'i');
+  for (const m of t.matchAll(ROLE_FIND)) {
+    const before = t.slice(0, m.index), after = t.slice(m.index + m[0].length);
+    const cut = Math.max(...['.', '!', '?', ';', ':', '\n'].map(c => before.lastIndexOf(c)));
+    const clause = before.slice(cut + 1);
+    const p = clause.match(pre);
+    const hit = p ? !NOT_SELF.test(clause.slice(0, p.index))
+      : lead.test(clause) && /^\s*(?:here\b|[,—-]\s*(?:and\s+)?i\s+(?:got|learned|learnt|saw|see|read|was\s+told|have|know))/i.test(after);
+    const role = hit && roleByText(m[0]);
+    if (role) out.push({role, said: (clause + m[0]).trim()});
+  }
+  return out;
+}
+// The roles a line claims for its speaker, each once, in the order said.
+export const claimsInLine = (text, speaker) => [...new Set(selfClaims(text, speaker).map(c => c.role))];
+// The ledger, in seat order: [{player, claims: [{role, day, id, said, times, in?, whispered?}]}], each role once per player
+// with the first line that claimed it. Lines at the table, in a room this seat was in, and whispers to or from this seat.
+export function claimsOf(view, me, events) {
+  const by = new Map();
+  for (const e of cleanEvents(view, me, events)) {
+    if (!['say', 'whisper'].includes(e.type) || !e.from || typeof e.text !== 'string') continue;
+    for (const role of claimsInLine(e.text, e.from)) {
+      if (!by.has(e.from)) by.set(e.from, []);
+      const list = by.get(e.from), prev = list.find(c => c.role === role);
+      if (prev) {prev.times++; continue}
+      list.push({role, day: e.day ?? null, id: e.id, said: e.text, times: 1, ...(e.type === 'whisper' ? {whispered: e.to} : e.in ? {in: e.in} : {})});
+    }
+  }
+  const order = (view?.seats || []).map(s => s.name);
+  return [...by.entries()].sort((x, y) => order.indexOf(x[0]) - order.indexOf(y[0])).map(([player, claims]) => ({player, claims}));
+}
+// "Claims so far: Odette Ravenkeeper (day 1), Bram Librarian (day 1) then Washerwoman (day 2). claims shows the lines."
+// Only what was said aloud (the table or a room): a whispered claim stays in the claims tool.
+export function claimsText(ledger) {
+  const pub = (ledger || []).map(p => ({player: p.player, claims: p.claims.filter(c => !c.whispered)})).filter(p => p.claims.length);
+  if (!pub.length) return null;
+  const one = c => `${c.role}${c.day != null ? ` (day ${c.day})` : ''}`;
+  return `Claims so far: ${pub.map(p => `${p.player} ${p.claims.map(one).join(' then ')}`).join(', ')}. claims shows the lines.`;
+}
+
+// ---- a role that changed (#71): the Scarlet Woman who became the Imp ----
+// From what the Storyteller told this seat ("You are now the Imp."), with the role it held before. Null when it never changed.
+export function roleChangeOf(game, a, v, me) {
+  let told;
+  try {told = cleanEvents(v, me, a.events(game, me, -1)).filter(e => e.type === 'told' && typeof e.text === 'string')} catch {return null}
+  let last = -1;
+  told.forEach((e, k) => {if (/^You are now the /i.test(e.text)) last = k});
+  if (last < 0) return null;
+  const e = told[last];
+  const now = v.role?.name || e.text.match(/^You are now the (.+?)\.?\s*$/i)?.[1];
+  let was = null;
+  for (let k = last - 1; k >= 0 && !was; k--) was = told[k].text.match(/^You are (?:now )?the (.+?)(?:\s*\(|[.:]|$)/i)?.[1] || null;
+  if (!was || !now || was === now) return null;
+  const byDay = e.day != null && e.day > 0 && (e.night == null || e.day >= e.night);
+  const when = byDay ? `day ${e.day}` : e.night != null ? `night ${e.night}` : null;
+  return {was, now, when, text: `You were the ${was}; you are the ${now} now${when ? `, since ${when}` : ''}.`};
+}
+
+// ---- notes that the game has overtaken (#71) ----
+// A note stays the seat's own words; this only says when one contradicts what the seat can see now: a living player noted as
+// dead, a dead one noted as alive, or a role noted as its own that is not its role now. A note about a bluff is left alone.
+export const noteText = n => (typeof n === 'string' ? n : String(n?.text ?? ''));
+const BLUFF = /\b(?:bluff|bluffing|pretend|pretending|fake|cover|lie|lying|story|claim|claimed|claiming|publicly|told the table|said)\b/i;
+export function staleNote(text, v) {
+  const t = String(text ?? '');
+  for (const s of v.seats || []) {
+    if (s.name === v.name) continue;
+    const n = String.raw`\b` + reEsc(s.name) + String.raw`\b`;
+    const dead = t.match(new RegExp(n + String.raw`(?:\s+(?:is|was|has|had|got))?(?:\s+(?:now|also|already|just|been))*\s+(?:dead|died|executed|killed)\b|` + n + String.raw`\s*\(dead\)`, 'i'));
+    if (s.alive && dead) return {bit: dead[0], why: `${s.name} is alive`};
+    const alive = t.match(new RegExp(n + String.raw`\s+is\s+(?:still\s+)?alive\b`, 'i'));
+    if (!s.alive && alive) return {bit: alive[0], why: `${s.name} is dead`};
+  }
+  const mine = v.role?.name;
+  if (mine && !BLUFF.test(t)) {
+    const other = selfClaims(t, v.name).find(c => c.role !== mine);
+    if (other) return {bit: other.said.length > 50 ? '...' + other.said.slice(-47) : other.said, why: `you are the ${mine} now`};
+  }
+  return null;
+}
+// Each stale note: {n (1-based, as my_notes counts), bit, why}.
+export const staleNotes = (list, v) => (list || []).map((x, k) => ({n: k + 1, ...staleNote(noteText(x), v)})).filter(x => x.why);
+// 'Stale notes: note 3 "Thea is dead" (Thea is alive). Write a fresh note.'
+export function notesText(stale) {
+  if (!stale?.length) return null;
+  const shown = stale.slice(-2).map(s => `note ${s.n} "${s.bit}" (${s.why})`);
+  return `Stale notes: ${shown.join('; ')}${stale.length > 2 ? `; ${stale.length - 2} more` : ''}. Write a fresh note.`;
+}
+
+// ---- a reason to take someone to a room (#68) ----
+// Game 3 offered the rooms in 63 turns and nobody went: the offer named no one and no reason. Now, by day while the rooms
+// are open and the seat is at the Square with nothing waiting, it names one player and why, from what this seat knows: its
+// team-mate from what the Storyteller told it (evil only), else today's line that spoke against it or asked it something,
+// else the player its own notes doubt, else a player claiming its own role. Null with no reason, or no empty room.
+const DOUBT = /\b(?:suspect|suspects|suspicious|evil|demon|imp|minion|lying|liar|lies|lied|doubt|nominate|execute|don['’]?t\s+trust|not\s+trust|sus)\b/i;
+const named = (name, t) => new RegExp(String.raw`\b` + reEsc(name) + String.raw`\b`, 'i').test(String(t || ''));
+export function inviteOf(game, a, v, me, asked, ledger, notesList) {
+  if (v.phase !== 'day' || v.winner || !v.roomsOpen || v.alive === false || !v.place || v.place.room != null || (asked && !asked.done)) return null;
+  const free = (v.seats || []).filter(s => s.alive && s.name !== v.name && s.room == null);
+  const room = (v.rooms || []).filter(r => !(r.seats || []).length && (r.free ?? r.size) >= 2).sort((x, y) => (x.size || 0) - (y.size || 0))[0];
+  if (!room || !free.length) return null;
+  const seatNamed = n => free.find(s => s.name === n);
+  let pick = null;
+  if (['minion', 'demon'].includes(v.role?.team)) {
+    const team = (v.told || []).filter(t => t.what ? ['minion-info', 'demon-info'].includes(t.what) : /\b(?:demon|minions?)\b/i.test(t.text || ''));
+    for (const t of team.reverse()) {
+      const text = String(t.text || '');
+      const hit = free.map(s => ({s, at: text.search(new RegExp(String.raw`\b` + reEsc(s.name) + String.raw`\b`))})).filter(x => x.at >= 0).sort((x, y) => x.at - y.at)[0];
+      if (hit) {pick = {name: hit.s.name, why: `${hit.s.name} is on your team`}; break}
+    }
+  }
+  if (!pick) {
+    let evs = [];
+    try {evs = cleanEvents(v, me, a.events(game, me, -1))} catch {evs = []}
+    const lines = evs.filter(e => e.type === 'say' && e.from !== v.name && (e.day == null || e.day === v.day) && seatNamed(e.from) && named(v.name, e.text)).reverse();
+    for (const e of lines) {
+      if (DOUBT.test(e.text)) {pick = {name: e.from, why: `${e.from} spoke against you`}; break}
+      if (/\?/.test(e.text)) {pick = {name: e.from, why: `${e.from} asked you a question`}; break}
+    }
+  }
+  if (!pick) {
+    for (const t of (notesList || []).map(noteText).reverse()) {
+      const d = t.search(DOUBT);
+      if (d < 0) continue;
+      const hit = free.map(s => ({s, at: t.search(new RegExp(String.raw`\b` + reEsc(s.name) + String.raw`\b`, 'i'))})).filter(x => x.at >= 0)
+        .sort((x, y) => Math.abs(x.at - d) - Math.abs(y.at - d))[0];
+      if (hit) {pick = {name: hit.s.name, why: `your notes doubt ${hit.s.name}`}; break}
+    }
+  }
+  if (!pick && v.role?.name) {
+    const p = (ledger || []).find(x => x.player !== v.name && seatNamed(x.player) && x.claims.some(c => c.role === v.role.name && !c.whispered));
+    if (p) pick = {name: p.player, why: `${p.player} claims to be the ${v.role.name} too`};
+  }
+  if (!pick) return null;
+  const rn = room.name || placeNameOf(v, room.id);
+  return {...pick, room: room.id, text: `Take ${pick.name} to ${rn} to talk in private (${pick.why}): invite ${pick.name}, room ${bare(rn)}. Entering costs no turn; the rooms close when nominations open.`};
 }
 
 const TEAM_SIDE = {townsfolk: 'good', outsider: 'good', minion: 'evil', demon: 'evil'};
@@ -306,13 +465,19 @@ export function playerHeader(game, seat, api) {
   const asked = askedOf(game, v, me, a.pendingFor(game, me));
   const waiting = waitingOf(game, a, v, me, asked), shot = shotOf(game, a, v, me);
   const stakes = stakesLine(v), nudge = nudgeLine(v, asked, waiting);
+  const change = roleChangeOf(game, a, v, me);
+  let notesList = [];
+  try {notesList = (typeof a.notes === 'function' && a.notes(game, me)) || []} catch {notesList = []}
+  let ledger = [];
+  try {ledger = claimsOf(v, me, a.events(game, me, -1))} catch {ledger = []}
+  const invite = inviteOf(game, a, v, me, asked, ledger, notesList);
   const lines = [
-    `You are ${v.name}, the ${role.name || 'unknown role'} (${role.team || '?'}, ${sideOf(role.team)}), ${life}.`,
+    `You are ${v.name}, the ${role.name || 'unknown role'} (${role.team || '?'}, ${sideOf(role.team)}), ${life}.${change ? ` You were the ${change.was} until ${change.when || 'lately'}.` : ''}`,
     waiting ? clockLine(v, null) : clockLine(v, me),
     `Alive (${living.length}): ${listNames(living)}.${dead.length ? ` Dead: ${listNames(dead)}.` : ''}`,
     ...(stakes ? [stakes] : []),
     newsLine(news),
-    ...[movesText(news), placeText(v), roomsText(v)].filter(Boolean),
+    ...[movesText(news), placeText(v), invite ? invite.text : roomsText(v), claimsText(ledger), notesText(staleNotes(notesList, v))].filter(Boolean),
   ];
   if (asked && !asked.done) lines.push(`**WAITING ON YOU: ${asked.text}**`);
   if (waiting) lines.push(waiting.text);
