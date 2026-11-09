@@ -53,20 +53,23 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     if (fresh) arm();
     schedulePush();
   }
-  // The watcher's whole view (GET /play/watch, the page only): everything, whispers with their text and every seat's told lines
-  // included; events are the log entries after `since` with the table's sentence as `text`. A `since` past the end of this game
-  // (a new game began) reads from the start.
+  // The watcher's whole view (GET /play/watch, the page only): everything, whispers with their text, room talk with its `room`
+  // and every seat's told lines included; events are the log entries after `since` with the table's sentence as `text`. places:
+  // who is where now ({square, rooms: [{id, name, size, seats, free}], open}); a move event says who went where. A `since` past
+  // the end of this game (a new game began) reads from the start.
   function watchView(since = -1) {
     const last = game.log.length ? game.log.at(-1).id : -1, from = Number.isFinite(Number(since)) && Number(since) <= last ? Number(since) : -1;
     const copy = v => v == null ? v : JSON.parse(JSON.stringify(v)), g = api.grimoire(game), c = game.clock;
-    const told = api.events(game, ST, from), whispers = game.log.filter(e => e.type === 'whisper' && e.id > from).map(({n, ...e}) => copy(e));
+    // the Storyteller hears neither whispers nor room talk; the watcher hears both
+    const told = api.events(game, ST, from), whispers = game.log.filter(e => (e.type === 'whisper' || e.type === 'say' && e.room != null) && e.id > from).map(({n, ...e}) => copy(e));
+    const w = api.where(game, ST), places = {square: w.square, rooms: w.rooms, open: w.open};
     return {ok: true, seed: game.config.seed, rounds: game.config.rounds, phase: g.phase, night: game.night, day: game.day,
       clock: {day: c.day, round: c.round, roundsBeforeNominations: c.roundsBeforeNominations, nominationsOpen: c.nominationsOpen, spoke: [...c.spoke], passedNominating: [...c.passedNominating]},
       pending: copy(game.pending), ballot: copy(game.ballot), grimoire: g, nightOrder: api.nightOrder(game), rulings: api.rulings(game),
-      winner: copy(game.winner), last, canNewGame: true, events: [...told, ...whispers].sort((a, b) => a.id - b.id)};
+      winner: copy(game.winner), last, canNewGame: true, places, events: [...told, ...whispers].sort((a, b) => a.id - b.id)};
   }
   // The live push to the page's sockets: what changed since the last push, batched per PUSH_MS tick (a vote's ballots arrive as they
-  // land). {type: 'watch', seed, last, events, clock, pending, ballot, phase, day, night, winner}: the same fields and shapes as the
+  // land). {type: 'watch', seed, last, events, clock, pending, ballot, phase, day, night, winner, places}: the same fields and shapes as the
   // watch body; the page polls ?since only when its socket reconnects.
   let pushed = -1, pushT = null, lastBallot = 'null';
   function schedulePush() {
@@ -79,7 +82,7 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     const v = watchView(pushed), ballot = JSON.stringify(v.ballot);
     if (!v.events.length && ballot === lastBallot) return;
     pushed = v.last; lastBallot = ballot;
-    sendAll({type: 'watch', seed: v.seed, last: v.last, events: v.events, clock: v.clock, pending: v.pending, ballot: v.ballot, phase: v.phase, day: v.day, night: v.night, winner: v.winner});
+    sendAll({type: 'watch', seed: v.seed, last: v.last, events: v.events, clock: v.clock, pending: v.pending, ballot: v.ballot, phase: v.phase, day: v.day, night: v.night, winner: v.winner, places: v.places});
   }
   // The scripted Storyteller: answers a Storyteller decision left alone for `grace` ms. The wait starts again with each
   // new decision and each Storyteller call (timers only: the engine's folder reads no clock).
