@@ -581,7 +581,8 @@ console.log('rooms in the talk');
     `a line said in a room carries its place, named from the watch body (${line(L + 2) && line(L + 2).textContent})`);
   ok(line(L + 3) && !line(L + 3).classList.contains('in-room') && !line(L + 3).querySelector('.place'), 'a line at the Square has no place mark');
   const {talkLine} = await import('../src/ui/talk.js');
-  ok(/in the nook:/.test(talkLine({type: 'say', seat: 0, room: 'nook', text: 'x'}, n).html), 'without places in the body, the room is named from the rooms as data');
+  const {ROOMS} = await import('../src/data/rooms.js');
+  ok(talkLine({type: 'say', seat: 0, room: ROOMS[0].id, text: 'x'}, n).html.includes(`in ${ROOMS[0].name}:`), `without places in the body, the room is named from the rooms as data (${ROOMS[0].name})`);
 }
 
 console.log(fails ? `${fails} check(s) failed` : 'the page renders the game and changes nothing');
