@@ -24,3 +24,16 @@
 ## Checks
 - npm run uismoke (CI core): stubbed DOM (scripts/stubdom.mjs, from Eldmoor) + src/ui/fixtures/game.json (npm run uifixture, seed 1)
   + runners.json (hand-written). Screenshots: build, `vite preview --port 5791`, headless Chrome --window-size=3440,1440 on ?fixture.
+
+## Live push and pace (PR #43)
+- Socket {type:'watch', seed, last, events, clock, pending, ballot, phase, day, night, winner} merged by mergePush (dedupe by id; replay vs new game).
+  No grimoire/rulings/nightOrder in the push: a debounced ?since=last read 1.5 s after a push with new events. Timer poll only while the socket is down.
+- Pace knob (fast 20 s/120 min, readable 60/360 default, slow 150/720) sent as minGap/heartbeat in start bodies; the supervisor ignores them
+  until infra wires --min-gap/--heartbeat (asked in #43).
+
+## Tokens (PR #44) and phone (PR 3)
+- src/ui/tokens.js: all SVG drawings (ROLE_ICONS, REMINDER_ICONS, seatMarker, ghostCoin, handMarker); colours as CSS custom properties.
+  Text arcs via shared <defs> (installDefs, #ct-arc-low, #ct-arc-seat). Style not yet approved by the owner.
+- Talk: speaker colour per seat (.who.sc-0..6, --seat-c0..6). Under 600 px: one column, smaller markers, overflow-x: clip (not hidden:
+  hidden makes body a scroll container). ?fixture=vote|talk|end opens that recorded moment.
+- True 390 px measurement needs CDP Emulation.setDeviceMetricsOverride (headless Chrome's window has a ~500 px minimum).

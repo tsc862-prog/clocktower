@@ -107,15 +107,21 @@ a { color: var(--gold); }
 /* talk and the Storyteller's log */
 .log .lines { flex: 1; overflow-y: auto; padding: .4rem .9rem 2.5rem; overflow-anchor: none; }
 .log .follow { position: absolute; bottom: .7rem; left: 50%; transform: translateX(-50%); background: var(--gold); color: var(--bg); border: 0; }
-.line { padding: .15rem 0; }
-.line .who { color: var(--gold); font-weight: normal; }
+/* each seat speaks in its own colour, the same in every line and whisper (seat order: c0 is seat 1) */
+:root { --seat-c0: #e6b95c; --seat-c1: #8fc7e8; --seat-c2: #e59a8a; --seat-c3: #9fd49a; --seat-c4: #c9a6ec; --seat-c5: #e8d48f; --seat-c6: #7fd1c4; }
+.line { padding: .3rem 0; line-height: 1.6; }
+.line .who { color: var(--gold); font-weight: normal; margin-right: .2rem; }
+.line .who.sc-0 { color: var(--seat-c0); } .line .who.sc-1 { color: var(--seat-c1); } .line .who.sc-2 { color: var(--seat-c2); } .line .who.sc-3 { color: var(--seat-c3); }
+.line .who.sc-4 { color: var(--seat-c4); } .line .who.sc-5 { color: var(--seat-c5); } .line .who.sc-6 { color: var(--seat-c6); }
+.line.say { padding-left: 1.2em; text-indent: -1.2em; }
+.line.say + .line.say { border-top: 1px solid #ffffff08; }
 .line.pass { font-size: .9rem; }
 .line.break { margin: .7rem 0 .3rem; padding: .2rem .5rem; color: var(--st); border-top: 1px solid var(--line); font: 13px var(--sans); text-transform: uppercase; letter-spacing: .05em; }
 .line.break.night { color: #9aa3d8; }
 .line.narration { color: var(--st); font-style: italic; padding-left: 1rem; border-left: 2px solid var(--st); margin: .3rem 0; }
 .line .st-name { font: normal 11px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--faint); }
 .line.whisper { margin: .3rem 0 .3rem 1.5rem; padding: .2rem .6rem; border-left: 2px dashed var(--private); color: var(--private); }
-.line.whisper .lean { font: 13px var(--sans); } .line.whisper .text { font-style: italic; }
+.line.whisper .lean { font: 13px var(--sans); } .line.whisper .lean .who { font-weight: 600; } .line.whisper .text { font-style: italic; }
 .unheard { font: 10px var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--faint); margin-left: .4rem; }
 .line.nomination { color: var(--evil); } .line.vote-result { color: var(--gold); font-size: .95rem; }
 .line.event { font-weight: bold; } .line.win { margin-top: .6rem; font-size: 1.2rem; color: var(--gold); }
@@ -160,4 +166,24 @@ a { color: var(--gold); }
   .seat .role-piece { right: -28px; } .seat .role-piece .role-token { width: 36px; height: 36px; }
   .grim-row { grid-template-columns: 1.4rem 44px 5rem 1fr; } .grim-row .believed, .grim-row .life { grid-column: 3; } .grim-row .tokens { grid-column: 1 / -1; }
   .panel h2 .opt { float: none; display: block; margin: 0; }
+}
+/* a phone (390 px): everything in one column, nothing wider than the screen */
+@media (max-width: 600px) {
+  html, body { overflow-x: clip; }
+  #gamebar { gap: .3rem .7rem; padding: .4rem .6rem; } .bar h1 { font-size: 1.2rem; } .bar .phase { font-size: 1rem; }
+  #board { padding: 6px; gap: 6px; } .panel { min-width: 0; }
+  #talk { height: 75vh; } #rulings, #agents { height: auto; max-height: 80vh; }
+  .ring { width: 92%; }
+  .seat { width: 25%; font-size: .75rem; } .seat .marks { min-height: 20px; }
+  .seat .pieces, .seat .seat-marker { width: 54px; height: 54px; }
+  .seat .role-piece { right: -16px; bottom: -4px; } .seat .role-piece .role-token { width: 28px; height: 28px; }
+  .seat .ghost { left: -14px; } .seat .ghost .ghost-coin, .hand-marker { width: 18px; height: 18px; }
+  .seat .st { font-size: 10px; overflow-wrap: anywhere; } .seat .st .sees { display: none; } .seat .life { display: none; }
+  .mark { font-size: 9px; } .hand .hw { display: none; }
+  .centre { width: 46%; } .vote .tally { font-size: 1.15rem; } .vote .what { font-size: .85rem; } .centre .quiet { font-size: .95rem; }
+  .log .lines { padding: .3rem .6rem 2.5rem; } .line { font-size: .95rem; } .line.whisper { margin-left: .6rem; }
+  .grim-row { grid-template-columns: 1.2rem 36px 1fr; padding: .25rem .5rem; } .grim-row .piece .role-token { width: 36px; height: 36px; }
+  .grim-row .name { grid-column: 3; } .grim-row .role, .grim-row .believed, .grim-row .life { grid-column: 3; } .grim-row .tokens { grid-column: 2 / -1; }
+  .agent-ctl input[name="model"] { width: 9rem; } .agent-head .who { min-width: 0; }
+  .pools { font-size: 12px; }
 }

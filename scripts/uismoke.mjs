@@ -86,6 +86,9 @@ const talk = $('talk').querySelector('.lines');
 const says = talk.querySelectorAll('.line.say'), sayEv = w.events.filter(e => e.type === 'say');
 ok(says.length === sayEv.length && says.length > 0, `every line said shows in the talk (${says.length})`);
 ok(says[0].querySelector('.who').textContent === names[sayEv[0].seat] && says[0].textContent.includes(sayEv[0].text), 'a line shows its speaker and its words');
+ok(says.every((l, i) => l.querySelector('.who').classList.contains('sc-' + sayEv[i].seat)) && new Set(sayEv.map(e => e.seat)).size > 1, 'each speaker has the colour of their seat, the same in every line');
+{const css = readFileSync(join(ROOT, 'styles/page.css'), 'utf8');
+  ok([0, 1, 2, 3, 4, 5, 6].every(i => css.includes(`.who.sc-${i}`)) && /@media \(max-width: 600px\)[\s\S]*overflow-x: clip/.test(css), 'the page has a colour for each of the seven seats and a phone layout that never scrolls sideways');}
 const wh = talk.querySelectorAll('.line.whisper'), whEv = w.events.filter(e => e.type === 'whisper');
 ok(wh.length === whEv.length && wh.length > 0, `whispers show inline (${wh.length})`);
 ok(wh.length > 0 && wh[0].querySelector('.lean').textContent.includes(`${names[whEv[0].from]} leaned in to ${names[whEv[0].to]}`) && wh[0].querySelector('.text').textContent === whEv[0].text && /did not hear/.test(wh[0].textContent),

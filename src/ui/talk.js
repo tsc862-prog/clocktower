@@ -10,10 +10,11 @@ import {roleName, seatNames} from './model.js';
 const BREAKS = new Set(['phase', 'dawn']);
 export function talkLine(e, names) {
   const n = i => esc(names[i] ?? `seat ${i}`);
+  const who = i => `<b class="who sc-${Number.isInteger(i) ? i % 7 : 'x'}">${n(i)}</b>`; // each seat's own colour (styles/page.css --seat-c0..6)
   switch (e.type) {
-    case 'say': return {cls: 'say', html: `<b class="who">${n(e.seat)}</b> <span class="text">${esc(e.text)}</span>`};
+    case 'say': return {cls: 'say', html: `${who(e.seat)} <span class="text">${esc(e.text)}</span>`};
     case 'pass': return {cls: 'pass', html: `<span class="dim">${esc(e.text)}</span>`};
-    case 'whisper': return {cls: 'whisper', html: `<div class="lean"><b>${n(e.from)}</b> leaned in to <b>${n(e.to)}</b> <span class="unheard" title="Only the two of them heard this">the table did not hear this</span></div><div class="text">${esc(e.text)}</div>`};
+    case 'whisper': return {cls: 'whisper', html: `<div class="lean">${who(e.from)} leaned in to ${who(e.to)} <span class="unheard" title="Only the two of them heard this">the table did not hear this</span></div><div class="text">${esc(e.text)}</div>`};
     case 'whisper-seen': return null; // the table's view of a whisper; the whisper itself carries it
     case 'narration': return {cls: 'narration', html: `<span class="st-name">Storyteller</span> <span class="text">${esc(e.text)}</span>`};
     case 'phase': return {cls: 'break ' + (e.what || ''), html: esc(e.text)};
