@@ -9,7 +9,7 @@
 // Every refusal comes back as {ok: false, error} with what is open to the seat now. With no game behind the relay (the
 // stub backend: no ctx.game or ctx.api) look answers "no game yet" and the rest say so.
 import {clashesOf, seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf, shotOf,
-  placeText, placeNameOf, andList, claimsOf, roleChangeOf, staleNote, noteText, readsOf, nothingYet} from '../seats/player.js';
+  placeText, placeNameOf, andList, claimsOf, coverOf, roleChangeOf, staleNote, noteText, readsOf, nothingYet} from '../seats/player.js';
 
 const READ_CAP = 40; // read_talk and my_whispers show at most this many entries
 
@@ -75,9 +75,11 @@ function look(args, ctx) {
 function myRole(args, ctx) {
   const v = viewOf(ctx), r = v.role || {}, change = roleChangeOf(ctx.game, ctx.api, v, me(ctx));
   const reads = readsOf(r.id), quiet = ['townsfolk', 'outsider'].includes(r.team) && nothingYet(r.id); // what a count shows (#89); nothing to tell on day 1 (#87)
+  let cover = null; // an evil seat's good role to claim, or the one it claimed (#104)
+  try {cover = coverOf(v, claimsOf(v, me(ctx), ctx.api.events(ctx.game, me(ctx), -1)))} catch {cover = null}
   return {ok: true, name: v.name, ...(change ? {changed: change.text} : {}), role: r.name, team: r.team, side: sideOf(r.team), ability: r.ability,
     ...(reads ? {reads} : {}), ...(quiet ? {day1: `The ${r.name} ${quiet}: on day 1 you have nothing to tell, and a question about it is not one you can answer yet.`} : {}),
-    alive: !!v.alive, ghostVote: !!v.ghostVote,
+    ...(cover ? {cover: cover.text} : {}), alive: !!v.alive, ghostVote: !!v.ghostVote,
     told: (v.told || []).map(x => ({night: x.night, text: String(x.text ?? '')})).filter(x => x.text)};
 }
 function readTalk(args, ctx) {
@@ -118,12 +120,15 @@ function claims(args, ctx) {
     if (!ledger.length) return {ok: true, claims: [], note: `${f.seat.name} has named no role for themself in your hearing.`};
   }
   const none = (v.seats || []).map(s => s.name).filter(n => !ledger.some(p => p.player === n));
-  const two = ledger.filter(p => p.claims.length > 1).map(p => p.player);
+  // a secret (my own evil role, or a team-mate's said to me in private, #104) is shown marked and never counted as a claim
+  const open = ledger.map(p => ({player: p.player, claims: p.claims.filter(c => !c.secret)})).filter(p => p.claims.length);
+  const two = open.filter(p => p.claims.length > 1).map(p => p.player);
   return {ok: true, claims: ledger.map(p => ({player: p.player, roles: p.claims.map(c => ({role: c.role, day: c.day, said: c.said,
-      ...(c.times > 1 ? {times: c.times} : {}), ...(c.unnamed ? {how: 'said, not named: the line tells what the ability does'} : {}), ...(c.in ? {in: c.in} : {}), ...(c.whispered ? {whispered: `to ${c.whispered}`} : {})}))})),
+      ...(c.times > 1 ? {times: c.times} : {}), ...(c.unnamed ? {how: 'said, not named: the line tells what the ability does'} : {}), ...(c.in ? {in: c.in} : {}), ...(c.whispered ? {whispered: `to ${c.whispered}`} : {}),
+      ...(c.secret ? {secret: c.secret === 'own' ? 'your real role: never say it again, anywhere' : "your team-mate's real role, told you in private: never repeat it"} : {})}))})),
     ...(who ? {} : {noClaim: none}),
-    ...(who ? {} : {oneClaim: [...new Set(ledger.flatMap(p => p.claims.map(c => c.role)))].filter(role => !clashesOf(ledger).some(c => c.role === role))
-      .map(role => `${role}: ${ledger.find(p => p.claims.some(c => c.role === role)).player}, the one claim`)}),
+    ...(who ? {} : {oneClaim: [...new Set(open.flatMap(p => p.claims.map(c => c.role)))].filter(role => !clashesOf(ledger).some(c => c.role === role))
+      .map(role => `${role}: ${open.find(p => p.claims.some(c => c.role === role)).player}, the one claim`)}),
     ...(who || !clashesOf(ledger).length ? {} : {sameRole: clashesOf(ledger).map(c => `${c.role}: claimed by ${listNames(c.players)}. Each character is in play at most once, so at most one of them is the ${c.role}.`)}),
     note: two.length ? `Named more than one role: ${listNames(two)}; the lines are above.`
       : 'Nobody has named two roles for themself. A player who claimed one role has not changed their claim.'};

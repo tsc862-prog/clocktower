@@ -1152,6 +1152,107 @@ section("game 4 fixes: no dodge on day 1 (#87), the Poisoner's targets (#88), th
   ok(seen.max <= HEADER_CAP, `seed 31 played out, each seat reading before its header: the longest header is ${seen.max} (cap ${HEADER_CAP})${seen.max > HEADER_CAP ? ': ' + seen.at : ''}`);
 }
 
+section('game 5 fixes: evil seats keep their roles secret (#104), the Chef counts pairs anywhere (#104)');
+{
+  // Corwin the Imp, Ines the Spy, Yusuf the Poisoner; on 'day' Ines and Corwin are in the nook, where she tells him her role
+  const as = (role, team, told) => ({...fakeApi, view: (x, s) => ({...fakeApi.view(x, s), role: {id: role, name: role[0].toUpperCase() + role.slice(1), team, ability: 'x'},
+    told: [{night: 1, what: 'role', text: 'You are the X.'}, ...told]})});
+  const imp = as('imp', 'demon', [{night: 1, what: 'demon-info', text: 'Your minions are Ines and Yusuf. Good roles not in play, to bluff with: Empath, Soldier, Monk.'}]);
+  const GRIM = 'You see the grimoire: Odette the Fortune Teller. Bram the Chef. Ines the Spy. Corwin the Imp. Thea the Virgin. Fitch the Drunk (believes they are the Mayor). Yusuf the Poisoner.';
+  const spy = as('spy', 'minion', [{night: 1, what: 'minion-info', text: 'The demon is Corwin. The other minion is Yusuf.'}, {night: 1, what: 'grimoire', text: GRIM}]);
+  const pois = as('poisoner', 'minion', [{night: 1, what: 'minion-info', text: 'The demon is Corwin. The other minion is Ines.'}]);
+  const coverOfH = h => h.split('\n').find(l => /^(?:Your )?[Cc]over:/.test(l)) || '';
+  const claimsOfH = h => h.split('\n').find(l => l.startsWith('Claims')) || '';
+  const g = fakeGame('day');
+  const ev = e => g.events.push({id: g.events.length, ...e});
+  ev({type: 'say', seat: 2, room: 'nook', text: 'Corwin, I am the Spy, so we are on the same side.', day: 1, audience: [2, 3]});
+  // the Imp: a bluff to claim, the Spy's word marked as a secret and kept out of the claims line
+  let h = playerHeader(g, 3, imp);
+  ok(/^Cover: you are evil; your true role is a secret\. Claim Empath \(not in play\)\./.test(coverOfH(h)), `the Imp's cover names its first bluff: ${coverOfH(h)}`);
+  ok(/Ines \(your team-mate\) told you the real role in a whisper and in the nook: a secret; never repeat it\./.test(coverOfH(h)), `her words in a whisper and in the room are marked a secret, once: ${coverOfH(h)}`);
+  ok(!/Spy/.test(claimsOfH(h)), `the Spy's word is not in the Imp's claims line: ${claimsOfH(h)}`);
+  ok(h.length <= HEADER_CAP, `the Imp's day-1 header stays under ${HEADER_CAP} (${h.length})`);
+  console.log(`    | the Imp's day-1 header on the fake (${h.length}):`);
+  console.log(h.split('\n').map(l => '    | ' + l).join('\n'));
+  let r = tool('claims').handler({}, {...ctxFor(g, 3), api: imp});
+  const spyClaim = r.claims.find(p => p.player === 'Ines')?.roles.find(c => c.role === 'Spy');
+  ok(/team-mate's real role/.test(spyClaim?.secret || '') && !(r.oneClaim || []).some(x => /^Spy/.test(x)), `the claims tool marks the secret and counts it as no claim: ${JSON.stringify(r)}`);
+  ok(/Claim Empath/.test(tool('my_role').handler({}, {...ctxFor(g, 3), api: imp}).cover || ''), 'my_role carries the cover');
+  // a bluff someone else claimed is skipped; once the Imp claims a good role at the table, the line holds it to it
+  ev(say(4, 'Empath here, I got a 1.'));
+  ok(/Claim Soldier \(not in play\)/.test(coverOfH(playerHeader(g, 3, imp))), 'a bluff claimed by another player is passed over');
+  ev(say(3, "I'm the Soldier, for what it is worth."));
+  h = playerHeader(g, 3, imp);
+  ok(/^Your cover: Soldier, said day 1: keep to it\./.test(coverOfH(h)) && /Soldier: Corwin/.test(claimsOfH(h)), `after the claim: ${coverOfH(h)}`);
+  // the Spy: a townsfolk role absent from the grimoire she saw, her own word kept out of her claims line
+  h = playerHeader(g, 2, spy);
+  const pick = (coverOfH(h).match(/Claim ([A-Z][\w ]+?) \(not in the grimoire you saw\)/) || [])[1];
+  ok(pick && !GRIM.includes(` the ${pick}`) && !['Chef', 'Empath', 'Soldier', 'Monk'].includes(pick), `the Spy's cover is a role not in the grimoire and not claimed: ${coverOfH(h)}`);
+  ok(/Tell Corwin in a room, so you two never claim the same\./.test(coverOfH(h)), 'a minion is told to agree its cover with the demon');
+  ok(!/Spy/.test(claimsOfH(h)), `the Spy's own word is no claim of hers: ${claimsOfH(h)}`);
+  // the Poisoner knows no roles out of play: a guess, marked as one
+  h = playerHeader(g, 6, pois);
+  ok(/Claim (?!Chef|Empath|Soldier)[A-Z][a-z]+ \(nobody has claimed it; a guess\)\. Tell Corwin in a room/.test(coverOfH(h)), `the Poisoner's cover is a guess: ${coverOfH(h)}`);
+  // a good seat: no cover line
+  for (const s of [0, 1, 4]) ok(!/[Cc]over:/.test(playerHeader(g, s, fakeApi)), `${NAMES[s]}, good, has no cover line`);
+  ok(!/[Cc]over:/.test(playerHeader(fakeGame('night'), 3, imp)), 'no cover line at night');
+  // an evil role said at the table stays a claim for everyone (the table heard it), but never as the speaker's own
+  ev(say(2, 'Odette, I am the Spy, as I said.'));
+  ok(/Spy: Ines/.test(claimsOfH(playerHeader(g, 4, fakeApi))), "Thea, good, sees the Spy's claim at the table");
+  ok(/Spy: Ines/.test(claimsOfH(playerHeader(g, 3, imp))), 'the Imp sees it too once it was said at the table');
+  ok(!/Spy/.test(claimsOfH(playerHeader(g, 2, spy))), 'the Spy never sees her own role as her claim');
+  // the prompt and the Chef's note
+  const sys = systemFor('player', 'Ines');
+  ok(/your true role and your team-mates' are secrets for the whole game/.test(sys) && /never name a team-mate's role or team/.test(sys) && /The demon takes one of its bluffs/.test(sys)
+    && /tells the demon which in a room/.test(sys) && /Never nominate or vote against a team-mate/.test(sys), 'the prompt: evil roles are secrets, a cover from the first day, agreed in a room');
+  ok(/counts evil pairs anywhere at the table, not the Chef's own neighbours/.test(sys), "the prompt: the Chef's number is about pairs anywhere");
+  const chef = {...fakeApi, view: (x, s) => ({...fakeApi.view(x, s), role: {id: 'chef', name: 'Chef', team: 'townsfolk', ability: 'x'}})};
+  ok(/anywhere around the table, not your own neighbours/.test(tool('my_role').handler({}, {...ctxFor(g, 1), api: chef}).reads), 'my_role for the Chef: pairs anywhere');
+}
+{
+  // a real deal: game 5's seed (37). The Imp's cover is one of the bluffs it was told; a Spy's is out of the grimoire she saw.
+  const game = newGame({seed: 37}), sc = createScripted(37);
+  for (let n = 0; n < 500 && !(game.phase === 'day' && api.roomsOpen(game)); n++) {
+    const p = game.pending; if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(game, i, ''); else api.answer(game, p.seat, sc(game));
+  }
+  const IMP = game.seats.findIndex(s => s.role === 'imp'), SPY = game.seats.findIndex(s => s.role === 'spy');
+  const h = playerHeader(game, IMP), v = api.view(game, IMP);
+  const bluffs = (v.told.find(t => t.what === 'demon-info')?.text.match(/to bluff with: ([^.]*)/) || [])[1] || '';
+  const pick = (h.match(/Claim ([A-Z][\w ]+?) \(not in play\)/) || [])[1];
+  ok(pick && bluffs.split(', ').includes(pick), `seed 37: the Imp's cover (${pick}) is one of its bluffs (${bluffs})`);
+  ok(h.length <= HEADER_CAP, `seed 37: the Imp's day-1 header is under ${HEADER_CAP} (${h.length})`);
+  console.log(`    | seed 37, the Imp's day-1 header (${h.length}):`);
+  console.log(h.split('\n').map(l => '    | ' + l).join('\n'));
+  if (SPY >= 0) {
+    const hs = playerHeader(game, SPY), grim = api.view(game, SPY).told.filter(t => t.what === 'grimoire').at(-1)?.text || '';
+    const sp = (hs.match(/Claim ([A-Z][\w ]+?) \(not in the grimoire you saw\)/) || [])[1];
+    ok(sp && !grim.includes(` the ${sp}`), `seed 37: the Spy's cover (${sp}) is not in the grimoire she saw`);
+  }
+  for (const s of game.seats) if (!['imp', 'spy', 'poisoner', 'baron', 'scarlet-woman'].includes(s.role)) ok(!/[Cc]over:/.test(playerHeader(game, s.index)), `seed 37: ${s.name}, good, has no cover line`);
+  // the night's thoughts scene (#119): the pending addresses the table (seat 'table', seats = the living); the evil seats'
+  // header and tools read it through their own pendingFor and never hand 'table' to the api as a seat
+  const ctx = i => ({game, seat: {index: i, name: game.seats[i].name}, api: api.forSeat(i), log: () => {}});
+  if (pick) tool('speak').handler({text: `I am the ${pick}, for what it is worth.`}, ctx(IMP));
+  const STOP = {}; // playScripted plays the day (talk, nominations, votes) and the night; stop it at night 2's thoughts
+  try {playScripted(game, 37, {onDecision: p => {if (p.kind === 'thoughts' && game.night >= 2) throw STOP}})} catch (e) {if (e !== STOP) throw e}
+  const tp = game.pending;
+  const atScene = tp?.kind === 'thoughts' && tp.seat === 'table' && Array.isArray(tp.seats);
+  ok(atScene, `seed 37 reaches the thoughts scene of night ${game.night} (seat ${JSON.stringify(tp?.seat)})`);
+  if (atScene) {
+    for (const i of tp.seats.filter(i => ['imp', 'spy', 'poisoner', 'baron', 'scarlet-woman'].includes(game.seats[i].role))) {
+      const who = `${game.seats[i].name} (${game.seats[i].role})`;
+      let hn = '';
+      try {hn = playerHeader(game, i)} catch (e) {hn = 'THREW ' + e.message}
+      ok(!/^THREW/.test(hn) && !/[Cc]over:/.test(hn) && hn.length <= HEADER_CAP, `seed 37, thoughts scene: ${who}'s header reads, no cover line at night, under ${HEADER_CAP} (${hn.length})${/^THREW/.test(hn) ? ': ' + hn : ''}`);
+      console.log(`    | seed 37, night ${game.night} thoughts scene, ${who}'s header (${hn.length}): ${hn.split('\n').slice(0, 2).join(' / ')}`);
+      for (const name of ['look', 'my_role', 'what_is_asked', 'claims', 'read_talk', 'my_whispers', 'my_notes', 'where']) {
+        let r; try {r = tool(name).handler({}, ctx(i))} catch (e) {r = {ok: false, error: 'threw ' + e.message}}
+        ok(r && r.ok !== false && !/seat "table"/.test(JSON.stringify(r)), `seed 37, thoughts scene: ${who}'s ${name} answers${r?.ok === false ? ': ' + r.error : ''}`);
+      }
+    }
+  }
+}
+
 section('nothing under src/ imports node: or scripts/');
 {
   const walk = d => readdirSync(d).flatMap(f => {const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : /\.(m?js)$/.test(f) ? [p] : []});

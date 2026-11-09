@@ -10,6 +10,7 @@ import http from 'node:http';
 import WebSocket from 'ws';
 import {gameBackend, HOLD_CAP_MS, HEARD_FRESH_MS} from '../src/game/backend.js';
 import {ST} from '../src/game/api.js';
+import {PLAYER_TOOLS} from '../src/data/player-tools.js';
 import {quietEnv, req} from './relaycheck.mjs';
 import {startRelay} from './relay.mjs';
 
@@ -62,7 +63,9 @@ async function holds() {
 // Listening mode (#82): a scripted game's phase and move lines are made into clips, in the Storyteller's voice.
 async function listening() {
   console.log('phases and moves are clipped');
-  const asked = [], b = gameBackend({seed: 5, scripted: true, grace: 0, now: () => Date.now()});
+  // no seat runs here, so the seats get no think tool: the night's thoughts are answered empty and the scripted game reaches its
+  // day (#111: a table with think waits on its seats' thoughts)
+  const asked = [], b = gameBackend({seed: 5, scripted: true, grace: 0, now: () => Date.now(), players: PLAYER_TOOLS.filter(t => t.name !== 'think')});
   try {
     b.setVoice({clip: async (name, text) => {asked.push({name, text}); return {id: 'a'.repeat(24), ms: 1}}});
     b.attach({readyState: 1, send() {}, on() {}});

@@ -317,7 +317,7 @@ const READS = {
   washerwoman: 'One of your two names holds that townsfolk role; the other can be anyone, good or evil.',
   librarian: 'One of your two names holds that outsider role; the other can be anyone. "No outsiders" names nobody.',
   investigator: 'One of your two names is that minion; the other can be anyone, even good.',
-  chef: 'Your number counts pairs of evil players sitting side by side. It names nobody: 0 means no two evil sit together, not who is evil.',
+  chef: 'Your number counts pairs of evil players sitting side by side anywhere around the table, not your own neighbours (that is the Empath). It names nobody: 0 means no two evil sit together, not who is evil.',
   empath: 'Your number counts the evil among your two nearest living neighbours that night; it does not say which one, and your neighbours change as players die.',
   'fortune-teller': 'A yes means one of your two picks reads as the demon, and one good player reads as the demon to you all game; a no clears both of being the demon, nothing more.',
   undertaker: 'You learn the role of the player executed that day; it says nothing about who voted or why.',
@@ -478,12 +478,18 @@ export function claimsOf(view, me, events) {
     for (const {role, unnamed} of claimsWithHow(e.text, e.from)) {
       if (!by.has(e.from)) by.set(e.from, []);
       const list = by.get(e.from), prev = list.find(c => c.role === role);
-      if (prev) {prev.times++; if (prev.unnamed && !unnamed) {delete prev.unnamed; prev.said = e.text} continue}
+      if (prev) {
+        prev.times++; if (prev.unnamed && !unnamed) {delete prev.unnamed; prev.said = e.text}
+        // first said in private, now at the table: the whole table heard it, so the table's line stands (#104)
+        if ((prev.whispered || prev.in) && e.type === 'say' && !e.in) {delete prev.whispered; delete prev.in; Object.assign(prev, {day: e.day ?? null, id: e.id, said: e.text})}
+        continue;
+      }
       list.push({role, day: e.day ?? null, id: e.id, said: e.text, times: 1, ...(unnamed ? {unnamed: true} : {}),
         ...(e.type === 'whisper' ? {whispered: e.to} : e.in ? {in: e.in} : {})});
     }
   }
-  const order = (view?.seats || []).map(s => s.name);
+  const order = (view?.seats || []).map(s => s.name), team = teamOf(view);
+  for (const [player, list] of by) for (const c of list) {const m = secretMark(view, team, player, c); if (m) c.secret = m} // #104
   return [...by.entries()].sort((x, y) => order.indexOf(x[0]) - order.indexOf(y[0])).map(([player, claims]) => ({player, claims}));
 }
 // The claims line, by role in the order first claimed:
@@ -494,7 +500,7 @@ export function claimsOf(view, me, events) {
 // room): a whispered claim stays in the claims tool. day: the day when it is day; on day 1 the claimed roles that have
 // nothing to tell yet are named (#87). today: the day count, to leave out the day of a claim made today.
 export function claimsText(ledger, day, today = day) {
-  const pub = (ledger || []).map(p => ({player: p.player, claims: p.claims.filter(c => !c.whispered)})).filter(p => p.claims.length);
+  const pub = (ledger || []).map(p => ({player: p.player, claims: p.claims.filter(c => !c.whispered && !c.secret)})).filter(p => p.claims.length);
   if (!pub.length) return null;
   const roles = new Map();
   for (const p of pub) for (const c of p.claims) {
@@ -519,13 +525,84 @@ export function claimsText(ledger, day, today = day) {
 // character is in play at most once, so two claims to one role are a contradiction, never two holders (#81).
 export function clashesOf(ledger) {
   const by = new Map();
-  for (const p of ledger || []) for (const c of p.claims) {
+  for (const p of openClaims(ledger)) for (const c of p.claims) {
     if (!by.has(c.role)) by.set(c.role, {first: c.id ?? 0, players: []});
     const r = by.get(c.role);
     r.first = Math.min(r.first, c.id ?? 0);
     if (!r.players.includes(p.player)) r.players.push(p.player);
   }
   return [...by.entries()].filter(([, r]) => r.players.length > 1).sort((x, y) => x[1].first - y[1].first).map(([role, r]) => ({role, players: r.players}));
+}
+
+// ---- evil seats keep their roles secret (#104) ----
+// Game 5 hanged a Spy on day 1: she told her demon "I am the Spy" in a room, he repeated it at the table, and she stood by
+// it. An evil seat's true role and its team-mates' are secrets; the header names a good role to claim instead and, once
+// claimed, holds the seat to it. Built only from what this seat was told (its demon's bluffs, the Spy's grimoire, who is on
+// its team) and the claims it heard.
+const ROLE_OF_NAME = new Map(SCRIPT.roles.map(r => [r.name, r]));
+const EVIL_ROLES = new Set(SCRIPT.roles.filter(r => ['minion', 'demon'].includes(r.team)).map(r => r.name));
+const isEvilSeat = v => ['minion', 'demon'].includes(v?.role?.team);
+const teamTold = v => (v?.told || []).filter(t => t.what ? ['minion-info', 'demon-info'].includes(t.what) : /\b(?:demon|minions?)\b/i.test(t.text || ''));
+// The team-mates the Storyteller named to this seat, in the order named (the demon first in a minion's word); none for a good seat.
+export function teamOf(v) {
+  if (!isEvilSeat(v)) return [];
+  const out = [];
+  for (const t of teamTold(v)) {
+    const text = String(t.text || '');
+    (v.seats || []).map(s => ({name: s.name, at: text.search(new RegExp(String.raw`\b` + reEsc(s.name) + String.raw`\b`))}))
+      .filter(x => x.at >= 0 && x.name !== v.name).sort((x, y) => x.at - y.at).forEach(x => {if (!out.includes(x.name)) out.push(x.name)});
+  }
+  return out;
+}
+// A claim that is not one to repeat: the seat's own evil role (said anywhere, it is the mistake), or a team-mate's evil role
+// said to this seat in private (a room or a whisper). The same evil role said at the table by anyone stays a claim.
+function secretMark(v, team, player, c) {
+  if (!isEvilSeat(v) || !EVIL_ROLES.has(c.role)) return null;
+  if (player === v.name) return 'own';
+  return team.includes(player) && (c.whispered || c.in) ? 'team' : null;
+}
+const openClaims = ledger => (ledger || []).map(p => ({player: p.player, claims: p.claims.filter(c => !c.secret)})).filter(p => p.claims.length);
+// Good roles in play by the grimoire the Spy saw last ("Odette the Chef", "believes they are the Monk"): never a cover.
+function grimoireRoles(v) {
+  const g = (v.told || []).filter(t => t.what === 'grimoire' || /^You see the grimoire/.test(String(t.text || ''))).at(-1);
+  if (!g) return null;
+  const text = String(g.text), out = new Set();
+  for (const m of text.matchAll(ROLE_FIND)) {
+    const before = text.slice(0, m.index);
+    if ((v.seats || []).some(s => new RegExp(String.raw`\b` + reEsc(s.name) + String.raw`\s+the\s+$`).test(before)) || /believes they are the\s+$/.test(before)) {
+      const r = roleByText(m[0]); if (r) out.add(r);
+    }
+  }
+  return out;
+}
+// The roles a guess prefers: no night information to invent, and no public test (a Virgin's trap, a Slayer's shot) to fail.
+const SAFE_GUESS = ['Soldier', 'Mayor', 'Monk', 'Ravenkeeper', 'Undertaker', 'Empath', 'Chef', 'Washerwoman', 'Librarian', 'Investigator', 'Fortune Teller'];
+// {text, role, said?} for an evil seat by day, else null. ledger: claimsOf for this seat.
+export function coverOf(v, ledger) {
+  if (!isEvilSeat(v) || v.phase !== 'day' || v.winner) return null; // by day only: nobody talks at night
+  const team = teamOf(v), placeOf = c => c.whispered ? 'in a whisper' : c.in ? `in ${c.in}` : 'at the table';
+  const secrets = (ledger || []).filter(p => p.player !== v.name).map(p => [p.player, [...new Set(p.claims.filter(c => c.secret === 'team').map(placeOf))]])
+    .filter(([, at]) => at.length).map(([who, at]) => `${who} (your team-mate) told you the real role ${andList(at)}: a secret; never repeat it.`);
+  const mine = (ledger || []).find(p => p.player === v.name)?.claims.filter(c => !c.secret && !EVIL_ROLES.has(c.role) && c.role !== v.role.name && !(c.whispered && team.includes(c.whispered))) || [];
+  const said = mine.sort((x, y) => (x.id ?? 0) - (y.id ?? 0)).at(-1);
+  let head;
+  if (said) head = `Your cover: ${said.role}, said day ${said.day ?? v.day}: keep to it.`;
+  else {
+    const claimed = new Set((ledger || []).filter(p => p.player !== v.name).flatMap(p => p.claims.map(c => c.role)));
+    const open = r => !claimed.has(r) && r !== v.role.name;
+    const bluffs = (teamTold(v).map(t => String(t.text || '').match(/to bluff with:\s*([^.]*)/i)?.[1]).filter(Boolean).at(-1) || '')
+      .split(/,\s*|\s+and\s+/).map(s => roleByText(s)).filter(Boolean);
+    const seen = v.role.id === 'spy' ? grimoireRoles(v) : null;
+    const turn = xs => xs.length ? xs[(v.index ?? 0) % xs.length] : null; // two minions guessing apart, by seat
+    let pick = bluffs.find(open), how = 'not in play';
+    if (!pick && seen) {pick = turn(SCRIPT.roles.filter(r => r.team === 'townsfolk' && !seen.has(r.name) && open(r.name)).map(r => r.name)); how = 'not in the grimoire you saw'}
+    if (!pick) {pick = turn(SAFE_GUESS.filter(open).slice(0, 3)); how = 'nobody has claimed it; a guess'}
+    if (!pick) return secrets.length ? {text: secrets.join(' ')} : null;
+    const demon = v.role.team === 'minion' && team[0];
+    head = `Cover: you are evil; your true role is a secret. Claim ${pick} (${how}).${demon ? ` Tell ${demon} in a room, so you two never claim the same.` : ''}`;
+    return {role: pick, text: [head, ...secrets].join(' ')};
+  }
+  return {role: said.role, said: said.day ?? v.day, text: [head, ...secrets].join(' ')};
 }
 
 // ---- a role that changed (#71): the Scarlet Woman who became the Imp ----
@@ -666,13 +743,14 @@ export function playerHeader(game, seat, api) {
   try {ledger = claimsOf(v, me, a.events(game, me, -1))} catch {ledger = []}
   const poison = poisonOf(v, asked, ledger, evs);
   const invite = inviteOf(game, a, v, me, asked, ledger, notesList);
+  const cover = coverOf(v, ledger);
   const lines = [
     `You are ${v.name}, the ${role.name || 'unknown role'} (${role.team || '?'}, ${sideOf(role.team)}), ${life}.${change ? ` You were the ${change.was} until ${change.when || 'lately'}.` : ''}`,
     waiting ? clockLine(v, null) : clockLine(v, me),
     `Alive (${living.length}): ${listNames(living)}.${dead.length ? ` Dead: ${listNames(dead)}.` : ''}`,
     ...(stakes ? [stakes] : []),
     newsLine(news),
-    ...[v.phase === 'day' ? movesText(news) : null, placeText(v), invite ? invite.text : roomsText(v), recordText(recordOf(evs)), claimsText(ledger, v.phase === 'day' ? v.day : null, v.day), notesText(staleNotes(notesList, v))].filter(Boolean),
+    ...[v.phase === 'day' ? movesText(news) : null, placeText(v), invite ? invite.text : roomsText(v), recordText(recordOf(evs)), claimsText(ledger, v.phase === 'day' ? v.day : null, v.day), cover?.text, notesText(staleNotes(notesList, v))].filter(Boolean),
   ];
   if (asked && !asked.done) lines.push(`**WAITING ON YOU: ${asked.text}**`);
   if (waiting) lines.push(waiting.text);
