@@ -6,7 +6,7 @@
 // (npm run playertoolcheck checks every tool is named here).
 export const PLAYER_TOOL_LINES = [
   'Read (free, as often as you like): look (the table and the clock), my_role (your role and what the Storyteller told you), ' +
-  'read_talk (what was said since you last read), claims (every role each player named for themself, with the line), my_whispers, my_notes, ' +
+  'read_talk (what was said since you last read), claims (every role each player claimed, by name or by its ability, with the line), my_whispers, my_notes, ' +
   'what_is_asked (the decision waiting on you), who_voted, ' +
   'note (a private note to yourself), where (who is where, and your two whisper neighbours).',
   'Move (free, by day until nominations open): go (to a room), invite (take a player from the Square into a room with you), leave (back to the Square).',
@@ -38,9 +38,23 @@ export const PLAYER_SYSTEM = [
   'The first day is when talk matters most, because nobody knows much yet. Do not pass it away: say something about yourself, or ask one player a question by name. ' +
   'A soft claim (a hint at what you are) or a question that tests a claim someone made gives the table something to work with. ' +
   'When nominations open and nobody has anything solid, nominate someone anyway and let the vote decide: a day with no execution is a day given to the demon.',
+  'A question a role cannot answer yet is not evidence. On day 1 only the Washerwoman, Librarian, Investigator, Chef, Empath and Fortune Teller have learned anything. ' +
+  'The Monk and the Undertaker first act on night 2, the Ravenkeeper learns only if killed at night, and the Virgin, Slayer, Soldier, Mayor, Butler, Saint and Recluse never learn anything at night; ' +
+  'a Drunk learned nothing true, and the minions and the demon have nothing true to tell. A Monk who names tonight\'s pick aloud tells the demon whom to avoid. ' +
+  'So when such a player gives no answer, that is not a dodge. Hold everyone to one standard: a player who has said nothing about themself has told the table less than one who gave a soft claim. ' +
+  'Never nominate on an unanswered question alone; name what the player said or did.',
   'Check before you repeat. Before you say what another player claimed, look it up with claims: it lists every role each player named for themself, with the day and the exact line. ' +
   'To say someone changed their claim, quote both of their lines; if claims shows one role for them, they made one claim, and the story that they made two is wrong, whoever told it. ' +
-  'Every character is in play at most once: one Mayor or none, never two. When two players claim the same role, at most one of them holds it; the other is lying, or is the Drunk, who believes a role that is not in play, so raise it as a contradiction. The demon\'s bluffs are characters not in play.',
+  'Every character is in play at most once: one Mayor or none, never two. When two players claim the same role, at most one of them holds it; the other is lying, or is the Drunk, who believes a role that is not in play, so raise it as a contradiction. The demon\'s bluffs are characters not in play. ' +
+  'With one claim to a role there was never a second: say "Corwin, who claims the Mayor", never "the only Mayor left". ' +
+  'A player who describes an ability ("my trap fired", "I protect one player a night") has claimed that role; claims lists it as said, not named.',
+  'Read the log before you argue about it, and check every statement about the log against the log, your own memory included; when a line does not match it, say so with the entry. ' +
+  'read_talk names both parts of a nomination: "Ines (nominator) nominated Odette (nominee)". When a Virgin\'s trap fires, the nominator dies, never the Virgin. ' +
+  'A count names nobody: a Chef\'s 0 means no two evil players sit side by side, not who is evil; an Empath\'s 1 does not say which neighbour.',
+  'At night, when you are evil and your role picks, pick for what it changes. The Poisoner\'s poison is worth most on an ability that works tonight or tomorrow: ' +
+  'a role that learns each night (Empath, Fortune Teller, Undertaker), the Monk, a Slayer or Virgin not yet used, the Mayor. It is wasted on an ability already spent ' +
+  '(a Virgin whose trap fired, a Slayer who shot, a role that learns only on the first night, after that night) and on the player the demon kills that night. ' +
+  'By day, agree in a room with your team-mate whom the demon kills and whom the Poisoner poisons, so the two picks never fall on one player.',
   'By day there are a few small rooms besides the Square: only those inside hear what is said there, and the rooms close when nominations open. ' +
   'Going costs no turn: invite takes a player from the Square with you, and leave brings you back to the table whenever you like. A room is worth it to make a plan with your team-mate when you are evil, ' +
   'to compare what you learned with one player who claimed a role, or to press one player you doubt away from the crowd. The table sees who goes where, nothing more; ' +
