@@ -10,6 +10,8 @@
 //   agents                                                GET /play/runner (the supervisor) and the WebSocket /play (links, runners,
 //                                                         readiness; a runner's narration for the watcher becomes an aside in the talk)
 //   relay state                                           GET /health
+//   voices                                                the socket's {type: 'clip'} (the relay's clip for an event), /tts/*, and
+//                                                         POST /play/heard (how far the voices have got; src/ui/voice.js)
 // The page's actions are the supervisor's: start, stop, stop all, resume; and New game once the relay serves it. The pace knob on the
 // game bar goes with every start (minGap, heartbeat); a running runner keeps the pace it was started with.
 import {createSquare} from './square.js';
@@ -26,7 +28,7 @@ import {createVoice, voiceBar} from './voice.js';
 const PACE_KEY = 'clocktower.pace';
 function storedPace() {try {const v = globalThis.localStorage && localStorage.getItem(PACE_KEY); return PACES[v] ? v : DEFAULT_PACE} catch {return DEFAULT_PACE}}
 
-export function createApp({client, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end', artLoad = imageLoad, pageFetch = undefined, audio = undefined, voiceFile = undefined}) {
+export function createApp({client, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end', artLoad = imageLoad, pageFetch = undefined, audio = undefined, voiceFile = undefined, voiceTick = undefined, clipWait = undefined}) {
   const $ = id => document.getElementById(id);
   const state = {watch: null, runners: null, links: null, asides: [], health: null, source: fixture ? 'recorded' : 'live', watchMissing: false, frame: null, msg: '', epoch: 0, socket: false, pace: storedPace()};
   const bar = {seed: $('seed'), rounds: $('rounds'), phase: $('phase'), winner: $('winner'), source: $('source'), relay: $('relay-state'), newGame: $('new-game'), frames: $('frames'), msg: $('act-msg'), empty: $('empty'), pace: $('pace'), paceNote: $('pace-note'), art: $('art-note')};
@@ -74,8 +76,8 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
   // the voices: every public line read aloud through the relay's local engine, when the owner turns them on
   let drawVoice = () => {};
   const voice = createVoice({client, recorded: !!fixture, onSpeaker: who => panels.square.setSpeaking(who), onChange: st => drawVoice(st),
-    ...(audio !== undefined ? {audio} : {}), ...(voiceFile !== undefined ? {voiceFile} : {})});
-  drawVoice = voiceBar(voice, {box: $('voice'), toggle: $('voice-toggle'), skip: $('voice-skip'), mute: $('voice-mute'), whispers: $('voice-whispers'), note: $('voice-note')});
+    ...(audio !== undefined ? {audio} : {}), ...(voiceFile !== undefined ? {voiceFile} : {}), ...(voiceTick !== undefined ? {tick: voiceTick} : {}), ...(clipWait !== undefined ? {clipWait} : {})});
+  drawVoice = voiceBar(voice, {box: $('voice'), toggle: $('voice-toggle'), skip: $('voice-skip'), mute: $('voice-mute'), whispers: $('voice-whispers'), note: $('voice-note'), time: $('voice-time')});
   drawVoice();
 
   function renderBar() {
@@ -172,6 +174,7 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
     if (!msg || typeof msg !== 'object' || state.source !== 'live') return;
     if (msg.type === 'links') {state.links = msg; render()}
     if (msg.type === 'watch') return applyPush(msg);
+    if (msg.type === 'clip') {voice.clip(msg.id, msg.clip); return}
     if (msg.type === 'narrate' && typeof msg.text === 'string') {
       const names = seatNames(state.watch), who = msg.player == null || msg.player === 'storyteller' ? 'Storyteller' : names[Number(msg.player) - 1] || `seat ${msg.player}`;
       state.asides.push({n: ++asideN, who, text: msg.text, after: state.watch ? state.watch.last : -1});

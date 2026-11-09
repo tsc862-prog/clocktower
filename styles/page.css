@@ -205,6 +205,8 @@ img.ghost-coin.spent { opacity: .4; filter: grayscale(1); }
 .bar .voice { display: inline-flex; align-items: center; gap: .4rem; }
 .bar .voice[data-state="on"] #voice-toggle, .bar .voice[data-state="speaking"] #voice-toggle { border-color: var(--gold); color: var(--gold); }
 .bar .voice[data-state="muted"] #voice-toggle { border-style: dashed; }
+.bar .voice-time { font: 11px var(--sans); color: var(--gold); border: 1px solid var(--gold); border-radius: 999px; padding: 0 .45rem; opacity: .85; }
+.bar .voice-time[hidden] { display: none; }
 .bar .voice-note { font: 12px var(--sans); max-width: 34rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seat.speaking .seat-marker .sm-rim { stroke: var(--gold); stroke-width: 6; }
 .seat.speaking .seat-marker { filter: drop-shadow(0 0 10px rgba(230, 185, 92, .75)); animation: ct-speak 1.4s ease-in-out infinite alternate; }

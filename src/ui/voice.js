@@ -11,11 +11,19 @@
 // Who sounds like whom: GET /tts/status carries the seat voice map as seatVoices; src/data/voices.js (the lore-keeper's) when the
 // relay does not; else the engine's default voice. With no engine the toggle says so once and stays off. The recorded game
 // (?fixture) sends nothing to the relay, so it is not spoken.
+// Keeping time (#50): when the relay makes the clips itself (/tts/status clipsOnSay), a spoken event carries clip: {id, ms} in the
+// watch body, or the socket sends {type: 'clip', id: <event id>, clip} a moment after the push; the page plays GET /tts?id=<clip.id>
+// and asks POST /tts/say itself only when no clip has come within about a second (whispers never have one). The page tells the relay
+// what it has heard: POST /play/heard {last, voice} on each clip's end or skip and every 20 s while the voice is on, and voice: false
+// at once on Voice off or Mute; the relay lets a seat's next speaking turn wait a moment while the voices are behind.
 import {seatNames} from './model.js';
 
 export const VOICE_KEY = 'clocktower.voice';
 export const WHISPER_KEY = 'clocktower.voice.whispers';
 export const QUEUE_CAP = 4; // lines waiting behind the one playing
+export const HEARD_MS = 20000; // the heard report's heartbeat (the relay counts a report fresh for 90 s)
+export const CLIP_WAIT_MS = 1000; // how long a line waits for the relay's clip before the page asks for its own
+const defaultTick = (f, ms) => {const t = setInterval(f, ms); if (t && t.unref) t.unref(); return () => clearInterval(t)};
 const STORYTELLER_LINES = new Set(['narration', 'dawn', 'nomination', 'vote', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'win']);
 const TALK = new Set(['say', 'whisper']);
 
@@ -54,10 +62,33 @@ const read = k => {try {const s = store(); return s ? s.getItem(k) : null} catch
 const write = (k, v) => {try {const s = store(); if (s) s.setItem(k, v)} catch {}};
 const defaultAudio = () => typeof Audio === 'function' ? new Audio() : null;
 
-export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {}, onChange = () => {}, cap = QUEUE_CAP, recorded = false, voiceFile = loadVoiceFile}) {
+export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {}, onChange = () => {}, cap = QUEUE_CAP, recorded = false, voiceFile = loadVoiceFile,
+  tick = defaultTick, heardEvery = HEARD_MS, clipWait = CLIP_WAIT_MS}) {
   const st = {on: false, whispers: read(WHISPER_KEY) === 'on', muted: false, blocked: false, engine: null, note: '', queue: [], now: null,
-    key: null, seen: -1, dropped: 0, fails: 0, saidNoEngine: false, checking: false};
+    key: null, seen: -1, dropped: 0, fails: 0, saidNoEngine: false, checking: false, heard: -1, reporting: false, sentOn: false};
   let finish = null, fileMap = null, fileLoaded = null;
+  // the relay's clips by event id, and the lines waiting for theirs
+  const clips = new Map(), waiting = new Map();
+  function clip(eventId, c) {
+    if (!Number.isInteger(eventId) || !c || typeof c.id !== 'string' || !c.id) return;
+    clips.set(eventId, {id: c.id, ms: c.ms});
+    const w = waiting.get(eventId); if (w) w();
+    if (clips.size > 64) for (const k of clips.keys()) {if (clips.size <= 32) break; clips.delete(k)} // the oldest first
+  }
+  // The heard mark: the newest event finished or skipped; with nothing playing or waiting, everything seen so far.
+  const live = () => st.on && !st.muted && !recorded;
+  const mark = () => !st.now && !st.queue.length ? Math.max(st.heard, st.seen) : st.heard;
+  async function report(voice = live()) {
+    if (recorded || !client.heard) return;
+    const last = mark();
+    if (last < 0 || (!voice && !st.sentOn)) return; // no game yet; or nothing to take back
+    if (voice) st.sentOn = true; else st.sentOn = false;
+    const r = await client.heard({last, voice});
+    const ok = voice && live() && !!r && r.ok !== false;
+    if (ok !== st.reporting) {st.reporting = ok; changed()}
+  }
+  const heardDone = item => {st.heard = Math.max(st.heard, item.id)};
+  const stopTick = recorded ? () => {} : tick(() => {if (live()) report()}, heardEvery);
   const changed = () => onChange(st);
   const say = m => {st.note = m; changed()};
   const nameOf = (speaker, names) => speaker === 'storyteller' ? 'Storyteller' : names[speaker] ?? `seat ${speaker}`;
@@ -86,7 +117,7 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
       if (!st.saidNoEngine) {st.saidNoEngine = true; st.note = 'No voice engine is answering: the page stays silent.' + (why ? ` (${why})` : '')}
       changed(); return false;
     }
-    st.on = true; st.muted = false; st.fails = 0; st.note = ''; write(VOICE_KEY, 'on'); changed(); pump();
+    st.on = true; st.muted = false; st.fails = 0; st.note = ''; write(VOICE_KEY, 'on'); changed(); pump(); report();
     return true;
   }
   function clear() {
@@ -94,7 +125,7 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
     if (st.now) {st.now = null; try {audio && audio.pause()} catch {} const f = finish; finish = null; if (f) f()}
     onSpeaker(null);
   }
-  function turnOff() {st.on = false; write(VOICE_KEY, 'off'); clear(); changed()}
+  function turnOff() {st.on = false; write(VOICE_KEY, 'off'); clear(); st.reporting = false; changed(); report(false)}
   async function toggle() {
     if (st.on && st.blocked) {unlock(); st.blocked = false; st.note = ''; changed(); pump(); return true}
     if (st.on) {turnOff(); return false}
@@ -102,14 +133,14 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
   }
   function skip() {
     if (!st.now) return;
-    st.now = null; try {audio && audio.pause()} catch {}
+    heardDone(st.now); st.now = null; try {audio && audio.pause()} catch {}
     const f = finish; finish = null; onSpeaker(null); if (f) f();
-    changed(); pump();
+    changed(); pump(); report();
   }
   function mute() {
     st.muted = !st.muted;
-    if (st.muted) clear();
-    changed();
+    if (st.muted) {clear(); st.reporting = false}
+    changed(); report();
   }
   function setWhispers(on) {st.whispers = !!on; write(WHISPER_KEY, on ? 'on' : 'off'); changed()}
 
@@ -118,9 +149,11 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
   function feed(w, epoch = 0) {
     if (!w || !Array.isArray(w.events)) return;
     const key = w.seed + ':' + epoch, last = w.events.reduce((m, e) => Math.max(m, e.id), -1);
-    if (st.key !== key) {const first = st.key == null; st.key = key; st.seen = first ? last : -1; if (!first) clear()}
+    if (st.key !== key) {const first = st.key == null; st.key = key; st.seen = first ? last : -1; st.heard = -1; if (!first) {clear(); clips.clear()}}
     const fresh = w.events.filter(e => e.id > st.seen);
+    if (!st.now && !st.queue.length) st.heard = Math.max(st.heard, st.seen); // idle: everything before these was heard
     st.seen = Math.max(st.seen, last);
+    for (let i = w.events.length - 1; i >= 0 && w.events[i].id > st.heard; i--) if (w.events[i].clip) clip(w.events[i].id, w.events[i].clip);
     if (!st.on || st.muted || !fresh.length) return;
     const names = seatNames(w);
     for (const e of fresh) {
@@ -131,8 +164,19 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
     changed(); pump();
   }
 
+  // The clip for a line: the relay's when it has made one (asked for at once, or waited for up to clipWait when the relay makes
+  // clips), else one the page asks for itself. item.via says which: 'clip' or 'say'.
   function synth(item) {
-    if (!item.clip) {const v = voiceFor(item.name, st.engine && st.engine.seatVoices, fileMap); item.voice = v.voice; item.clip = client.ttsSay({text: item.text, ...(v.voice ? {voice: v.voice} : {}), speed: v.speed})}
+    if (item.clip) return item.clip;
+    const own = () => {const v = voiceFor(item.name, st.engine && st.engine.seatVoices, fileMap); item.voice = v.voice; item.via = 'say'; return client.ttsSay({text: item.text, ...(v.voice ? {voice: v.voice} : {}), speed: v.speed})};
+    const relays = () => {const c = clips.get(item.id); if (c) {item.via = 'clip'; return {id: c.id, ms: c.ms}} return null};
+    const waits = item.kind !== 'whisper' && !!(st.engine && st.engine.clipsOnSay) && clipWait > 0;
+    if (relays() || !waits) {item.clip = Promise.resolve(relays() || own()); return item.clip}
+    item.clip = new Promise(res => {
+      let done = false, t = null;
+      const end = () => {if (done) return; done = true; clearTimeout(t); waiting.delete(item.id); res(relays() || own())};
+      waiting.set(item.id, end); t = setTimeout(end, clipWait);
+    });
     return item.clip;
   }
   function play(src) {
@@ -160,7 +204,7 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
     let r = null; try {r = await clip} catch {}
     if (st.now !== item) return; // skipped, muted or turned off meanwhile
     if (!r || !r.id) {
-      st.now = null;
+      heardDone(item); st.now = null;
       if (++st.fails >= 2) {turnOff(); say('The voice engine stopped answering: voices are off.' + (r && r.error ? ` (${r.error})` : ''))}
       else {changed(); pump()}
       return;
@@ -169,17 +213,17 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
     onSpeaker(item.speaker); changed();
     await play(client.ttsClipUrl(r.id));
     if (st.now !== item) return;
-    st.now = null; onSpeaker(null); changed(); pump();
+    heardDone(item); st.now = null; onSpeaker(null); changed(); pump(); report();
   }
 
   // On load: remembered on means try again (the browser may still hold the sound back until a click on the toggle).
   const ready = read(VOICE_KEY) === 'on' && !recorded ? turnOn() : Promise.resolve(false);
-  return {state: st, toggle, turnOn, turnOff, skip, mute, setWhispers, feed, ready};
+  return {state: st, toggle, turnOn, turnOff, skip, mute, setWhispers, feed, ready, clip, report, mark, stop: stopTick};
 }
 
 // The game bar's controls: the toggle, skip, mute, whispers and one line of note.
 export function voiceBar(voice, els) {
-  const {toggle, skip, mute, whispers, note, box} = els;
+  const {toggle, skip, mute, whispers, note, box, time} = els;
   if (toggle) toggle.addEventListener('click', () => voice.toggle());
   if (skip) skip.addEventListener('click', () => voice.skip());
   if (mute) mute.addEventListener('click', () => voice.mute());
@@ -195,6 +239,7 @@ export function voiceBar(voice, els) {
     if (skip) {skip.hidden = !st.on; skip.disabled = !st.now}
     if (mute) {mute.hidden = !st.on; const m = st.muted ? 'Unmute' : 'Mute'; if (mute.textContent !== m) mute.textContent = m}
     if (whispers && whispers.parentNode) whispers.parentNode.hidden = !st.on;
+    if (time) time.hidden = !(st.on && !st.muted && st.reporting && st.engine && st.engine.clipsOnSay);
     if (note) {const n = st.note || (st.on && st.now ? `${st.now.name}${st.queue.length ? `, ${st.queue.length} waiting` : ''}` : ''); if (note.textContent !== n) note.textContent = n; note.title = st.hint || st.note || ''}
   };
 }

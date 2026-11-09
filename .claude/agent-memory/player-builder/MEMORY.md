@@ -1,7 +1,7 @@
 # player-builder memory
 
 ## The tool table (slice 3, src/data/player-tools.js)
-- 15 tools. Reads (act false): look, my_role, read_talk(since?), my_whispers, my_notes, what_is_asked, who_voted, note(text). Acts (act true): speak(text), whisper(to, text), nominate(target), vote(yes: "yes"|"no" as a string), night_choice(pick: array of names), slay(target | "hold"), pass.
+- 19 tools. Reads (act false): look, my_role, read_talk(since?), my_whispers, my_notes, what_is_asked, who_voted, note(text), where. Moves (act false, free): go(room), invite(player, room?), leave. Acts (act true): speak(text), whisper(to, text), nominate(target), vote(yes: "yes"|"no" as a string), night_choice(pick: array of names), slay(target | "hold"), pass.
 - `note` is act false on purpose: writing a note never spends the turn.
 - Arg types the relay understands: string, integer, number, array (of strings), object. No boolean: vote takes "yes"/"no" and the handler also reads true/false/y/n.
 - Every handler is `guarded`: no ctx.api/ctx.game (the relay's stub backend) -> look answers {ok, phase: 'no game yet', seats: []} (relaycheck depends on it), others say "No game yet". Any throw -> {ok: false, error: message + " Open to you now: ..."}.
@@ -45,3 +45,11 @@ Useful now: vote, who_voted, read_talk.
 - A one-name night_choice by day now fires a shot: channelcheck's hostile probes use two names. whatsNew counts slayer-shot as "shots", not deaths (virgin and the shot used to double-count with their death/execution).
 - Escaping gotcha again: \' inside a node heredoc template literal lost its backslash; edit quote-bearing JS strings with the Edit tool.
 
+
+## Rooms (#28, PR #61 on the api of #57; names from lore #59)
+- Room ids stay nook/parlour/backroom; names are the lore-keeper's (the Snug, the Vestry, the Taproom). Tests on a real game read names from api.where(...).rooms, never hard-code them (#59 landed mid-PR and broke them).
+- Header lines added after the news line: `Moves: <newest two texts>` (others' moves since the last look; "N earlier (read_talk)"), the place line (`You are at the Square; whisper only to your neighbours A and B. Away: X and Y in the Vestry.` / `You are in the Vestry with Thea: only you 2 hear...` / `You are alone in the Snug...`), and `Rooms, closing when nominations open: Snug 2 free, ...` while open. Useful gains invite (Square) or leave (room, whisper dropped).
+- Header cap in playertoolcheck raised 700 -> 900 for those lines (day 1 real ~640; fake 3-alive with stakes ~890). Next line added needs a cut elsewhere.
+- speak returns `heard`; whisper pre-checks view.place.neighbours and refuses with both names + "invite them to a room"; cleanEvent drops entries whose audience array omits the seat; read_talk: move {seats,to,from,by,text}, room line `in`.
+- channelcheck probes go/invite only with nonexistent rooms (a probe must move nobody); leave is exempt beside pass.
+- Not yet measured in a played game: whether seats over-use rooms or speak alone in one.
