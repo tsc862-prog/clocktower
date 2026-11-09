@@ -59,6 +59,23 @@ async function holds() {
   } finally {b.close()}
 }
 
+// Listening mode (#82): a scripted game's phase and move lines are made into clips, in the Storyteller's voice.
+async function listening() {
+  console.log('phases and moves are clipped');
+  const asked = [], b = gameBackend({seed: 5, scripted: true, grace: 0, now: () => Date.now()});
+  try {
+    b.setVoice({clip: async (name, text) => {asked.push({name, text}); return {id: 'a'.repeat(24), ms: 1}}});
+    b.attach({readyState: 1, send() {}, on() {}});
+    const kinds = () => ({phase: asked.find(x => /begins.|Nominations are open|opens the nominations|falls.|the day ends|ends the day/.test(x.text)), move: asked.find(x => / went to | left .* for | come[s]? back to the Square| came back /.test(x.text))});
+    await until(async () => asked.some(x => /^Day 1 breaks/.test(x.text)), 20000); // the scripted Storyteller brings the dawn
+    const r = await b.storytellerCall('open_nominations', {reason: 'the check'}); // a phase line: nominations open (and the rooms close)
+    await until(async () => kinds().phase, 5000);
+    const k = kinds();
+    ok(!!k.phase && k.phase.name === 'Storyteller', `a phase line ("${k.phase && k.phase.text}") is made into a clip in the Storyteller's voice`);
+    if (k.move) ok(k.move.name === 'Storyteller', `a move line ("${k.move.text}") is made into a clip in the Storyteller's voice`);
+  } finally {b.close()}
+}
+
 async function mockEngine() {
   const speech = [];
   const server = http.createServer((q, r) => {
@@ -108,6 +125,9 @@ async function wire() {
       const k = mock.speech.length; await sleep(200);
       ok(mock.speech.length === k, 'no second request for the same line');
       ok(!w.events.some(e => e.type === 'whisper' && e.clip), 'no clip on a whisper');
+      // listening mode (#82): the phase lines are spoken too, in the Storyteller's voice
+      {const {STORYTELLER_SPOKEN} = await import('../src/data/spoken.js'), {spokenLine} = await import('../src/ui/voice.js');
+        ok(['phase', 'move'].every(t => STORYTELLER_SPOKEN.includes(t) && spokenLine({id: 1, type: t, text: 'x'}).speaker === 'storyteller'), 'the relay and the page share one spoken list, with phase and move in it');}
 
       console.log('the heard mark and the status');
       const s0 = await json(await req(base, '/tts/status', {origin: PAGE}));
@@ -142,7 +162,7 @@ async function wire() {
 
 async function main() {
   console.log('\nvoice timing check\n');
-  await holds(); await wire();
+  await holds(); await listening(); await wire();
   console.log(fails ? `\nvoicetimingcheck: ${fails} failed` : '\nvoicetimingcheck: all ok');
   process.exit(fails ? 1 : 0);
 }

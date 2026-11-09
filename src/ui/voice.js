@@ -4,6 +4,8 @@
 //   a line said in the Square          in the speaker's voice
 //   narration, dawn, nominations,      in the Storyteller's voice
 //   vote results, executions, the win
+//   night falls, a round, nominations, the day ends, who went to which room   in the Storyteller's voice (#82)
+//   a name tag before a seat's line    in the Storyteller's voice, when the names tick is on (default): "Odette." / "Odette, in the Snug."
 //   whispers                           in the whisperer's voice, only when the owner ticks them (off by default)
 // The speaking seat's marker is lit while its clip plays (the square's centre for the Storyteller). Skip ends the clip playing;
 // Mute hushes it, drops what waits and holds new lines until unmuted. The queue holds a few lines at most: past that the oldest
@@ -17,14 +19,16 @@
 // what it has heard: POST /play/heard {last, voice} on each clip's end or skip and every 20 s while the voice is on, and voice: false
 // at once on Voice off or Mute; the relay lets a seat's next speaking turn wait a moment while the voices are behind.
 import {seatNames} from './model.js';
+import {STORYTELLER_SPOKEN} from '../data/spoken.js';
 
 export const VOICE_KEY = 'clocktower.voice';
 export const WHISPER_KEY = 'clocktower.voice.whispers';
+export const NAMES_KEY = 'clocktower.voice.names'; // the name tag before a seat's line (#82): on unless the owner unticks it
 export const QUEUE_CAP = 4; // lines waiting behind the one playing
 export const HEARD_MS = 20000; // the heard report's heartbeat (the relay counts a report fresh for 90 s)
 export const CLIP_WAIT_MS = 1000; // how long a line waits for the relay's clip before the page asks for its own
 const defaultTick = (f, ms) => {const t = setInterval(f, ms); if (t && t.unref) t.unref(); return () => clearInterval(t)};
-const STORYTELLER_LINES = new Set(['narration', 'dawn', 'nomination', 'vote', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'win']);
+const STORYTELLER_LINES = new Set(STORYTELLER_SPOKEN); // shared with the relay (src/data/spoken.js)
 const TALK = new Set(['say', 'whisper']);
 
 // What a log entry says aloud and who says it: {speaker: seat number | 'storyteller', text, kind}, or null for a silent one.
@@ -64,7 +68,7 @@ const defaultAudio = () => typeof Audio === 'function' ? new Audio() : null;
 
 export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {}, onChange = () => {}, cap = QUEUE_CAP, recorded = false, voiceFile = loadVoiceFile,
   tick = defaultTick, heardEvery = HEARD_MS, clipWait = CLIP_WAIT_MS}) {
-  const st = {on: false, whispers: read(WHISPER_KEY) === 'on', muted: false, blocked: false, engine: null, note: '', queue: [], now: null,
+  const st = {on: false, whispers: read(WHISPER_KEY) === 'on', names: read(NAMES_KEY) !== 'off', places: null, muted: false, blocked: false, engine: null, note: '', queue: [], now: null,
     key: null, seen: -1, dropped: 0, fails: 0, saidNoEngine: false, checking: false, heard: -1, reporting: false, sentOn: false};
   let finish = null, fileMap = null, fileLoaded = null;
   // the relay's clips by event id, and the lines waiting for theirs
@@ -143,6 +147,24 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
     changed(); report();
   }
   function setWhispers(on) {st.whispers = !!on; write(WHISPER_KEY, on ? 'on' : 'off'); changed()}
+  function setNames(on) {st.names = !!on; write(NAMES_KEY, on ? 'on' : 'off'); changed()}
+  // The name tag (#82): the Storyteller says who speaks before a seat's line: "Odette." at the Square, "Odette, in the Snug." in a room,
+  // "Odette, to Bram." for a whisper. Cached per text on the page (seven tags cover a Square game); the relay's /tts/say caches the audio too.
+  const tags = new Map();
+  function tagText(l, e, names) {
+    const who = nameOf(l.speaker, names);
+    if (l.kind === 'whisper') return Number.isInteger(e.to) ? `${who}, to ${nameOf(e.to, names)}.` : `${who}.`;
+    if (e.room == null) return `${who}.`;
+    const r = st.places && Array.isArray(st.places.rooms) ? st.places.rooms.find(x => x.id === e.room) : null;
+    return `${who}, in ${r && r.name ? r.name : 'a room'}.`;
+  }
+  function tagClip(text) {
+    if (!tags.has(text)) {
+      const v = voiceFor('Storyteller', st.engine && st.engine.seatVoices, fileMap);
+      tags.set(text, Promise.resolve().then(() => client.ttsSay({text, ...(v.voice ? {voice: v.voice} : {}), speed: v.speed})).then(r => {if (!r || !r.id) tags.delete(text); return r}, () => {tags.delete(text); return null}));
+    }
+    return tags.get(text);
+  }
 
   // New log entries from the frame the page holds. The first game seen sets the mark (nothing already said is spoken); a new game
   // after it is spoken from its start, the queue's cap keeping only its newest lines.
@@ -155,10 +177,10 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
     st.seen = Math.max(st.seen, last);
     for (let i = w.events.length - 1; i >= 0 && w.events[i].id > st.heard; i--) if (w.events[i].clip) clip(w.events[i].id, w.events[i].clip);
     if (!st.on || st.muted || !fresh.length) return;
-    const names = seatNames(w);
+    const names = seatNames(w); if (w.places) st.places = w.places;
     for (const e of fresh) {
       const l = spokenLine(e, {whispers: st.whispers});
-      if (l) st.queue.push({...l, id: e.id, name: nameOf(l.speaker, names)});
+      if (l) st.queue.push({...l, id: e.id, name: nameOf(l.speaker, names), ...(st.names && TALK.has(l.kind) ? {tag: tagText(l, e, names)} : {})});
     }
     while (st.queue.length > cap) {const i = st.queue.findIndex(x => TALK.has(x.kind)); st.queue.splice(i >= 0 ? i : 0, 1); st.dropped++}
     changed(); pump();
@@ -200,7 +222,8 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
     if (!item) {onSpeaker(null); changed(); return}
     st.now = item; changed();
     const clip = synth(item);
-    if (st.queue[0]) synth(st.queue[0]); // the engine makes the next clip while this one plays
+    if (st.queue[0]) {synth(st.queue[0]); if (st.queue[0].tag) tagClip(st.queue[0].tag)} // the engine makes the next clip while this one plays
+    const tag = item.tag ? tagClip(item.tag) : null; // the name tag counts as part of the line: the heard mark moves when the line has played
     let r = null; try {r = await clip} catch {}
     if (st.now !== item) return; // skipped, muted or turned off meanwhile
     if (!r || !r.id) {
@@ -210,6 +233,11 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
       return;
     }
     st.fails = 0;
+    if (tag) {
+      let t = null; try {t = await tag} catch {}
+      if (st.now !== item) return;
+      if (t && t.id) {onSpeaker('storyteller'); changed(); await play(client.ttsClipUrl(t.id)); if (st.now !== item) return}
+    }
     onSpeaker(item.speaker); changed();
     await play(client.ttsClipUrl(r.id));
     if (st.now !== item) return;
@@ -218,16 +246,17 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
 
   // On load: remembered on means try again (the browser may still hold the sound back until a click on the toggle).
   const ready = read(VOICE_KEY) === 'on' && !recorded ? turnOn() : Promise.resolve(false);
-  return {state: st, toggle, turnOn, turnOff, skip, mute, setWhispers, feed, ready, clip, report, mark, stop: stopTick};
+  return {state: st, toggle, turnOn, turnOff, skip, mute, setWhispers, setNames, feed, ready, clip, report, mark, stop: stopTick};
 }
 
 // The game bar's controls: the toggle, skip, mute, whispers and one line of note.
 export function voiceBar(voice, els) {
-  const {toggle, skip, mute, whispers, note, box, time} = els;
+  const {toggle, skip, mute, whispers, names, note, box, time} = els;
   if (toggle) toggle.addEventListener('click', () => voice.toggle());
   if (skip) skip.addEventListener('click', () => voice.skip());
   if (mute) mute.addEventListener('click', () => voice.mute());
   if (whispers) {whispers.checked = voice.state.whispers; whispers.addEventListener('change', () => voice.setWhispers(whispers.checked))}
+  if (names) {names.checked = voice.state.names; names.addEventListener('change', () => voice.setNames(names.checked))}
   return function render(st = voice.state) {
     if (toggle) {
       const t = st.on ? (st.blocked ? 'Voice: click to hear' : 'Voice: on') : 'Voice: off';
@@ -239,6 +268,7 @@ export function voiceBar(voice, els) {
     if (skip) {skip.hidden = !st.on; skip.disabled = !st.now}
     if (mute) {mute.hidden = !st.on; const m = st.muted ? 'Unmute' : 'Mute'; if (mute.textContent !== m) mute.textContent = m}
     if (whispers && whispers.parentNode) whispers.parentNode.hidden = !st.on;
+    if (names && names.parentNode) names.parentNode.hidden = !st.on;
     if (time) time.hidden = !(st.on && !st.muted && st.reporting && st.engine && st.engine.clipsOnSay);
     if (note) {const n = st.note || (st.on && st.now ? `${st.now.name}${st.queue.length ? `, ${st.queue.length} waiting` : ''}` : ''); if (note.textContent !== n) note.textContent = n; note.title = st.hint || st.note || ''}
   };

@@ -31,6 +31,7 @@ import * as api from './api.js';
 import {PLAYER_TOOLS, ATTEMPT_INVITE} from '../data/player-tools.js';
 import {STORYTELLER_TOOLS} from '../data/storyteller-tools.js';
 import {playerHeader} from '../seats/player.js';
+import {STORYTELLER_SPOKEN} from '../data/spoken.js';
 import {storytellerHeader} from '../seats/storyteller.js';
 import * as stSeat from '../seats/storyteller.js'; // storytellerDue (PR #74), read behind a guard: the backend runs without it
 
@@ -38,7 +39,7 @@ export const SCRIPTED_GRACE_MS = 2000, PACE_MAX_MS = 30000, PUSH_MS = 250;
 // The voice's clock (issue #50): a page that reported within HEARD_FRESH_MS with its voice on, and more than one spoken line ahead
 // of what it has heard, makes a soft wake wait (HOLD_MS per poll), never longer than HOLD_CAP_MS for one seat.
 export const HEARD_FRESH_MS = 90000, HOLD_MS = 1500, HOLD_CAP_MS = 30000;
-const SPOKEN = new Set(['narration', 'dawn', 'nomination', 'vote', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'win']);
+const SPOKEN = new Set(STORYTELLER_SPOKEN); // the list the page reads too (src/data/spoken.js)
 export const SCRIPTED_REASON = 'scripted default: no Storyteller answered in time';
 const ST = api.ST;
 
