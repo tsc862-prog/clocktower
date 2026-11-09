@@ -33,6 +33,7 @@
     "apicheck": "node scripts/apicheck.mjs",
     "channelcheck": "node scripts/channelcheck.mjs",
     "mockgamecheck": "node scripts/mockgamecheck.mjs",
+    "behaviorreportcheck": "node scripts/behaviorreportcheck.mjs",
     "watchcheck": "node scripts/watchcheck.mjs",
     "uismoke": "node scripts/uismoke.mjs",
     "uifixture": "node scripts/uifixture.mjs"

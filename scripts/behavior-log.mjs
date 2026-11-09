@@ -77,7 +77,8 @@ export function staleClaim(narration, brief, after, tools = []) {
 }
 
 // behaviorLog({root, game, now, log}) -> the writer and the relay-side detectors.
-export function behaviorLog({root = behaviorRoot(), game = 'clocktower', now = () => Date.now(), log = () => {}, rotate = ROTATE} = {}) {
+// gameId: a function giving the id of the game dealt now (the relay's backend.gameId, #76); every line carries it, so the report can tell games apart.
+export function behaviorLog({root = behaviorRoot(), game = 'clocktower', gameId = () => null, now = () => Date.now(), log = () => {}, rotate = ROTATE} = {}) {
   let cur = gameName(game);
   const seats = new Map(); // seat -> {empty, refused, narr:[],...}
   const quiet = new Map(); // kind|seat -> {at, held}
@@ -92,9 +93,10 @@ export function behaviorLog({root = behaviorRoot(), game = 'clocktower', now = (
       for (let i = rotate.keep; i >= 1; i--) {const from = i === 1 ? file : `${file}.${i - 1}`, to = `${file}.${i}`; if (!existsSync(from)) continue; if (i === rotate.keep && existsSync(to)) rmSync(to); renameSync(from, to)}
     } catch (e) {log(`[behavior] rotate failed: ${e.message}`)}
   }
+  const gid = () => {try {const g = gameId(); return g ? {gameId: String(g)} : {}} catch {return {}}};
   function write(kind, rec) {
     const file = join(dirOf(), FILES[kind]);
-    try {mkdirSync(dirname(file), {recursive: true}); rot(file); appendFileSync(file, JSON.stringify(scrub({ts: new Date(now()).toISOString(), game: cur, ...rec})) + '\n'); counts[kind]++}
+    try {mkdirSync(dirname(file), {recursive: true}); rot(file); appendFileSync(file, JSON.stringify(scrub({ts: new Date(now()).toISOString(), game: cur, ...gid(), ...rec})) + '\n'); counts[kind]++}
     catch (e) {counts.dropped++; log(`[behavior] write failed: ${e.message}`)}
   }
   // One anomaly line per (kind, seat) per BD.QUIET; the ones held back are counted into the next line.

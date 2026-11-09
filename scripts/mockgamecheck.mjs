@@ -19,12 +19,13 @@ import {fileURLToPath} from 'node:url';
 import {startMockOllama} from './mock-ollama.mjs';
 import {quietEnv, startRelayProcess, req} from './relaycheck.mjs';
 import {ms} from './ci-clock.mjs';
+import {loadData, splitGames, measure, renderTable} from './measures.mjs';
 
 // On a failure the runner logs, the events log and the behavior log are kept in logs/mockgamecheck/ (CI uploads it as an artifact).
 export const KEEP_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'logs', 'mockgamecheck');
 function keepLogs(env) {
   try {rmSync(KEEP_DIR, {recursive: true, force: true}); mkdirSync(KEEP_DIR, {recursive: true});
-    for (const [from, to] of [[join(env.AGENT_LOGS, 'runners'), 'runners'], [env.BEHAVIOR_DIR, 'behavior']]) if (existsSync(from)) cpSync(from, join(KEEP_DIR, to), {recursive: true});
+    for (const [from, to] of [[join(env.AGENT_LOGS, 'runners'), 'runners'], [env.BEHAVIOR_DIR, 'behavior'], [join(env.AGENT_LOGS, 'play.jsonl'), 'play.jsonl']]) if (existsSync(from)) cpSync(from, join(KEEP_DIR, to), {recursive: true});
     console.log(`  the runner and behavior logs are kept in ${KEEP_DIR}`)} catch (e) {console.log('  could not keep the logs: ' + e.message)}
 }
 const PAGE = 'http://localhost:5173', SEED = 5, OLLAMA_SEAT = 7, DEAR_SEAT = 4;
@@ -38,7 +39,7 @@ async function main() {
   console.log('\nClocktower mock game: eight runners from the supervisor, a mock Claude and a mock Ollama\n');
   const ol = await startMockOllama();
   const env = await quietEnv({OLLAMA_URL: ol.url, CLOCKTOWER_FAKE_SDK: 'scripts/fake-agent-sdk.mjs', AGENT_PROVIDER: 'anthropic', AGENT_MIN_GAP: '2',
-    AGENT_MAX_FAILS: '50', RUNNER_CLAUDE_MAX: '8', SESSION_ROLL_TOKENS: '6000', GAME_BUDGET: '5'});
+    AGENT_MAX_FAILS: '50', RUNNER_CLAUDE_MAX: '8', SESSION_ROLL_TOKENS: '6000', GAME_BUDGET: '5', RELAY_VERBOSE: '1'});
   let completed = false;
   const R = await startRelayProcess(['--play-only', '--runners', '--game', '--seed', String(SEED)], env), {base} = R;
   const start = body => req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body});
@@ -124,6 +125,13 @@ async function main() {
     ok(!empty.length, `every turn played from a non-empty header${empty.length ? ': ' + empty.length + ' without' : ''}`);
     const ev = jsonl(join(logs, 'events.jsonl'));
     ok(ev.some(e => e.event === 'budget' && e.key === 'player:' + DEAR_SEAT) && ev.some(e => e.event === 'pause'), 'the events log has the budget stop and the pause');
+    // the report (#98): one finished game, told apart by the id every log line carries, numbers that agree with the logs
+    const rep = splitGames(loadData(env.BEHAVIOR_DIR, env.AGENT_LOGS)).map(measure);
+    ok(rep.length === 1 && !!rep[0].id && turns.every(t => t.gameId === rep[0].id), `the behavior report finds one game and every turn line carries its id (${rep.map(r => r.id).join(', ')})`);
+    const M = rep[0] || {};
+    ok(M.winner === look.winner && M.turns && M.turns.all === turns.length && M.leaks && M.leaks.textLeaks + M.leaks.roleHits === 0 && M.talk && M.talk.lines > 0,
+      `and its numbers agree: winner ${M.winner}, ${M.turns && M.turns.all} turns, ${M.talk && M.talk.lines} lines, ${M.leaks ? M.leaks.textLeaks + M.leaks.roleHits : '?'} leaks, ${M.refused && M.refused.total} refused calls`);
+    if (rep.length) console.log(renderTable(rep).split('\n').map(l => '    ' + l.slice(0, 200)).join('\n'));
     const sum = `mock game seed ${SEED}: ${look.winner || 'no winner'}; ${turns.length} turns, ${turns.filter(t => t.provider === 'anthropic').length} by Claude (fake), ${turns.filter(t => t.provider === 'ollama').length} by Ollama (mock), ${turns.filter(t => t.provider === 'scripted').length} scripted; $${(v.game.players.spent + v.game.storyteller.spent).toFixed(4)} counted, $0 spent`;
     console.log('\n' + sum);
     completed = true;
