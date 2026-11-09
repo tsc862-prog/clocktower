@@ -92,3 +92,10 @@
 - Panels but agents, and the bar's phase/winner/rooms line, draw the shown frame; voice.feed always gets the live frame (fed first in
   render). Live when Voice off, muted, blocked, recorded, or nothing waits. voice.state.behind -> note "; the page keeps pace".
 - Relay hold (backend.js) only delays soft/heartbeat wakes, per seat, 30 s cap; 'now' wakes (votes, nights) are never held.
+- #109 (PR #114): the playing line is the boundary until its own clip's play() promise resolves (item.started); tags do not count.
+
+## The night aloud (issue #111 part 4, 2026-11-09; not yet reviewed by the owner or lore)
+- Event read: {type:'thought', seat, night, day, text, audience:'watcher'}; seat-spoken kinds from spoken.js SEAT_SPOKEN (guarded, fallback say+thought).
+- voice.js nightSpoken(e, names, seats): wake/acted/told/death(night)/bounce prose in the ST voice, page's own /tts/say (no clip wait);
+  thought after tag "Name, thinking.". Night kinds sit outside QUEUE_CAP (never dropped). Night list (NIGHT_N 6) and talk use the prose.
+- Fixture: uifixture writes frames.night (night 2 + 3 hand-made thoughts); recorded frames win over fixtureMoments.
