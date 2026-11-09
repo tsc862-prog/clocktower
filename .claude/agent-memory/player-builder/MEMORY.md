@@ -72,3 +72,8 @@ Useful now: vote, who_voted, read_talk.
 ## Game 4 fixes (PR #97: #87, #88, #89, #92)
 - [Game 4 fixes](game4-fixes.md): day-1 "dodge" knowledge (LEARNS, nothingYet, readsOf), Poisoner line, Record line + nominator/nominee wording, claims by ability and by role; never name the Imp in the prompt (channelcheck).
 - Header order now: who, clock, alive, [stakes], news, [Moves by day, today only], [place], [invite|rooms], [Record], [Claims], [stale notes], [WAITING], [wait], [shot], [Poison], [nudge], Useful.
+
+## The first night is quiet (#110, PR #112)
+- Seats reasoned from "nobody died" on day 1 (game 6). Prompt paragraph after the day-1 one: no first-night kill, so day 1's empty dawn says nothing; from night 2 a quiet night is news (Monk, Soldier, Mayor, dead/protected pick).
+- cleanEvent replaces a day-1 dawn with no deaths by FIRST_DAWN (player.js); later quiet dawns keep the engine text. Day-1 nudge ends "A quiet night 1 is the rule, no clue." The header cap 900 is hit by the notes-line test at +4 chars: any new clause needs a cut.
+- Escaping: an escaped quote (backslash, quote) in a JS string edited by a node heredoc or sed loses its backslash; write a .cjs with String.fromCharCode(92).

@@ -38,6 +38,8 @@ export const PLAYER_SYSTEM = [
   'The first day is when talk matters most, because nobody knows much yet. Do not pass it away: say something about yourself, or ask one player a question by name. ' +
   'A soft claim (a hint at what you are) or a question that tests a claim someone made gives the table something to work with. ' +
   'When nominations open and nobody has anything solid, nominate someone anyway and let the vote decide: a day with no execution is a day given to the demon.',
+  'The demon never kills on the first night, so day 1 always opens with nobody dead: that says nothing about anyone and is not worth a word. ' +
+  'From night 2 on, a night with no death is news: the Monk guarded the demon\'s pick, the pick was a Soldier, the Mayor was attacked and nobody died in their place, or the demon chose a dead or protected player; ask about it.',
   'A question a role cannot answer yet is not evidence. On day 1 only the Washerwoman, Librarian, Investigator, Chef, Empath and Fortune Teller have learned anything. ' +
   'The Monk and the Undertaker first act on night 2, the Ravenkeeper learns only if killed at night, and the Virgin, Slayer, Soldier, Mayor, Butler, Saint and Recluse never learn anything at night; ' +
   'a Drunk learned nothing true, and the minions and the demon have nothing true to tell. A Monk who names tonight\'s pick aloud tells the demon whom to avoid. ' +
