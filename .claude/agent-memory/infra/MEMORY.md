@@ -19,3 +19,7 @@
 - Not yet measured on the real API (no paid game run so far). Fake SDK prices: Haiku ~$0.0003 per 3-call turn, Opus ~$0.01.
 - Behavior lines: the writer drops any key named header/headers/key/env (scrub), so a turn's header goes in rec.brief.text.
 - Mock game check (npm run mockgamecheck): seed 5 ends "good" on day 1 in about 60 turns with the mock mind; the dear seat (Opus, $0.01) stops after one fake turn ($0.0134).
+
+## Pace knob (issue #26)
+- Start body `minGap` (5-600 s) and `heartbeat` (10-1440 game min) -> req -> `--min-gap` / `--heartbeat` (runnerArgs), kept in active.json. View: `paceNow: {minGap, heartbeat}` (the old `pace` string stays: the page parses it in runnerGap).
+- Live: POST /play/runner/limits {key, minGap?, heartbeat?} sets r.paceLive; relay-mcp withPace() adds `pace: {...}` to the pace answer (player and Storyteller routes) via play.onPace(fn); makePacer sends minGap and heartbeat each poll and adopts the answer's overrides.

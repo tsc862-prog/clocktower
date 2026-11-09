@@ -17,7 +17,7 @@ import {readFileSync, existsSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {checkStart, runnerArgs, RUNNER_KINDS, MAX_RUNNERS, gameShares, defaultBudgets} from './runners.mjs';
-import {turnCap} from './pacing.mjs';
+import {turnCap, makePacer} from './pacing.mjs';
 import {startMockOllama} from './mock-ollama.mjs';
 import {startMockOpenAI, KEY} from './mock-openai.mjs';
 import {quietEnv, startRelayProcess, req} from './relaycheck.mjs';
@@ -53,8 +53,25 @@ console.log('start requests');
   const b2 = defaultBudgets({GAME_BUDGET: '10'}), b3 = defaultBudgets({RUNNER_BUDGET: '0.2'});
   ok(b2.storyteller === 3 && b2.player === 1 && b3.player === 0.2 && b3.storyteller === 0.2, 'GAME_BUDGET moves both shares; RUNNER_BUDGET sets every runner');
   ok(runnerArgs({...c.req, claude: true}, 'u')[0] === 'scripts/agent-seat.mjs' && runnerArgs({...l.req}, 'u')[0] === 'scripts/seat-runner.mjs', 'a Claude seat runs the Agent SDK runner, a local one the local loop');
+  const pc = checkStart({player: 1, minGap: 60, heartbeat: '360'}, ps);
+  ok(pc.req && pc.req.minGap === 60 && pc.req.heartbeat === 360 && runnerArgs(pc.req, 'u').join(' ').endsWith('--min-gap 60 --heartbeat 360') && !args.includes('--min-gap'), 'the pace knob reaches the command line as --min-gap and --heartbeat, and only when asked');
+  ok([{minGap: 4}, {minGap: 601}, {minGap: 'x'}, {heartbeat: 9}, {heartbeat: 1441}].every(x => checkStart({player: 1, ...x}, ps).code === 400) && checkStart({player: 1, minGap: 5, heartbeat: 1440}, ps).req, 'minGap 5 to 600 and heartbeat 10 to 1440 only');
   const sc = checkStart({kind: 'storyteller', scripted: true}, ps).req;
   ok(sc && sc.budget === null && runnerArgs(sc, 'u').join(' ') === 'scripts/storyteller-runner.mjs --url u --scripted', 'the scripted Storyteller has no budget: ' + (sc ? runnerArgs(sc, 'u').join(' ') : ''));
+}
+
+console.log('a live pace change reaches the pacer');
+{
+  const sent = [], logs = [];
+  let answer = {ok: true, wake: null};
+  const fetchImpl = async (u, o) => {sent.push(JSON.parse(o.body)); return {status: 200, json: async () => answer}};
+  const pc = makePacer({base: 'http://x', player: 1, runner: 'r', minGap: 20, heartbeat: 120, pollMs: 10, fetchImpl, log: l => logs.push(l), stopped: () => sent.length >= 3});
+  await pc.next();
+  ok(sent[0].minGap === 20 && sent[0].heartbeat === 120, 'the pacer sends its minGap and heartbeat with each pace poll');
+  answer = {ok: true, wake: null, pace: {minGap: 45, heartbeat: 300}};
+  const p2 = makePacer({base: 'http://x', player: 1, runner: 'r', minGap: 20, heartbeat: 120, pollMs: 10, fetchImpl, log: l => logs.push(l), stopped: () => sent.length >= 6});
+  await p2.next(); sent.length = 5; await p2.next();
+  ok(sent[sent.length - 1].minGap === 45 && sent[sent.length - 1].heartbeat === 300 && logs.some(l => /min gap now 45/.test(l)), 'a pace answer with overrides is adopted and sent back on the next poll');
 }
 
 console.log('no turn cap by default');
@@ -100,6 +117,21 @@ async function e2e() {
     const h2 = await until(async () => {const x = await req(base, '/play/health'); const p = x.players.find(p => p.id === 3); return p && !p.claimed ? x : null}, ms(8000, 3000));
     ok(!!h2, 'and lets go of the seat');
     ok(lines(events).some(e => e.event === 'end' && e.key === 'player:3' && e.by === 'owner'), 'the events log has the end, by the owner');
+
+    console.log('the pace knob');
+    ok((await req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 5, provider: 'ollama', model: 'mock-tools:1b', minGap: 3}})).status === 400
+      && (await req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 5, provider: 'ollama', model: 'mock-tools:1b', heartbeat: 5000}})).status === 400, 'a start with minGap 3 or heartbeat 5000 is refused');
+    const ps = await req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 5, provider: 'ollama', model: 'mock-tools:1b', minGap: 5, heartbeat: 30}});
+    ok(ps.status === 200 && ps.runner.paceNow.minGap === 5 && ps.runner.paceNow.heartbeat === 30, 'a start with the knob shows pace {minGap, heartbeat} in the runner view');
+    const log5 = join(env.AGENT_LOGS, 'runners', 'player-5.log');
+    const argv = await until(async () => {const t = readFileSync(log5, 'utf8'); return /--min-gap 5 --heartbeat 30/.test(t) ? t : null}, ms(10000, 5000));
+    ok(!!argv, 'the runner process got --min-gap 5 --heartbeat 30 on its command line');
+    const lv = await req(base, '/play/runner/limits', {method: 'POST', origin: PAGE, body: {key: 'player:5', minGap: 9, heartbeat: 45}});
+    ok(lv.status === 200 && lv.runner.paceNow.minGap === 9 && lv.runner.paceNow.heartbeat === 45, 'a live change shows in the view at once');
+    ok((await req(base, '/play/runner/limits', {method: 'POST', origin: PAGE, body: {key: 'player:5', minGap: 1}})).status === 400, 'a live change out of range is refused');
+    const adopted = await until(async () => {const t = readFileSync(log5, 'utf8'); return /min gap now 9 s/.test(t) && /heartbeat now 45 game min/.test(t)}, ms(20000, 10000));
+    ok(!!adopted, 'the runner adopts the new pace at its next poll (its log says so)');
+    await req(base, '/play/runner/stop', {method: 'POST', origin: PAGE, body: {player: 5}});
 
     console.log('a budget stop (paid mind)');
     const b = await req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 4, provider: 'openai', model: 'gpt-6-astra', budget: 0.01}});
