@@ -173,13 +173,15 @@ async function e2e() {
 async function sessions() {
   console.log('one session per dealt game');
   const env = await quietEnv({CLOCKTOWER_FAKE_SDK: 'scripts/fake-agent-sdk.mjs', AGENT_PROVIDER: 'anthropic', AGENT_MIN_GAP: '1', AGENT_POLL_MS: String(ms(1000, 300))});
-  const R = await startRelayProcess(['--play-only', '--runners', '--game', '--seed', '5'], env), {base} = R;
+  const R = await startRelayProcess(['--play-only', '--runners', '--game', '--scripted', '--grace', '150', '--seed', '5'], env), {base} = R;
   const log1 = join(env.AGENT_LOGS, 'runners', 'player-1.log'), sessFile = join(env.AGENT_LOGS, 'agents', '1.json');
   const text = () => existsSync(log1) ? readFileSync(log1, 'utf8') : '';
   const turnCtx = t => [...t.matchAll(/\[turn \d+\][^\n]*\| ctx (\d+)k/g)].map(m => Number(m[1]));
   const sess = () => JSON.parse(readFileSync(sessFile, 'utf8'));
   const view = () => req(base, '/play/runner', {origin: PAGE}).then(r => (r.runners || []).find(x => x.key === 'player:1'));
-  const start = () => req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 1}});
+  // #125: a seat sleeps through the night, so a seat is started once the scripted Storyteller has carried the game to day (polled, not timed)
+  const toDay = () => until(async () => (await req(base, '/play/watch?since=0', {origin: PAGE})).phase === 'day', ms(60000, 30000), 100);
+  const start = async () => {ok(!!(await toDay()), 'the game is at day 1 before the seat starts'); return req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 1}})};
   const stopIt = async () => {await req(base, '/play/runner/stop', {method: 'POST', origin: PAGE, body: {player: 1}}); return until(async () => {const v = await view(); return v && v.state === 'stopped' ? v : null}, ms(15000, 8000))};
   // the log after text offset `from`, once it has n turn lines
   const turnsAfter = (from, n) => until(async () => {const t = text().slice(from); return turnCtx(t).length >= n ? t : null}, ms(40000, 20000));
@@ -201,8 +203,8 @@ async function sessions() {
     ok(c2.length && c2[0] > c1[0], `and the context carries on (${c2[0]}k against ${c1[0]}k at her first turn)`);
     ok(!!(await stopIt()), 'stopped');
 
-    const ng = await req(base, '/play/game/new', {method: 'POST', origin: PAGE, body: {seed: 6}}), g2 = (await req(base, '/play/health')).gameId;
-    ok(ng.status === 200 && g2 === ng.gameId && g2 !== g1 && /^6-/.test(g2), `a new game: ${g2}`);
+    const ng = await req(base, '/play/game/new', {method: 'POST', origin: PAGE, body: {seed: 5}}), g2 = (await req(base, '/play/health')).gameId;
+    ok(ng.status === 200 && g2 === ng.gameId && g2 !== g1 && /^5-/.test(g2), `a new game: ${g2}`);
     const at3 = text().length;
     ok((await start()).status === 200, 'Odette starts on the new game');
     const run3 = await turnsAfter(at3, 1), c3 = turnCtx(run3 || ''), s3 = sess();
@@ -212,7 +214,7 @@ async function sessions() {
     const active = JSON.parse(readFileSync(join(env.AGENT_LOGS, 'runners', 'active.json'), 'utf8'));
     ok(active.gameId === g2 && (active.runners || []).some(x => x.player === 1 && x.gameId === g2), `the active list carries the game id (${active.gameId})`);
 
-    const at4 = text().length, ng3 = await req(base, '/play/game/new', {method: 'POST', origin: PAGE, body: {seed: 7}});
+    const at4 = text().length, ng3 = await req(base, '/play/game/new', {method: 'POST', origin: PAGE, body: {seed: 5}});
     const run4 = await until(async () => {const t = text().slice(at4); return t.includes(`new game ${ng3.gameId}: fresh session`) && turnCtx(t).length >= 1 ? t : null}, ms(40000, 20000));
     ok(!!run4 && sess().gameId === ng3.gameId && sess().sessionId !== s3.sessionId, `a runner left running across a new deal rolls to a fresh session at its next wake (game ${ng3.gameId})`);
     await stopIt();

@@ -209,6 +209,18 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     if (!answerer || closed) return;
     if (timer) {clearTimeout(timer); timer = null}
     const p = game.pending;
+    if (p && p.seat === 'table' && p.kind === 'thoughts') { // #125: a scripted table's thoughts scene nobody answers in time is answered empty, as a scripted seat has none
+      timer = setTimeout(() => {
+        timer = null;
+        if (closed || game.pending !== p) return;
+        let n = 0;
+        try {for (const i of p.seats) if (game.pending === p && api.pendingFor(game, i)?.mine === null) {api.think(game, i, ''); n++}} catch (e) {log(`[game] scripted thoughts failed: ${e.message}`); return}
+        log(`[game] scripted thoughts for ${n} seats`);
+        changed();
+      }, Math.max(0, grace));
+      if (timer.unref) timer.unref();
+      return;
+    }
     if (!p || p.seat !== ST) return;
     timer = setTimeout(() => {
       timer = null;
@@ -287,6 +299,9 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     });
     if (r) return hold(r);
     if (staggerLeft(key) > 0) return {ok: true, wake: null, why: 'nominations go round in seat order: your moment comes', clock: clockText()};
+    // #125: at night a player seat with nothing pending sleeps: its night call and the thoughts scene wake it 'now' through
+    // changed(), so a heartbeat only buys a turn that ends in a refused pass or speak
+    if (key !== ST && (game.phase === 'night' || game.phase === 'setup')) return {ok: true, wake: null, why: 'Nothing is asked of you tonight; end your turn', clock: clockText()};
     const quiet = key === ST ? 'a quiet beat' : `a quiet beat${(t => t ? ': nothing to do ' + t : '')(api.nextTurnText(game, key))}`;
     return soft ? hold({ok: true, wake: 'heartbeat', why: quiet, clock: clockText()}) : {ok: true, wake: null, why: 'nothing new', clock: clockText()};
   }

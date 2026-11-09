@@ -129,6 +129,14 @@ async function main() {
     ok(!late.length, `no turn begins after the game is over${late.length ? ': ' + late.map(t => t.seat + (t.player ? ' #' + t.player : '') + ' ' + t.ts).join(', ') : ''}`);
     const empty = turns.filter(t => !(t.brief && typeof t.brief.text === 'string' && t.brief.text.trim()));
     ok(!empty.length, `every turn played from a non-empty header${empty.length ? ': ' + empty.length + ' without' : ''}`);
+    // #125: a player seat sleeps through the night unless something is asked of it (its night call, the thoughts scene: 'now' wakes)
+    const nightPlayer = turns.filter(t => t.seat !== 'storyteller' && /Night \d+\. Nobody talks at night/.test(String(t.brief && t.brief.text || '')) && t.wake), byWake = {};
+    for (const t of nightPlayer) byWake[t.wake.wake] = (byWake[t.wake.wake] || 0) + 1;
+    console.log(`  night wakes of player seats by reason: ${JSON.stringify(byWake)}`);
+    ok(!nightPlayer.some(t => t.wake.wake === 'heartbeat'), `no player turn at night is woken by a heartbeat (${nightPlayer.length} night turns)`);
+    const nsp = splitGames(loadData(env.BEHAVIOR_DIR, env.AGENT_LOGS)).map(measure).reduce((n, r) => n + ((r.refused && r.refused.byKind || {})['night: speak or pass'] || 0), 0);
+    console.log(`  report refusals "night: speak or pass": ${nsp}`);
+    ok(nsp === 0, 'the behavior report counts no "night: speak or pass" refusals')
     const ev = jsonl(join(logs, 'events.jsonl'));
     ok(ev.some(e => e.event === 'budget' && e.key === 'player:' + DEAR_SEAT) && ev.some(e => e.event === 'pause'), 'the events log has the budget stop and the pause');
     // the report (#98): one finished game, told apart by the id every log line carries, numbers that agree with the logs
