@@ -185,8 +185,8 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
     if (key === geoKey) return;
     geoKey = key; geo = stageLayout(w, h, seats);
     if (!geo) return;
-    table.setAttribute('style', `--ring-cw:${geo.cw}px;--ring-name:${geo.namePx}px;--table-h:${h}px`);
-    centre.setAttribute('style', `--mid-x:${geo.mid.x}px;--mid-y:${geo.mid.y}px;--mid-w:${geo.mid.w}px;--mid-h:${geo.mid.h}px`);
+    // the middle's box on the table itself: the table's oval (drawn by the table) and the middle's text both read it
+    table.setAttribute('style', `--ring-cw:${geo.cw}px;--ring-name:${geo.namePx}px;--table-h:${h}px;--mid-x:${geo.mid.x}px;--mid-y:${geo.mid.y}px;--mid-w:${geo.mid.w}px;--mid-h:${geo.mid.h}px`);
     for (const seat of seats) {
       const r = cards.get(seat), p = geo.pos[seat];
       if (!r || !p) continue;

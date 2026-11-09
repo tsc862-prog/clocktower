@@ -727,7 +727,7 @@ const {frameAt} = await import('../src/ui/model.js');
   // to 3440x1440 no card leaves the table, no two cards touch, and the middle (dawn, tally, winner) is a box clear of every face
   {const {stageLayout} = await import('../src/ui/stage.js');
     ok(cards().every(c => /--x:\d+px;--y:\d+px/.test(c.getAttribute('style') || '')) && /--ring-cw:\d+px/.test(stage.querySelector('.table').getAttribute('style') || '') &&
-      /--mid-w:\d+px/.test(stage.querySelector('.table-centre').getAttribute('style') || ''), 'the cards and the middle are placed from the measured table');
+      /--mid-w:\d+px/.test(stage.querySelector('.table').getAttribute('style') || ''), 'the cards and the middle are placed from the measured table');
     const sizes = [[958, 470], [1060, 520], [1300, 600], [1590, 690], [1500, 820], [2000, 700], [2850, 1150]], bad = [];
     const hit = (p, q) => p.l < q.r && q.l < p.r && p.t < q.b && q.t < p.b;
     for (const [w, h] of sizes) {
