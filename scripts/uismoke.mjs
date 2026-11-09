@@ -18,6 +18,10 @@
 //     the shroud image over the dead; the game bar counts them; nothing in public/tokens-local is tracked but its README
 //   - portraits (a fixture assets/portraits/index.json): in each seat's disc, the initial without one, the shroud over the dead,
 //     beside each agent row and in the Storyteller's log; no index, or a broken one, and the page carries on
+//   - voices (a fake engine and a fake audio element): off on a first visit and nothing posted; one click on, remembered; lines read
+//     in order one at a time in their speaker's voice, the speaker lit; whispers only when asked; the queue capped; skip, mute;
+//     no engine: says so once and stays off; the recorded game is not spoken
+//   - rooms (#28): a line said in a room carries its place, a move is a one-line mark
 import {readFileSync, readdirSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -306,7 +310,7 @@ $('pace').value = 'readable'; $('pace').dispatch('change');
 console.log('watcher only');
 for (const b of document.querySelectorAll('button')) b.click();
 await new Promise(r => setTimeout(r, 20));
-const allowed = new Set([...Object.values(READS), ...Object.values(ACTIONS)]);
+const allowed = new Set([...Object.values(READS), ...Object.values(ACTIONS), ...Object.values((await import('../src/ui/relay.js')).VOICE)]);
 ok(relay.calls.every(c => allowed.has(c.path)), 'every request the page made is to a listed route');
 ok(!relay.calls.some(c => FORBIDDEN.test(c.path)), 'no request went to a seat\'s routes');
 ok(![...Object.values(READS), ...Object.values(ACTIONS)].some(x => FORBIDDEN.test(x)), 'the page\'s route list has none of a seat\'s routes');
@@ -417,6 +421,168 @@ console.log('portraits');
   ok(JSON.stringify(PI.readIndex({Odette: {file: 'assets/portraits/odette.png'}, Bram: {file: '../secret.png'}, Ines: {file: 'https://example.com/x.png'}})) === JSON.stringify({Odette: '/assets/portraits/odette.png'}),
     'the other index shape reads too; a file outside the portraits or off the machine is ignored');
   PI.resetPortraits();
+}
+
+// ---- voices ----
+console.log('voices');
+{
+  const VO = await import('../src/ui/voice.js');
+  const {VOICE} = await import('../src/ui/relay.js');
+  const T = GAME.frames.talk, V = GAME.frames.vote, E = GAME.frames.end;
+  const SEATV = {Odette: {voice: 'v_odette', speed: 0.95}, Bram: 'v_bram', Ines: {voice: 'v_ines'}, Corwin: {voice: 'v_corwin'}, Thea: {voice: 'v_thea'}, Fitch: {voice: 'v_fitch'}, Yusuf: {voice: 'v_yusuf'}, Storyteller: {voice: 'v_st', speed: 0.95}};
+  const clipId = n => n.toString(16).padStart(24, '0');
+  // a relay with a voice engine: /tts/status answers {ok, seatVoices}; /tts/say makes a clip id per line
+  const voiceRelay = ({engine = true} = {}) => {
+    const r = fakeRelay(), base = r.fetch; r.says = []; r.status = 0;
+    r.fetch = async (url, opt = {}) => {
+      const path = String(url).replace(BASE, '').split('?')[0];
+      if (path === VOICE.status) {
+        r.calls.push({path, method: 'GET'}); r.status++;
+        return {ok: true, status: 200, json: async () => engine ? {enabled: true, ok: true, engine: 'kokoro', voices: ['v_odette'], seatVoices: SEATV} : {enabled: true, ok: false, voices: [], error: 'not answering'}};
+      }
+      if (path === VOICE.say) {
+        r.calls.push({path, method: 'POST'}); r.says.push(JSON.parse(opt.body));
+        const n = r.says.length; // the clip's id is fixed when it is asked for
+        return engine ? {ok: true, status: 200, json: async () => ({id: clipId(n), ms: 5})} : {ok: false, status: 503, json: async () => ({error: 'narrator voice is off'})};
+      }
+      return base(url, opt);
+    };
+    return r;
+  };
+  const fakeAudio = () => ({src: '', plays: [], paused: true, onended: null, onerror: null,
+    play() {this.paused = false; this.plays.push(this.src); return Promise.resolve()}, pause() {this.paused = true}, end() {const f = this.onended; if (f) f()}});
+  const settle = async (n = 8) => {for (let i = 0; i < n; i++) await tick()};
+  const livePage = (r, audio) => {install(HTML); return createApp({client: relayClient({base: BASE, fetchImpl: r.fetch}), refreshMs: null, audio, voiceFile: async () => null})};
+  const push = (a, frame, from) => a.onSocket({type: 'watch', seed: frame.seed, last: frame.last, events: frame.events.filter(e => e.id > from), clock: frame.clock, pending: frame.pending, ballot: frame.ballot || null, phase: frame.phase, day: frame.day, night: frame.night, winner: frame.winner || null});
+  const lit = () => document.querySelectorAll('#square .seat.speaking').map(s => +s.dataset.seat);
+  const centreLit = () => document.querySelector('#square .centre').classList.contains('st-speaking');
+
+  // off on the first visit: nothing is posted while lines arrive
+  const vr = voiceRelay(), au = fakeAudio();
+  const va = livePage(vr, au);
+  vr.watch = T; await va.onSocketOpen(); await settle();
+  ok($('voice-toggle').textContent === 'Voice: off' && $('voice-toggle').getAttribute('aria-pressed') === 'false' && $('voice-skip').hidden && $('voice-mute').hidden, 'the Voice toggle starts off on a first visit; skip and mute show only when on');
+  push(va, V, T.last); await settle();
+  ok(vr.says.length === 0 && vr.status === 0 && au.plays.length === 0, 'voices off: nothing is posted and nothing plays as lines arrive');
+
+  // the first click: unlocks the sound, asks the engine, remembers
+  $('voice-toggle').click(); await settle();
+  ok(va.voice.state.on && $('voice-toggle').textContent === 'Voice: on' && localStorage.getItem(VO.VOICE_KEY) === 'on', 'one click turns the voices on and the browser remembers');
+  ok(!!au.plays[0] && au.plays[0].startsWith('data:audio/wav'), 'the click plays a moment of silence, so the browser lets the page speak');
+  ok(vr.says.length === 0, 'what was already said is not read out');
+
+  // the next lines arrive: spoken in order, one at a time, each in its voice
+  const names = E.grimoire.seats.map(s => s.name);
+  const after = E.events.filter(e => e.id > V.last), firstSay = after.find(e => e.type === 'say');
+  const day2 = [...after.filter(e => VO.spokenLine(e)).slice(0, 2), firstSay]; // two of the Storyteller's lines, then a seat's
+  push(va, {...E, events: day2, last: day2.at(-1).id}, V.last); await settle();
+  const want = day2.map(e => VO.spokenLine(e)).filter(Boolean);
+  ok(want.length >= 3 && vr.says.length >= 1 && vr.says.length <= 2 && vr.says[0].text === want[0].text, `one clip at a time, the next made while it plays (${vr.says.length} asked for, ${want.length} lines)`);
+  const voiceOf = l => {const m = SEATV[l.speaker === 'storyteller' ? 'Storyteller' : names[l.speaker]]; return typeof m === 'string' ? m : m.voice};
+  ok(vr.says[0].voice === voiceOf(want[0]), `the line is asked in its speaker's voice (${vr.says[0].voice})`);
+  ok(au.plays.at(-1) === BASE + VOICE.clip + '?id=' + clipId(1), `the clip plays from the relay (${au.plays.at(-1)})`);
+  const who0 = want[0].speaker;
+  ok(who0 === 'storyteller' ? centreLit() && lit().length === 0 : JSON.stringify(lit()) === JSON.stringify([who0]), `the speaker is lit while its clip plays (${who0 === 'storyteller' ? 'the Storyteller, in the centre' : names[who0]})`);
+  const heard = [vr.says[0].text], litBy = [who0 === 'storyteller' ? centreLit() : lit()[0] === who0];
+  for (let i = 1; i < want.length; i++) {
+    au.end(); await settle();
+    heard.push(vr.says[i] && vr.says[i].text);
+    litBy.push(want[i].speaker === 'storyteller' ? centreLit() && lit().length === 0 : JSON.stringify(lit()) === JSON.stringify([want[i].speaker]));
+  }
+  ok(JSON.stringify(heard) === JSON.stringify(want.map(l => l.text)), `the lines are read in the order they came (${want.map(l => l.kind).join(', ')})`);
+  ok(litBy.every(Boolean), 'each line lights its own speaker, and only that one');
+  ok(want.every((l, i) => vr.says[i].voice === voiceOf(l)), "a seat's line is in that seat's voice, the Storyteller's lines in the Storyteller's");
+  au.end(); await settle();
+  ok(lit().length === 0 && !centreLit() && !va.voice.state.now, 'when the last clip ends nothing is lit');
+
+  // the queue never falls far behind: a burst keeps only the newest few
+  const rest = E.events.filter(e => e.id > day2.at(-1).id);
+  ok(rest.some(e => e.type === 'whisper'), 'the recorded game has whispers after this point');
+  const before = vr.says.length;
+  push(va, E, day2.at(-1).id); await settle();
+  ok(va.voice.state.queue.length <= VO.QUEUE_CAP && va.voice.state.dropped > 0, `a burst of ${rest.length} entries leaves at most ${VO.QUEUE_CAP} lines waiting (${va.voice.state.dropped} dropped)`);
+  ok(vr.says.slice(before).every(b => !rest.some(e => e.type === 'whisper' && e.text === b.text)), 'whispers are not read unless asked');
+  // skip and mute
+  const playing = va.voice.state.now;
+  $('voice-skip').click(); await settle();
+  ok(!!playing && va.voice.state.now && va.voice.state.now !== playing && vr.says.length > before + 1, 'Skip ends the clip playing and the next one starts');
+  $('voice-mute').click(); await settle();
+  ok(va.voice.state.muted && !va.voice.state.now && va.voice.state.queue.length === 0 && lit().length === 0 && !centreLit() && $('voice-mute').textContent === 'Unmute', 'Mute hushes the clip, drops what waits, and nothing is lit');
+  const muted = vr.says.length;
+  $('voice-mute').click(); await settle();
+  ok(vr.says.length === muted && !va.voice.state.muted, 'unmuted: nothing held while muted is read out afterwards');
+
+  // whispers, when asked
+  $('voice-whispers').checked = true; $('voice-whispers').dispatch('change');
+  ok(localStorage.getItem(VO.WHISPER_KEY) === 'on', 'the whispers choice is remembered');
+  const wh = {type: 'whisper', from: 2, to: 4, text: 'Back me.'};
+  ok(VO.spokenLine(wh, {whispers: true}).speaker === 2 && VO.spokenLine(wh) === null, "a whisper is read in the whisperer's voice only when whispers are ticked");
+  ok(VO.spokenLine({type: 'told', seat: 1, text: 'You learn 0.'}) === null && VO.spokenLine({type: 'death', phase: 'night', seat: 1, text: 'Ines dies.'}) === null && VO.spokenLine({type: 'pass', text: 'Bram passes.'}) === null,
+    'what a seat is told by night, a night death before dawn and a pass are never read');
+
+  // off again: nothing posted
+  $('voice-toggle').click(); await settle();
+  const offAt = vr.says.length;
+  ok(!va.voice.state.on && localStorage.getItem(VO.VOICE_KEY) === 'off' && $('voice-skip').hidden, 'a second click turns the voices off, remembered');
+  push(va, E, -1); await settle();
+  ok(vr.says.length === offAt, 'turned off: nothing more is posted');
+
+  // remembered on: the next page load asks the engine
+  const vr2 = voiceRelay();
+  install(HTML); localStorage.setItem(VO.VOICE_KEY, 'on');
+  const va2 = createApp({client: relayClient({base: BASE, fetchImpl: vr2.fetch}), refreshMs: null, audio: fakeAudio(), voiceFile: async () => null});
+  await va2.voice.ready;
+  ok(va2.voice.state.on && vr2.status === 1, 'remembered on: the next visit starts with the voices on');
+
+  // no engine: the toggle says so once and stays off; nothing is posted
+  localStorage.removeItem(VO.VOICE_KEY);
+  const nr = voiceRelay({engine: false});
+  const na = livePage(nr, fakeAudio());
+  nr.watch = T; await na.onSocketOpen();
+  $('voice-toggle').click(); await settle();
+  const said = $('voice-note').textContent;
+  ok(!na.voice.state.on && $('voice-toggle').textContent === 'Voice: off' && /No voice engine/.test(said), `no engine: the toggle stays off and says why (${said})`);
+  $('voice-toggle').click(); await settle();
+  ok($('voice-note').textContent === said && !na.voice.state.on, 'clicked again: the same one line, still off');
+  push(na, V, T.last); await settle();
+  ok(nr.says.length === 0, 'no engine: nothing is posted');
+
+  // the voice map from the lore-keeper's file when the relay has none; the default otherwise
+  ok(VO.voiceFor('Bram', null, {Bram: {voice: 'x', speed: 1.1}}).voice === 'x' && VO.voiceFor('Nobody', null, null).voice === null && VO.voiceFor('Odette', SEATV).speed === 0.95,
+    "voices come from the relay's map, else the file, else the engine's default");
+
+  // the recorded game is not spoken
+  const rr = voiceRelay();
+  install(HTML);
+  createApp({client: relayClient({base: BASE, fetchImpl: rr.fetch}), fixture: GAME, runnersFixture: RUN, audio: fakeAudio(), voiceFile: async () => null});
+  $('voice-toggle').click(); await settle();
+  ok(rr.calls.length === 0 && /recorded game/.test($('voice-note').textContent), 'the recorded game sends nothing to the voice engine and says so');
+  ok(!/\b(nominate|vote|whisper|speak)\b/i.test(document.querySelectorAll('button').map(b => b.textContent).join(' ')), 'no voice control speaks, votes or whispers for a seat');
+  localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY);
+}
+
+// ---- rooms in the talk (#28) ----
+console.log('rooms in the talk');
+{
+  install(HTML);
+  const rr = fakeRelay();
+  const ra = createApp({client: relayClient({base: BASE, fetchImpl: rr.fetch}), refreshMs: null, audio: null, voiceFile: async () => null});
+  const T = GAME.frames.talk, n = T.grimoire.seats.map(s => s.name), L = T.last;
+  const extra = [
+    {id: L + 1, type: 'move', day: T.day, night: T.night, seats: [0, 1], room: 'nook', from: null, by: 0, text: `${n[0]} and ${n[1]} went to the snug.`},
+    {id: L + 2, type: 'say', day: T.day, night: T.night, seat: 0, room: 'nook', text: 'Only for your ears.'},
+    {id: L + 3, type: 'say', day: T.day, night: T.night, seat: 2, text: 'Said at the Square.'},
+  ];
+  rr.watch = {...T, last: L + 3, events: [...T.events, ...extra], places: {square: [2, 3, 4, 5, 6], rooms: [{id: 'nook', name: 'the snug', size: 2, seats: [0, 1], free: 0}], open: true}};
+  await ra.pollWatch();
+  const line = k => document.querySelector(`#talk .line[data-key="e${k}"]`);
+  ok(line(L + 1) && line(L + 1).classList.contains('move') && line(L + 1).textContent === extra[0].text, 'a move shows as a one-line mark');
+  ok(line(L + 2) && line(L + 2).classList.contains('in-room') && /^in the snug:/.test(line(L + 2).querySelector('.place').textContent) && line(L + 2).querySelector('.who').textContent === n[0] && line(L + 2).textContent.includes('Only for your ears.'),
+    `a line said in a room carries its place, named from the watch body (${line(L + 2) && line(L + 2).textContent})`);
+  ok(line(L + 3) && !line(L + 3).classList.contains('in-room') && !line(L + 3).querySelector('.place'), 'a line at the Square has no place mark');
+  const {talkLine} = await import('../src/ui/talk.js');
+  const {ROOMS} = await import('../src/data/rooms.js');
+  ok(talkLine({type: 'say', seat: 0, room: ROOMS[0].id, text: 'x'}, n).html.includes(`in ${ROOMS[0].name}:`), `without places in the body, the room is named from the rooms as data (${ROOMS[0].name})`);
 }
 
 console.log(fails ? `${fails} check(s) failed` : 'the page renders the game and changes nothing');

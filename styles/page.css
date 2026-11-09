@@ -200,3 +200,20 @@ img.ghost-coin.spent { opacity: .4; filter: grayscale(1); }
 .mini-portrait { align-self: center; width: 28px; height: 28px; border-radius: 50%; object-fit: cover; vertical-align: middle; margin-right: .4rem; border: 1px solid var(--line); }
 .mini-portrait.dead { filter: grayscale(1) brightness(.6); }
 .st-portrait { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; vertical-align: middle; margin-right: .5rem; border: 1px solid var(--line); }
+
+/* voices (src/ui/voice.js): the toggle on the game bar, the speaking seat lit while its clip plays */
+.bar .voice { display: inline-flex; align-items: center; gap: .4rem; }
+.bar .voice[data-state="on"] #voice-toggle, .bar .voice[data-state="speaking"] #voice-toggle { border-color: var(--gold); color: var(--gold); }
+.bar .voice[data-state="muted"] #voice-toggle { border-style: dashed; }
+.bar .voice-note { font: 12px var(--sans); max-width: 34rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seat.speaking .seat-marker .sm-rim { stroke: var(--gold); stroke-width: 6; }
+.seat.speaking .seat-marker { filter: drop-shadow(0 0 10px rgba(230, 185, 92, .75)); animation: ct-speak 1.4s ease-in-out infinite alternate; }
+.centre.st-speaking .quiet, .centre.st-speaking .vote .what { color: var(--gold); text-shadow: 0 0 12px rgba(230, 185, 92, .6); }
+@keyframes ct-speak { from { filter: drop-shadow(0 0 4px rgba(230, 185, 92, .5)); } to { filter: drop-shadow(0 0 14px rgba(230, 185, 92, .9)); } }
+@media (prefers-reduced-motion: reduce) { .seat.speaking .seat-marker { animation: none; } }
+
+/* rooms (#28): a line said in a room carries its place; a move is a quiet one-line mark */
+.line.say.in-room { margin-left: 1.2rem; border-left: 2px solid #6b5f8a; padding-left: calc(1.2em + .5rem); }
+.line.say.in-room .place { font: 12px var(--sans); color: #a99bd0; letter-spacing: .02em; }
+.line.move { font: 12px var(--sans); color: var(--dim); padding: .1rem 0 .1rem 1.2rem; }
+.line.move::before { content: '\2192  '; color: var(--faint); }
