@@ -29,3 +29,10 @@
 - `offeredWords(p)` is the count line ("20 options offered, pick one"): in `what_is_asked.pending.offered` and the header's Legal line.
 - Header: "Clock fact for narration: nominations are CLOSED (...)" by day; "DAWN NOT YET NARRATED: ..." from `dawnOwed` (a `dawn` event of this day with no `narration` event after it in the log), which puts narrate first in "Now:" (toolsNow third arg). Fake api in the check has `_push` for log events.
 - Prompt: narrate every dawn with one line of Thistlewick colour, executions and the end; true reasons; spend turns acting.
+
+## Game 3 fixes (#70, PR #74)
+- `src/data/colour.js`: DAWN_TOUCHES (12), DUSK_TOUCHES (8), touchFor(seed, day, 'dawn'|'dusk') over a seeded shuffle (own mulberry32, never the engine RNG); no repeat within a game. Touch texts await lore-keeper; ROLES.md names the millpond and the mill.
+- Header: an owed narration is the FIRST line (`DAWN NOT YET NARRATED (Day N): ...`, `EXECUTION NOT YET NARRATED: X was executed at dusk on Day N`, `THE END NOT YET NARRATED`), then the Storyteller line, then `Makings:` (day, deaths, touch, "Exactly two sentences", "a sentence about the person: X as a neighbour"). narrationOwed = end > dawn > execution; an execution is owed until a narration or a dawn follows it.
+- Now line via nowLine(): owed -> narrate first then the usual tools; mine -> decide, what_is_asked, fallback; dayDone -> end_day; due acts get "Act first: X is due", otherwise "Nothing is due from you ... (a turn that only reads is wasted)". The Now line survives the cap (body cut first). Longest real header 1132/1200.
+- storytellerDue(game, api) -> {tool, why}|null exported for the pace. Backend's ST wake is `now` only on a pending decision (rules-keeper's file); asked in #74 to make ST mustAct = storytellerDue and soft ST wakes only when due.
+- Prompt: dawn exactly two sentences (what happened, one touch in own words); execution one sentence at once; end one sentence; a death gets words about the person; follow Now's first tool.
