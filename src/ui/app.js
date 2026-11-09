@@ -19,14 +19,16 @@ import {createRulings} from './rulings.js';
 import {createAgents} from './agents.js';
 import {clockText, mergeFrame, mergePush, seatNames, PACES, DEFAULT_PACE, runnerGap} from './model.js';
 import {esc} from './dom.js';
+import {probeArt, artNote, imageLoad} from './art.js';
+import {loadPortraits} from './portraits.js';
 
 const PACE_KEY = 'clocktower.pace';
 function storedPace() {try {const v = globalThis.localStorage && localStorage.getItem(PACE_KEY); return PACES[v] ? v : DEFAULT_PACE} catch {return DEFAULT_PACE}}
 
-export function createApp({client, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end'}) {
+export function createApp({client, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end', artLoad = imageLoad, pageFetch = undefined}) {
   const $ = id => document.getElementById(id);
   const state = {watch: null, runners: null, links: null, asides: [], health: null, source: fixture ? 'recorded' : 'live', watchMissing: false, frame: null, msg: '', epoch: 0, socket: false, pace: storedPace()};
-  const bar = {seed: $('seed'), rounds: $('rounds'), phase: $('phase'), winner: $('winner'), source: $('source'), relay: $('relay-state'), newGame: $('new-game'), frames: $('frames'), msg: $('act-msg'), empty: $('empty'), pace: $('pace'), paceNote: $('pace-note')};
+  const bar = {seed: $('seed'), rounds: $('rounds'), phase: $('phase'), winner: $('winner'), source: $('source'), relay: $('relay-state'), newGame: $('new-game'), frames: $('frames'), msg: $('act-msg'), empty: $('empty'), pace: $('pace'), paceNote: $('pace-note'), art: $('art-note')};
   if (seed != null && bar.seed && !bar.seed.value) bar.seed.value = String(seed);
   let asideN = 0, seedTouched = false;
   if (bar.seed) bar.seed.addEventListener('input', () => {seedTouched = true});
@@ -88,6 +90,7 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
       bar.newGame.title = can ? 'Stops every runner, then deals a new game with this seed' : 'Needs the relay to start a new game over the wire (POST /play/game/new), asked of the backend';
     }
     if (bar.frames) bar.frames.hidden = live;
+    if (bar.art) {const a = artNote(); if (bar.art.textContent !== a) bar.art.textContent = a; bar.art.hidden = !a}
     if (bar.pace) {
       const p = PACES[state.pace];
       if (bar.pace.value !== state.pace) bar.pace.value = state.pace;
@@ -181,5 +184,9 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
     const first = fixture.frames[frame] ? frame : 'end';
     showFrame(first); if (bar.frames) bar.frames.value = first;
   } else render();
-  return {state, panels, act, render, pollWatch, tickWatch, pollRunners, pollHealth, onSocket, onSocketOpen, onSocketClose, flushRefresh, showFrame};
+  // the owner's own token images: looked for once per page load; the drawn tokens stay until (and unless) one is found
+  const art = probeArt({load: artLoad}).then(n => {render(); return n});
+  // the seats' portraits (assets/portraits/index.json, read once per page load); the initials until then, or for good without it
+  const portraits = loadPortraits(pageFetch ? {fetchImpl: pageFetch} : {}).then(m => {render(); return m});
+  return {art, portraits, state, panels, act, render, pollWatch, tickWatch, pollRunners, pollHealth, onSocket, onSocketOpen, onSocketClose, flushRefresh, showFrame};
 }

@@ -8,3 +8,6 @@ logs/
 .claude/worktrees/
 # The owner's private overlay: our role names mapped to the official ones, for private play only. Never committed.
 overlay.local.json
+# The owner's own token images: only the README is committed (public/tokens-local/README.md says what goes there)
+public/tokens-local/*
+!public/tokens-local/README.md
