@@ -696,6 +696,50 @@ section('deaths as they happened and the end (#90)');
   ok(!none.ok, 'fallback with nothing pending and nothing owed is refused');
 }
 
+// ---- #124: the execution told with the block's own tally, a second vote's shortfall in its own clause (game 5's shape) ----
+section('the block\'s tally and a second vote that fell short (#124)');
+{
+  const st = realApi.forSeat('storyteller');
+  // 0 Imp, 1 Poisoner, 2 Washerwoman, 3 Chef, 4 Empath, 5 Soldier, 6 Monk: no Virgin, no Butler, no Mayor
+  const G = newGame({seed: 37, roles: ['imp', 'poisoner', 'washerwoman', 'chef', 'empath', 'soldier', 'monk']});
+  const name = i => G.seats[i].name;
+  while (G.pending && G.phase !== 'day' && !G.winner) {
+    const p = G.pending;
+    if (p.seat === 'storyteller') {const r = call(G, st, 'fallback', {reason: 'The night runs on the plain default here.'}); if (!r.ok) throw new Error(r.error); continue}
+    if (p.kind === 'thoughts') {for (const i of p.seats) realApi.think(G, i, ''); continue}
+    const pick = p.count ? p.options.filter(x => x !== p.seat).slice(0, p.count) : p.options.find(x => x !== p.seat);
+    realApi.answer(G, p.seat, pick);
+  }
+  ok(G.phase === 'day' && G.day === 1 && G.seats.every(s => s.alive), 'day one breaks with all seven alive (four needed)');
+  call(G, st, 'narrate', {text: 'Day one on the Square. The heron stood in the millpond like a question nobody asked.'});
+  call(G, st, 'open_nominations', {reason: 'The check moves straight to the nominations.'});
+  const ballot = yes => {const p = G.pending; for (const s of p.seats) realApi.vote(G, s, yes.includes(s))};
+  realApi.nominate(G, 2, 3); ballot([0, 1, 2, 4, 5]); // the Chef: five of four needed, on the block
+  realApi.nominate(G, 4, 6); ballot([0, 1, 3, 4]); // the Monk: four of four needed, short of the block's five
+  const last = st.events(G, 'storyteller').filter(e => e.type === 'vote').at(-1);
+  ok(last && last.target === 6 && last.tally === 4 && last.block?.seat === 3 && last.block.votes === 5, 'the last vote-result line is the second nominee\'s, with the block in it (the game 5 shape)');
+  for (const s of G.seats.filter(x => x.alive)) if (!G.today.nominators.includes(s.index)) realApi.pass(G, s.index);
+  const ended = G.phase === 'day' ? call(G, st, 'end_day', {reason: 'Every living player has nominated or passed.'}) : {ok: true};
+  ok(ended.ok && G.executed.some(e => e.seat === 3 && e.day === 1), `${name(3)} is executed on the block's five (${ended.error || 'ok'})`);
+  const owed = narrationOwed(G, st);
+  ok(owed?.kind === 'execution' && owed.tally === 5 && owed.need === 4, `the owed execution carries the block's own tally and the number needed (${owed && owed.tally} of ${owed && owed.need})`);
+  ok(owed?.others?.length === 1 && owed.others[0].name === name(6) && owed.others[0].tally === 4 && owed.others[0].short === 1, 'the other nominee is carried with their tally and how far short');
+  const h = storytellerHeader(G);
+  ok(h.includes(`EXECUTION NOT YET NARRATED: ${name(3)} was executed at dusk on Day 1, by the town's vote: five votes against the four needed, nominated by ${name(2)}; ${name(6)} drew four, one short of ${name(3)}'s five.`), `the owed line names the tally and the shortfall\n${h}`);
+  ok(/the block's own count against the number needed, then .* falling short in a clause of its own \(never one count for two votes\)/.test(h), 'the makings ask for the count and the shortfall in its own clause');
+  ok(h.length <= HEADER_CAP, `the header stays under the cap (${h.length})`);
+  const sc = scriptedNarration(G, owed);
+  ok(sc.includes('five votes against the four needed') && sc.includes(`${name(6)} drew four, one short of ${name(3)}'s five`), `the scripted fallback says the tally and the shortfall: ${sc}`);
+  ok(narrationError(G, sc, st) === null, 'the scripted narration passes the narration check');
+  const fused = call(G, st, 'narrate', {text: `At dusk the town voted ${name(3)} to the block, four votes for the four needed, and he was put to death.`});
+  ok(!fused.ok && /Not true: .* went to the block with five votes against the four needed/.test(fused.error) && fused.error.includes(`${name(6)} drew four`), `the game 5 narration (the second vote's count on the block) is refused, naming the truth (${fused.error})`);
+  ok(narrationError(G, `${name(3)} went to the block with 4 votes.`, st) !== null, 'a wrong count in digits is refused too');
+  ok(narrationError(G, `${name(3)}, the one who kept the bees, was put to death at dusk on Day 1.`, st) === null, 'a narration that gives no count, a "the one who" and a Day 1 passes');
+  ok(narrationError(G, `${name(6)} drew four, one short; ${name(3)} went to the block with five against the four needed.`, st) === null, 'the shortfall clause before the block\'s count is not mistaken for it');
+  ok(call(G, st, 'narrate', {text: `${name(3)} went to the block with five votes against the four needed, ${name(6)} drawing four, one short, and the lamps on Lamp Row came on behind the crowd.`}).ok, 'the true count with the shortfall in its own clause is accepted');
+  ok(/one clause of its own/.test(STORYTELLER_SYSTEM) && /never merge two votes into one/.test(STORYTELLER_SYSTEM.replace(/'\s*\+\s*'/g, '')), 'the prompt asks for the block\'s tally and a second nominee\'s shortfall in its own clause');
+}
+
 // ---- the header through the real api over whole seeded games: dawns and executions owed, the Now line kept ----
 section('the header through the real api over seeds 1-20');
 {

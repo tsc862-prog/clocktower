@@ -187,6 +187,7 @@ async function channels() {
         // the rooms (#28): where reads; go and invite only with a room that does not exist, so no seat moves while it is read
         where: [{}, {player: A + 1}, {seat: A}], go: [{}, {room: 'the Storyteller\'s room'}, {room: String(A)}],
         invite: [{player: nm(i)}, {player: 'Storyteller', room: 'parlour'}, {player: nm(A), room: 'the Storyteller\'s room'}],
+        think: [{text: String(A)}, {text: nm(A)}], // by day no thought is asked, so think refuses and changes nothing (#111)
       }};
     ok(PLAYER_TOOLS.every(t => t.name in variants(0) || t.name === 'pass' || t.name === 'leave'), 'every player tool is read with hostile arguments (pass and leave are played, not probed)');
     const heard = {}, tRead = Date.now();
@@ -291,9 +292,12 @@ async function thoughts() {
     const ARGS = [{}, {since: 0}, {since: -5}, {player: A + 1}, {seat: A}, {name: nm(A)}, {to: nm(A)}];
     for (let i = 0; i < g().seats.length; i++) {
       const out = [];
-      for (const t of players.filter(x => !x.act)) for (const a of ARGS) out.push(J(await be.call(i + 1, t.name, a)));
+      // the thinker keeps its own thought in its own notes (the player's think writes it there): my_notes is its memory, and only its
+      const mine = [];
+      for (const t of players.filter(x => !x.act)) for (const a of ARGS) (i === A && t.name === 'my_notes' ? mine : out).push(J(await be.call(i + 1, t.name, a)));
       out.push(J(await be.call(i + 1, 'pace', {brief: true})), J(await be.call(i + 1, 'pace', {realMs: 0, wake: 'all'})), systemFor('player', nm(i)));
-      ok(!out.join(' | ').includes('zq111t'), `${nm(i)}${i === A ? ' (the thinker)' : ''}: no thought in its tools, header or prompt`);
+      ok(!out.join(' | ').includes('zq111t'), `${nm(i)}${i === A ? ' (the thinker; its own my_notes aside)' : ''}: no thought in its tools, header or prompt`);
+      if (i === A && players === PLAYER_TOOLS) ok(mine.some(x => x.includes('zq111t')), `${nm(i)} keeps its own thought in its notes`);
     }
     const st = [];
     for (const t of STORYTELLER_TOOLS.filter(x => !x.act)) for (const a of [{}, {since: 0}, {player: A + 1}]) st.push(J(await be.storytellerCall(t.name, a)));

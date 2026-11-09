@@ -1,7 +1,7 @@
 // The tools a player agent uses to play one seat. Shared by the relay's MCP server (scripts/relay-mcp.mjs), the local
 // tool loop (scripts/local-agent.mjs) and the docs. Each tool:
 //   {name, desc, act, args: {argName: {type: 'string'|'integer'|'number'|'array' (of strings), desc, optional?, enum?}}, handler}
-// act: true for a tool that spends the turn (speak, whisper, nominate, vote, a night choice, slay, pass), false for a read
+// act: true for a tool that spends the turn (speak, whisper, nominate, vote, a night choice, slay, think, pass), false for a read
 // and for a move between places (go, invite, leave: moves are free, #28).
 // handler(args, ctx): ctx = {game, seat: {index, name}, api, log} (the slice 3 contract). A handler reads and acts only
 // through the api's seat-scoped functions and copies out only the fields a player may see, so a token, another seat's
@@ -9,7 +9,8 @@
 // Every refusal comes back as {ok: false, error} with what is open to the seat now. With no game behind the relay (the
 // stub backend: no ctx.game or ctx.api) look answers "no game yet" and the rest say so.
 import {clashesOf, seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf, shotOf,
-  placeText, placeNameOf, andList, claimsOf, coverOf, roleChangeOf, staleNote, noteText, readsOf, nothingYet} from '../seats/player.js';
+  placeText, placeNameOf, andList, claimsOf, coverOf, roleChangeOf, staleNote, noteText, readsOf, nothingYet,
+  visitsOf, visitsText, togetherOf, turnSpentOf, repeatOf, addressedAway} from '../seats/player.js';
 
 const READ_CAP = 40; // read_talk and my_whispers show at most this many entries
 
@@ -157,8 +158,11 @@ function where(args, ctx) {
   const rooms = (w?.rooms || v.rooms || []).map(r => ({id: r.id, name: r.name, size: r.size, free: r.free, who: names(r.seats)}));
   const open = !!(w ? w.open : v.roomsOpen);
   const square = w ? names(w.square) : (v.seats || []).filter(s => s.room == null).map(s => s.name);
+  // who shared a room, each day, from the moves the whole table saw (#126): never what was said there
+  const visits = visitsOf(v, cleanEvents(v, i, ctx.api.events(ctx.game, i, -1)));
   return {ok: true, place: placeNameOf(v, w ? w.place : p.room), with: names(w ? w.with : p.with), square, rooms, open,
     neighbours: names(w ? w.neighbours : p.neighbours), canWhisper: names(w ? w.canWhisper : p.canWhisper),
+    visits: visitsText(visits), ...(visits.length ? {together: togetherOf(visits)} : {}),
     text: [placeText(v) || 'Nobody moves between places at night.', open ? 'The rooms are open until nominations open; then everyone comes back to the Square.'
       : v.phase === 'day' ? 'The rooms are closed: everyone is at the Square.' : ''].filter(Boolean).join(' ')};
 }
@@ -187,11 +191,33 @@ export function stripOwnName(text, name) {
   for (let k = 0; k < 3 && re.test(t); k++) t = t.replace(re, '').trim();
   return t;
 }
+// Before the game is asked (#122, #123): a line close to one of mine today in another place is refused with where I said it;
+// a living seat whose round turn is gone is told where it went; a line alone in a room is refused, as nobody would hear it.
+// None of these spends the turn. A line in a room that speaks to someone outside it is said, with a warning.
 function speak(args, ctx) {
-  const text = stripOwnName(args.text, ctx.seat?.name || viewOf(ctx).name);
+  const v = viewOf(ctx), i = me(ctx), text = stripOwnName(args.text, ctx.seat?.name || v.name);
   if (!text) return refuse(ctx, 'speak needs text: what you say, without your name in front.');
-  ctx.api.say(ctx.game, me(ctx), text);
-  return {ok: true, said: text, heard: heardBy(viewOf(ctx))};
+  let evs = [];
+  try {evs = cleanEvents(v, i, ctx.api.events(ctx.game, i, -1))} catch {evs = []}
+  const again = v.phase === 'day' ? repeatOf(v, evs, text) : null;
+  if (v.phase === 'day' && !again?.game) {
+    if (again) return refuse(ctx, `You said that already, ${again.where} ${again.last ? 'a moment ago' : 'earlier today'}: "${again.said}" Say something new, or pass.`);
+    const spent = turnSpentOf(v, evs);
+    if (spent) return refuse(ctx, spent.text);
+    const p = v.place;
+    if (p && p.room != null && !(p.with || []).length) {
+      const room = p.name || placeNameOf(v, p.room);
+      return refuse(ctx, `You are alone in ${room}: nobody would hear it. Leave, then speak at the Square.`);
+    }
+  }
+  ctx.api.say(ctx.game, i, text);
+  const after = viewOf(ctx), out = {ok: true, said: text, heard: heardBy(after)};
+  const ap = after.place;
+  if (ap && ap.room != null) {
+    const others = (ap.with || []).map(x => nameOf(after, x)), away = addressedAway(after, text, others);
+    if (away.length) out.warning = `${andList(away)} ${away.length > 1 ? 'are' : 'is'} not in ${ap.name || placeNameOf(after, ap.room)}; only ${andList(others)} heard this.`;
+  }
+  return out;
 }
 // Where a line just said went, from the seat's place after saying it (#28).
 function heardBy(v) {
@@ -330,7 +356,30 @@ function slay(args, ctx) {
   return {ok: true, shot: name, public: seen.map(e => e.text).filter(Boolean),
     result: alive ? `${name} is still alive; read_talk shows anything that follows.` : `${name} dies.`};
 }
+// The night's thought before dawn (#111): answers the thoughts scene and keeps the thought in the seat's own notes, its only
+// memory of it (the thought itself reaches nobody at the table, the thinker included). Empty text is a thought kept to oneself.
+function think(args, ctx) {
+  const v = viewOf(ctx), p = pendingOf(ctx);
+  if (!p || p.kind !== 'thoughts') return refuse(ctx, v.phase === 'day'
+    ? 'think is for the end of the night, when you are asked for your thought; by day, speak to the table or write a note.'
+    : 'Nobody has asked for your thought yet: it comes as the night ends. Use note to remember something now.');
+  if (p.mine != null) return refuse(ctx, 'You have given your thought for tonight already.');
+  const text = stripOwnName(args.text, ctx.seat?.name || v.name);
+  const r = ctx.api.think(ctx.game, me(ctx), text) || {};
+  const kept = String(r.thought ?? text).trim();
+  if (!kept) return {ok: true, thought: '', note: 'You keep your thoughts to yourself tonight.'};
+  let noted = true;
+  try {ctx.api.note(ctx.game, me(ctx), `Night ${v.night}, my thought: ${kept}`)} catch {noted = false}
+  return {ok: true, thought: kept, ...(r.cut ? {cut: `cut to ${r.cut} characters`} : {}),
+    note: noted ? 'Kept in your notes. Nobody at the table hears it.' : 'Nobody at the table hears it.'};
+}
 function pass(args, ctx) {
+  const v = viewOf(ctx);
+  if (v.phase === 'day') {
+    let spent = null;
+    try {spent = turnSpentOf(v, cleanEvents(v, me(ctx), ctx.api.events(ctx.game, me(ctx), -1)))} catch {spent = null}
+    if (spent) return refuse(ctx, spent.text); // #122: where the turn went, so the seat does not retry
+  }
   ctx.api.pass(ctx.game, me(ctx));
   return {ok: true, passed: true};
 }
@@ -350,7 +399,7 @@ export const PLAYER_TOOLS = [
   T('who_voted', false, 'The open vote: who is nominated, who has voted so far and who has not.', {}, whoVoted),
   T('note', false, 'Write a private note to yourself (a claim you heard, a suspicion, a plan). Does not use your turn.',
     {text: {type: 'string', desc: 'The note, one or two sentences.'}}, note),
-  T('where', false, 'Who is where: your place and who is with you, who is in each room and how many places are free, and the two neighbours you may whisper to.', {}, where),
+  T('where', false, 'Who is where: your place and who is with you, each room with its free places, your two whisper neighbours, and who shared a room with whom each day (from the moves everyone saw).', {}, where),
   // moves (#28): free, by day until nominations open; the table sees every move, never the words said in a room
   T('go', false, 'Go to a room by day, to talk with whoever is there out of the table\'s hearing. Free: it does not use your turn.',
     {room: {type: 'string', desc: 'The room\'s id or name, as where lists them (for example "parlour").'}}, go),
@@ -358,7 +407,7 @@ export const PLAYER_TOOLS = [
     {player: {type: 'string', desc: 'The player\'s name.'}, room: {type: 'string', optional: true, desc: 'The room (default: the room you are in).'}}, invite),
   T('leave', false, 'Leave your room and come back to the Square, where the whole table hears you. Free.', {}, leave),
   // acts: each one spends the turn
-  T('speak', true, 'Say one short line where you are: to the whole table at the Square, or only to those in your room. Say something new; a repeat is refused.',
+  T('speak', true, 'Say one short line where you are: to the whole table at the Square, or only to those in your room (alone in a room, leave first). Say something new; a repeat, here or elsewhere, is refused.',
     {text: {type: 'string', desc: 'Only the words you say, in your own voice, without your name in front (the table shows who speaks). At most 600 characters.'}}, speak),
   T('whisper', true, 'Whisper to a neighbour at the table (by day, at the Square only). Only they hear it; the table sees that you two whispered.',
     {to: {type: 'string', desc: 'The name of one of your two neighbours (where names them).'}, text: {type: 'string', desc: 'What you whisper, at most 600 characters.'}}, whisper),
@@ -370,6 +419,8 @@ export const PLAYER_TOOLS = [
     {pick: {type: 'array', desc: 'The name or names you choose, as the question asks.'}}, nightChoice),
   T('slay', true, 'The Slayer\'s shot, by day, at any moment, once a game: shoot a player in front of everyone (the demon dies of it). "hold" keeps it for later.',
     {target: {type: 'string', desc: 'The player you shoot, or "hold" to keep the shot.'}}, slay),
+  T('think', true, 'Your thought as the night ends, for yourself: one to three sentences, first person, what you did or learned tonight and what it means for tomorrow. Nobody at the table hears it.',
+    {text: {type: 'string', desc: 'Your thought, in the first person, at most 400 characters.'}}, think),
   T('pass', true, 'Do nothing this round: stay quiet now, or decline to nominate.', {}, pass),
 ];
 export const TOOL_NAMES = PLAYER_TOOLS.map(t => t.name);

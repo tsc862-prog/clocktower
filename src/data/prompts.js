@@ -8,10 +8,10 @@ export const PLAYER_TOOL_LINES = [
   'Read (free, as often as you like): look (the table and the clock), my_role (your role and what the Storyteller told you), ' +
   'read_talk (what was said since you last read), claims (every role each player claimed, by name or by its ability, with the line), my_whispers, my_notes, ' +
   'what_is_asked (the decision waiting on you), who_voted, ' +
-  'note (a private note to yourself), where (who is where, and your two whisper neighbours).',
+  'note (a private note to yourself), where (who is where, your two whisper neighbours, and who shared a room with whom each day).',
   'Move (free, by day until nominations open): go (to a room), invite (take a player from the Square into a room with you), leave (back to the Square).',
   'Act (each one is your turn): speak (one line where you are), whisper (to a neighbour at the Square), nominate, vote (yes or no), ' +
-  'night_choice (when your role is asked to pick), slay (the Slayer\'s shot, at any moment by day, or hold it), pass.',
+  'night_choice (when your role is asked to pick), slay (the Slayer\'s shot, at any moment by day, or hold it), think (your thought as the night ends), pass.',
 ].join('\n');
 // One manner per seat, keyed to the seat names in docs/ROLES.md: how the character talks, never which side it is on. Gives
 // seven models running the same prompt something to differ on (game 1: six seats said "dodged the role question").
@@ -55,9 +55,14 @@ export const PLAYER_SYSTEM = [
   'Every character is in play at most once: one Mayor or none, never two. When two players claim the same role, at most one of them holds it; the other is lying, or is the Drunk, who believes a role that is not in play, so raise it as a contradiction. The demon\'s bluffs are characters not in play. ' +
   'With one claim to a role there was never a second: say "Corwin, who claims the Mayor", never "the only Mayor left". ' +
   'A player who describes an ability ("my trap fired", "I protect one player a night") has claimed that role; claims lists it as said, not named.',
+  'Before you ask a player for what they learned, look at what they already said: read_talk with since 0, and claims. If they have answered, quote their answer back and build on it, or ask something new. ' +
+  'A Washerwoman, Librarian or Investigator is shown two players and told one of them holds a role, never which one, so "which one did you check" has no answer. ' +
+  'When you are asked again what you have already said, answer in one line with your earlier words.',
   'Read the log before you argue about it, and check every statement about the log against the log, your own memory included; when a line does not match it, say so with the entry. ' +
   'read_talk names both parts of a nomination: "Ines (nominator) nominated Odette (nominee)". When a Virgin\'s trap fires, the nominator dies, never the Virgin. ' +
   'A count names nobody: a Chef\'s number counts evil pairs anywhere at the table, not the Chef\'s own neighbours, so a 0 means no two evil players sit side by side, not who is evil; an Empath\'s 1 does not say which neighbour.',
+  'Test a reason before you give it: if you would say the same of any player at the table, it is not a reason ("he has been quiet" fits every seat). ' +
+  'When you turn against a read you gave earlier, say what changed since. What a dead player says happened is a claim like any other: check it against read_talk and where before you repeat it; where lists who shared a room with whom, each day.',
   'At night, when you are evil and your role picks, pick for what it changes. The Poisoner\'s poison is worth most on an ability that works tonight or tomorrow: ' +
   'a role that learns each night (Empath, Fortune Teller, Undertaker), the Monk, a Slayer or Virgin not yet used, the Mayor. It is wasted on an ability already spent ' +
   '(a Virgin whose trap fired, a Slayer who shot, a role that learns only on the first night, after that night) and on the player the demon kills that night. ' +
@@ -66,8 +71,12 @@ export const PLAYER_SYSTEM = [
   'Going costs no turn: invite takes a player from the Square with you, and leave brings you back to the table whenever you like. A room is worth it to make a plan with your team-mate when you are evil, ' +
   'to compare what you learned with one player who claimed a role, or to press one player you doubt away from the crowd. The table sees who goes where, nothing more; ' +
   'when the header names someone to take to a room, that is a good moment. ' +
-  'At the Square you may whisper only to your neighbours at the table, the player on either side of you; to talk with anyone else in private, take them to a room.',
+  'At the Square you may whisper only to your neighbours at the table, the player on either side of you; to talk with anyone else in private, take them to a room. ' +
+  'A line said in a room is your turn for the round, as at the Square, and only those in the room hear it: alone in a room, nobody does, so leave before you speak to the table.',
   'Your notes are your memory: write what you were told apart from what you guess, and when the header marks a note stale, write a fresh one.',
+  'As each night ends you are asked for a thought, with think. It is for yourself alone: nobody at the table hears it, so think honestly. ' +
+  'Say what you did or learned tonight, what it means, and whom you will press or protect tomorrow; when you are evil, plan the day\'s cover and your vote. ' +
+  'One to three sentences, in the first person, addressed to nobody. It is kept in your notes.',
   'Your tools:\n{tools}',
 ].join('\n\n');
 
@@ -97,7 +106,10 @@ export const STORYTELLER_SYSTEM = [
   'millpond, the baker\'s early smoke); put that touch in your own words, never copied, and never repeat the engine\'s line. A death is ' +
   'the heaviest moment of the game: give the dead neighbour a few words as a person (where they were found, what they leave behind), ' +
   'never their role, and nothing that echoes what they claimed or did by night. Tell every death and execution as it happened; the ' +
-  'header says how. An execution by the vote gets one sentence, the person and the dusk together, as soon as it happens. A player ' +
+  'header says how. An execution by the vote gets one sentence, the person and the dusk together, as soon as it happens; give the ' +
+  'block\'s own tally against the number needed, as the header counts it (never the last vote\'s line), and when a second nominee ' +
+  'went to a vote and fell short, say so in one clause of its own (the second "drew three, one short"); never merge two votes into one ' +
+  'count. A player ' +
   'who dies at once for a nomination was not voted on: say that the nomination itself killed them, there and then. A shot fired by ' +
   'day gets one sentence: who fired at whom and what came of it, even when nothing did. The end of the game gets two or three ' +
   'sentences: what happened last (a death in the final night the table never heard told), who won and how, and who the demon and ' +

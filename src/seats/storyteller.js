@@ -240,6 +240,10 @@ export function narrationError(game, text, api = ST_API) {
   if (owed?.kind === 'execution' && owed.how === 'virgin' && /\bvot(?:e|ed|es|ing)\b/i.test(all) && !/\b(?:no|without|never|nor|not|before any|before a)\b[^.;]{0,30}\bvot/i.test(all)) {
     return `Not true: ${owed.fact}. Say what happened as it happened.`;
   }
+  if (owed?.kind === 'execution' && owed.how === 'vote' && Number.isFinite(owed.tally)) {
+    const said = tallySaid(sentences, owed);
+    if (said != null && said !== owed.tally) return `Not true: ${owed.name} went to the block with ${countWords(owed.tally, owed.need)}${owed.others?.length ? `; ${owed.others.map(o => o.words).join('; ')}` : ''}. Give the block's own count, and each vote in its own clause.`;
+  }
   if (owed?.kind === 'shot' && !owed.died && new RegExp(`\\b${esc(owed.name)}\\b[^.;]{0,40}\\b(?:died|dies|dead|fell|killed)\\b`, 'i').test(all) && !/\b(?:not|n't|never|no)\b/i.test(all)) {
     return `Not true: ${owed.fact}.`;
   }
@@ -250,6 +254,21 @@ export function narrationError(game, text, api = ST_API) {
   return null;
 }
 
+// The count a narration gives the executed seat (#124), or null when it gives none: the first number in the first sentence
+// that names the seat, after dropping the clauses that name another nominee and any "Day N". "one" counts only before a
+// vote word (never "no one", "the one who", "one short").
+const NUM_RE = /\b(\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|one(?=\s+(?:vote|hand|yes|voice|ballot)))\b/i;
+function tallySaid(sentences, owed) {
+  const has = (t, n) => new RegExp(`\\b${String(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(t);
+  const t = sentences.find(x => has(x, owed.name));
+  if (!t) return null;
+  const rest = t.split(/[,;:–—]|\s-\s/).filter(c => !(owed.others || []).some(o => has(c, o.name))).join(',').replace(/\bday\s*\d+/gi, '');
+  const m = rest.match(NUM_RE);
+  if (!m) return null;
+  const w = m[1].toLowerCase();
+  return /^\d+$/.test(w) ? Number(w) : NUMBER_WORDS.indexOf(w);
+}
+
 // The dawn of this day, when it has not been narrated: {day, deaths: [names], touch}; null when none is owed.
 export function dawnOwed(game, api = ST_API) {
   if (phaseOf(game) !== 'day') return null;
@@ -258,6 +277,33 @@ export function dawnOwed(game, api = ST_API) {
   return {day: game.day, deaths: diedNames(game), touch: touchFor(seedOf(game), game.day, 'dawn')};
 }
 const seedOf = game => game?.config?.seed ?? 0;
+
+// ---- the block's tally (#124): the executed seat's own vote, never the last vote-result line ----
+const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
+  'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+export const numberWord = n => NUMBER_WORDS[n] ?? String(n);
+const countWords = (tally, need) => `${numberWord(tally)} vote${tally === 1 ? '' : 's'}${Number.isFinite(need) ? ` against the ${numberWord(need)} needed` : ''}`;
+// The executed seat's block from the day's vote events before the execution: its own tally and the number needed, who
+// nominated it, and every other nominee who went to a vote that day with their tally and how far short they fell.
+// {tally, need, by, others: [{seat, name, tally, need, short, words}]}
+export function blockOf(game, evs, e, day) {
+  const votes = evs.filter(x => x.type === 'vote' && x.id < e.id && Number.isInteger(x.target) && (x.day ?? day) === day);
+  const own = votes.filter(x => x.target === e.seat).at(-1);
+  const fromBlock = votes.filter(x => x.block && x.block.seat === e.seat).at(-1)?.block;
+  const tally = Number.isFinite(own?.tally) ? own.tally : Number.isFinite(fromBlock?.votes) ? fromBlock.votes : null;
+  const need = Number.isFinite(own?.need) ? own.need : null, name = seatLabel(game, e.seat);
+  const others = votes.filter(x => x.target !== e.seat && Number.isFinite(x.tally)).map(x => {
+    const n = seatLabel(game, x.target), t = x.tally;
+    if (Number.isFinite(x.need) && t < x.need) {
+      const short = x.need - t;
+      return {seat: x.target, name: n, tally: t, need: x.need, short, words: `${n} drew ${numberWord(t)}, ${numberWord(short)} short of the ${numberWord(x.need)} needed`};
+    }
+    const short = tally != null ? Math.max(tally - t, 0) : null;
+    return {seat: x.target, name: n, tally: t, need: x.need ?? null, short,
+      words: short ? `${n} drew ${numberWord(t)}, ${numberWord(short)} short of ${name}'s ${numberWord(tally)}` : `${n} drew ${numberWord(t)}`};
+  });
+  return {tally, need, by: Number.isInteger(own?.by) ? seatLabel(game, own.by) : null, others};
+}
 
 // ---- what happened by day, as it happened (#90): an execution by the vote, one at once by a nomination (the Virgin), a shot ----
 // The day's public happenings after event id `after`: executions and shots, each with how it came about. Never a role: the
@@ -275,9 +321,11 @@ export function dayHappenings(game, evs, after = 0) {
         out.push({kind: 'execution', how, day, seat: e.seat, name, nominee,
           fact: `${name} nominated ${nominee || 'a player'} and was executed at once on Day ${day}, by the nomination itself: no vote was taken`});
       } else {
-        const vote = evs.filter(x => x.type === 'vote' && x.id < e.id && x.block && x.block.seat === e.seat && (x.day ?? day) === day).at(-1);
-        const tally = vote && Number.isFinite(vote.tally) ? `, ${vote.tally} votes${Number.isFinite(vote.need) ? ` (${vote.need} needed)` : ''}${Number.isInteger(vote.by) ? `, nominated by ${seatLabel(game, vote.by)}` : ''}` : '';
-        out.push({kind: 'execution', how: 'vote', day, seat: e.seat, name, fact: `${name} was executed at dusk on Day ${day}, by the town's vote${tally}`});
+        const b = blockOf(game, evs, e, day);
+        const tally = b.tally != null ? `: ${countWords(b.tally, b.need)}${b.by ? `, nominated by ${b.by}` : ''}` : '';
+        const others = b.others.length ? `; ${b.others.map(o => o.words).join('; ')}` : '';
+        out.push({kind: 'execution', how: 'vote', day, seat: e.seat, name, tally: b.tally, need: b.need, others: b.others,
+          fact: `${name} was executed at dusk on Day ${day}, by the town's vote${tally}${others}`});
       }
     } else if (e.type === 'slayer-shot' && Number.isInteger(e.target)) {
       const shooter = seatLabel(game, e.seat), target = seatLabel(game, e.target), day = e.day ?? game.day;
@@ -347,7 +395,7 @@ export function owedLines(game, owed) {
   }
   if (owed.kind === 'execution') {
     return [`EXECUTION NOT YET NARRATED: ${owed.fact}. Narrate it now, before anything else.`,
-      `Makings: ${owed.name}, put to death by the vote, and the dusk: ${owed.touch}. One sentence: the execution and that touch in your own words, ${notRole}.${also}`];
+      `Makings: ${owed.name}, put to death by the vote${Number.isFinite(owed.tally) ? ` with ${countWords(owed.tally, owed.need)}` : ''}; the dusk: ${owed.touch}. One sentence: the execution with the block's own count against the number needed${owed.others?.length ? `, then ${owed.others.map(o => o.name).join(' and ')} falling short in a clause of ${owed.others.length > 1 ? 'their' : 'its'} own (never one count for two votes)` : ''}, and that touch in your own words, ${notRole}.${also}`];
   }
   if (owed.kind === 'shot') {
     return [`SHOT NOT YET NARRATED: ${owed.fact}. Narrate it now, before anything else.`,
