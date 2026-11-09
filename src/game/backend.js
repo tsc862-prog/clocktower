@@ -287,6 +287,9 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     });
     if (r) return hold(r);
     if (staggerLeft(key) > 0) return {ok: true, wake: null, why: 'nominations go round in seat order: your moment comes', clock: clockText()};
+    // #125: at night a player seat with nothing pending sleeps: its night call and the thoughts scene wake it 'now' through
+    // changed(), so a heartbeat only buys a turn that ends in a refused pass or speak
+    if (key !== ST && (game.phase === 'night' || game.phase === 'setup')) return {ok: true, wake: null, why: 'Nothing is asked of you tonight; end your turn', clock: clockText()};
     const quiet = key === ST ? 'a quiet beat' : `a quiet beat${(t => t ? ': nothing to do ' + t : '')(api.nextTurnText(game, key))}`;
     return soft ? hold({ok: true, wake: 'heartbeat', why: quiet, clock: clockText()}) : {ok: true, wake: null, why: 'nothing new', clock: clockText()};
   }

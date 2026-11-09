@@ -471,6 +471,9 @@ section('the night thoughts (#111): the backend');
   const w = await be.call(1, 'pace', {realMs: 0, wake: 'now'});
   ok(w.wake === 'now' && /what are you thinking/.test(w.why), `a seat is woken now for its thought (${w.why})`);
   ok((await be.call(1, 'think', {text: SECRET})).ok, 'Odette thinks through her tool');
+  // #125: a seat with nothing pending sleeps through the night: no heartbeat, only a 'now' wake when something is asked of it
+  const sleep = await be.call(1, 'pace', {realMs: 30, wake: 'all'});
+  ok(sleep.ok && sleep.wake === null && /Nothing is asked of you tonight/.test(sleep.why) && be.game.phase === 'night', `at night, with nothing pending, a seat's paced wait ends with no wake (${sleep.wake}: ${sleep.why})`);
   for (let i = 2; i <= 7; i++) await be.call(i, 'think', {text: i === 2 ? 'Bram ponders the dark.' : ''});
   ok(be.game.phase === 'day', 'when every seat has thought, the dawn comes');
   const ev = be.watch(-1).events.filter(e => e.type === 'thought');

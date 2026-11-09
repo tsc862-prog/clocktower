@@ -109,7 +109,7 @@ async function watcher() {
 async function lastTurn() {
   console.log("a runner's last turn");
   const env = await quietEnv({CLOCKTOWER_FAKE_SDK: 'scripts/fake-agent-sdk.mjs', AGENT_PROVIDER: 'anthropic', AGENT_MIN_GAP: '1'});
-  const R = await startRelayProcess(['--play-only', '--runners', '--game', '--seed', '5'], env), {base} = R;
+  const R = await startRelayProcess(['--play-only', '--runners', '--game', '--scripted', '--grace', '150', '--seed', '5'], env), {base} = R;
   try {
     const s = await req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 2}});
     ok(s.status === 200, 'the page starts a Claude seat on the fake Agent SDK');
