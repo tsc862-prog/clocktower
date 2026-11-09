@@ -759,6 +759,23 @@ const {frameAt} = await import('../src/ui/model.js');
   const cards = () => stage.querySelectorAll('.card');
   const card = i => stage.querySelector(`.card[data-seat="${i}"]`);
   ok(cards().length === 7 && JSON.stringify(cards().map(c => c.querySelector('.name').textContent)) === JSON.stringify(tn), 'seven cards on the stage, in seat order');
+  // the stage fits its window (#79): the cards are placed from the table's measured box, and at every table size from a small laptop
+  // to 3440x1440 no card leaves the table, no two cards touch, and the middle (dawn, tally, winner) is a box clear of every face
+  {const {stageLayout} = await import('../src/ui/stage.js');
+    ok(cards().every(c => /--x:\d+px;--y:\d+px/.test(c.getAttribute('style') || '')) && /--ring-cw:\d+px/.test(stage.querySelector('.table').getAttribute('style') || '') &&
+      /--mid-w:\d+px/.test(stage.querySelector('.table').getAttribute('style') || ''), 'the cards and the middle are placed from the measured table');
+    const sizes = [[958, 470], [1060, 520], [1300, 600], [1590, 690], [1500, 820], [2000, 700], [2850, 1150]], bad = [];
+    const hit = (p, q) => p.l < q.r && q.l < p.r && p.t < q.b && q.t < p.b;
+    for (const [w, h] of sizes) {
+      const L = stageLayout(w, h, [0, 1, 2, 3, 4, 5, 6]);
+      const box = p => ({l: p.x - L.cw / 2, r: p.x + L.cw / 2, t: p.y - L.ch / 2, b: p.y + L.ch / 2});
+      const bs = Object.values(L.pos).map(box), m = {l: L.mid.x, r: L.mid.x + L.mid.w, t: L.mid.y, b: L.mid.y + L.mid.h};
+      if (bs.some(b => b.l < 0 || b.t < 0 || b.r > w || b.b > h)) bad.push(`${w}x${h}: a card leaves the table`);
+      if (bs.some((p, i) => bs.some((q, j) => j > i && hit(p, q)))) bad.push(`${w}x${h}: two cards touch`);
+      if (L.mid.w < 200 || L.mid.h < 90 || bs.some(b => hit(b, m))) bad.push(`${w}x${h}: the middle ${JSON.stringify(L.mid)} is too small or runs onto a face`);
+    }
+    ok(!bad.length, 'at every size the cards fit the table, apart, and the middle text has its own box clear of the faces' + (bad.length ? ': ' + bad.join('; ') : ''));
+  }
   ok(cards().every((c, i) => c.querySelector('.initial').textContent === tn[i][0]), 'each card carries the initial under its portrait (no portraits here)');
   ok(cards().every((c, i) => c.querySelector('.role-corner .role-token').dataset.role === T.grimoire.seats[i].role), 'each card has its true role small in a corner');
   ok(!!stage.querySelector('.stage-st .face') && /Storyteller/.test(stage.querySelector('.stage-st .name').textContent) && stage.querySelector('.stage-st .st-line').textContent.length > 0,
