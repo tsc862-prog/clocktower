@@ -169,6 +169,12 @@ The Storyteller narrates plainly and a little dry, like a town clerk reading the
 It says what happened and no more, and it is never cute. Thistlewick's own names (the Square, the Tower,
 Lamp Row, the Snug, the Vestry, the Taproom) are used without comment, as if everyone already knew them.
 
+At each dawn and each execution the Storyteller's header offers one touch of the town to put in its own
+words: a dozen for dawns and eight for dusks in `src/data/colour.js`, picked by the game's seed and never
+repeated within a game. They use the names above, the Wick and Candle, the baker, the rooks on the Tower
+rail, and two more of our own: **the millpond** below **the mill** at the end of the one street, where a
+heron stands in the shallows.
+
 ### The voices
 
 Each seat and the Storyteller speaks with a fixed voice of the local speech engine (Kokoro-FastAPI), in
