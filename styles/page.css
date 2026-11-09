@@ -404,6 +404,7 @@ body[data-view="people"] .drawer-close { display: block; position: absolute; top
   .card .caption, .card.cap-l .caption, .card.cap-r .caption { position: relative; top: auto; left: auto; right: auto; transform: none; width: auto; max-height: none; margin-top: .7rem; font-size: 1.05rem; }
   .card .caption::before, .card.cap-l .caption::before, .card.cap-r .caption::before { left: 50%; right: auto; top: auto; bottom: 100%; transform: translateX(-50%); border-color: transparent; border-bottom-color: var(--caption-bg); }
   .card .caption.whisper::before { border-bottom-color: var(--private); }
+  .card .caption.thought::before { border-bottom-color: var(--think-bg, #2a2a3d); }
   .table-centre { position: static; transform: none; width: auto; grid-column: 1 / -1; order: -1; }
   .tally-big b { font-size: 3rem; } .vote-what { font-size: 1.15rem; } .night-big { font-size: 2.4rem; } .dawn-big { font-size: 1.4rem; } .dawn-words { font-size: 1.05rem; } .winner-big { font-size: 2.6rem; }
   .meter { gap: 8px; } .meter .pip { width: 20px; height: 20px; }
@@ -466,3 +467,15 @@ body[data-view="people"] .drawer-close { display: block; position: absolute; top
   #stage .room-line.now { opacity: 1; box-shadow: 0 0 0 3px var(--speak), 0 8px 24px #000b; }
 }
 @media (prefers-reduced-motion: reduce) { #stage .card { transition: none; } }
+
+/* ---- the night aloud (#111): a seat's thought before dawn, the night's list in the voice's prose ---- */
+:root { --think-bg: #2a2a3d; --think-ink: #d9d6ea; --think-head: #9aa3d8; }
+.caption.thought { background: var(--think-bg); color: var(--think-ink); font-style: italic; border: 1px solid #9aa3d855; box-shadow: 0 8px 22px #0008; }
+.card.cap-l .caption.thought::before { border-left-color: var(--think-bg); } .card.cap-r .caption.thought::before { border-right-color: var(--think-bg); }
+.caption.thought .cap-head { color: var(--think-head); font-style: normal; }
+.card.speaking.thinking .face { border-color: var(--moon); box-shadow: 0 0 0 3px var(--moon), 0 0 40px rgba(154, 163, 216, .55); }
+.st-night .nl { margin: .1rem 0; } .st-night .nl.thought { font-style: italic; color: var(--think-ink); opacity: .85; }
+.st-night .nl.now { color: var(--speak); opacity: 1; }
+.line.private.thought { font: italic 14px/1.5 var(--serif); color: var(--think-ink); border-left: 2px solid var(--moon); padding-left: .5rem; margin: .2rem 0 .2rem .8rem; }
+.line.private.thought .seen-by { font-style: normal; }
+.recent .r-line[data-kind~="thought"] { color: var(--think-ink); font-style: italic; } .recent .r-line[data-kind~="thought"] .seen-by { font-style: normal; }
