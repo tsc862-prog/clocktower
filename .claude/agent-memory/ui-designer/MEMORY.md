@@ -69,3 +69,19 @@
 - Recorded game: model.fixtureMoments(end) adds 'night' and 'dawn' cut by frameAt (dawn events carry grimoire snapshots).
 - Screens: logs/tmp/shot.mjs pattern (CDP, Emulation.setDeviceMetricsOverride); vite preview binds localhost (IPv6), not 127.0.0.1.
 - Bash heredocs with quotes in this tool can fail to parse: write edit scripts/CSS chunks with the Write tool, then run/append.
+
+## Stage sizing (PR #86, issue #79, owner's "bad UI" at ~2000x900 CSS px, 2026-11-09)
+- stage.js stageLayout(w, h, seats, rooms) measures .table (ResizeObserver) and writes px vars: table --ring-cw --ring-name --table-h
+  --mid-x/y/w/h (on the table, so the oval ::before reads them too); cards --x --y. CSS reads them only in @media (min-width: 601px).
+- Card = largest cw (<= min(320, .34h, .16w)) with every box + pad inside the table, no two boxes (cw x cw+label) within 12 px, and a
+  free middle >= min(520,.28w) x min(260,.24h). Seats at equal arc length on the ellipse (wide windows spread along the long sides).
+- Middle = largest centred box clear of all cards; .table-centre is a size container (cqh fonts, safe-center flex, scrolls inside).
+- Window scroll locked in People view (owner's clipped ST column/strip was a scrolled viewport); strip height clamp(4.9rem,16vh,13.2rem).
+- logs/tmp/shot.mjs pattern: also measure card/name/centre rects vs #stage rect, report overlaps.
+
+## Rooms break-out (PR #95, issue #80, owner: "When rooms break out, the view should break out"; not yet reviewed)
+- Any room occupied: Square ring (its seats only, seat order) on the left; right column (26-48% of table, best min(square cw, room cw))
+  holds one .room-group per room in use, stacked or side by side (short windows); empty rooms not drawn. Room cards inline --card-w.
+- Room's newest line (since dawn / rooms closing) shows in its panel (.room-line, arrow at speaker, .now when it is the stage line);
+  card captions hidden for away cards while broken out. Cards slide via left/top transition. #stage[data-rooms=out].
+- Recorded game: ?fixture=rooms (day 2: evil pair in the Snug, one seat alone in the Vestry); uifixture frames carry places + room talk.
