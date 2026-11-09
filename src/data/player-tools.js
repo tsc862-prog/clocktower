@@ -207,7 +207,7 @@ function speak(args, ctx) {
     const p = v.place;
     if (p && p.room != null && !(p.with || []).length) {
       const room = p.name || placeNameOf(v, p.room);
-      return refuse(ctx, `You are alone in ${room}: nobody would hear it. leave, then speak at the Square.`);
+      return refuse(ctx, `You are alone in ${room}: nobody would hear it. Leave, then speak at the Square.`);
     }
   }
   ctx.api.say(ctx.game, i, text);

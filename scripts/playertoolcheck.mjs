@@ -772,7 +772,7 @@ section('rooms on the fake: where, go, invite, leave, the header, read_talk, whi
     `alone in a room the header says so, offers leave first, no whisper and no speak (#122): ${h}`);
   const said = g.events.length;
   r = run(g, 'speak', {text: 'Is anyone there?'});
-  ok(!r.ok && /You are alone in the parlour: nobody would hear it\. leave, then speak at the Square\./.test(r.error) && g.events.length === said, `speak alone in a room is refused before the game is asked (#122): ${r.error}`);
+  ok(!r.ok && /You are alone in the parlour: nobody would hear it. Leave, then speak at the Square\./.test(r.error) && g.events.length === said, `speak alone in a room is refused before the game is asked (#122): ${r.error}`);
   r = run(g, 'invite', {player: 'Thea'});
   ok(r.ok && r.place === 'the parlour' && JSON.stringify(r.with) === '["Thea"]' && /Thea came with you/.test(r.note), `invite into my room: ${JSON.stringify(r)}`);
   r = run(g, 'invite', {player: 'Ines'});

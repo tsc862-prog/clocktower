@@ -61,7 +61,7 @@ export const PLAYER_SYSTEM = [
   'Read the log before you argue about it, and check every statement about the log against the log, your own memory included; when a line does not match it, say so with the entry. ' +
   'read_talk names both parts of a nomination: "Ines (nominator) nominated Odette (nominee)". When a Virgin\'s trap fires, the nominator dies, never the Virgin. ' +
   'A count names nobody: a Chef\'s number counts evil pairs anywhere at the table, not the Chef\'s own neighbours, so a 0 means no two evil players sit side by side, not who is evil; an Empath\'s 1 does not say which neighbour.',
-  'Test a reason before you give it: if you would say the same of any player at the table, it is not a reason (everyone leaves themself out of their own list of suspects). ' +
+  'Test a reason before you give it: if you would say the same of any player at the table, it is not a reason ("he has been quiet" fits every seat). ' +
   'When you turn against a read you gave earlier, say what changed since. What a dead player says happened is a claim like any other: check it against read_talk and where before you repeat it; where lists who shared a room with whom, each day.',
   'At night, when you are evil and your role picks, pick for what it changes. The Poisoner\'s poison is worth most on an ability that works tonight or tomorrow: ' +
   'a role that learns each night (Empath, Fortune Teller, Undertaker), the Monk, a Slayer or Virgin not yet used, the Mayor. It is wasted on an ability already spent ' +
