@@ -17,7 +17,7 @@ import {readFileSync, existsSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {checkStart, runnerArgs, RUNNER_KINDS, MAX_RUNNERS, gameShares, defaultBudgets} from './runners.mjs';
-import {turnCap, makePacer} from './pacing.mjs';
+import {turnCap, makePacer, storytellerDueNow} from './pacing.mjs';
 import {startMockOllama} from './mock-ollama.mjs';
 import {startMockOpenAI, KEY} from './mock-openai.mjs';
 import {quietEnv, startRelayProcess, req} from './relaycheck.mjs';
@@ -72,6 +72,18 @@ console.log('a live pace change reaches the pacer');
   const p2 = makePacer({base: 'http://x', player: 1, runner: 'r', minGap: 20, heartbeat: 120, pollMs: 10, fetchImpl, log: l => logs.push(l), stopped: () => sent.length >= 6});
   await p2.next(); sent.length = 5; await p2.next();
   ok(sent[sent.length - 1].minGap === 45 && sent[sent.length - 1].heartbeat === 300 && logs.some(l => /min gap now 45/.test(l)), 'a pace answer with overrides is adopted and sent back on the next poll');
+}
+
+console.log('the Storyteller is played only when something is due (#91)');
+{
+  const asked = [], post = answer => async (path, body) => {asked.push({path, body}); if (answer instanceof Error) throw answer; return answer};
+  ok(await storytellerDueNow(post({ok: true, due: 'nothing', dueTool: null})) === null, 'nothing due: null, so a soft wake ends with no model call');
+  ok(asked[0].path === '/play/storyteller' && asked[0].body.tool === 'look', 'it asks the Storyteller\'s own look tool (a free read)');
+  const d = await storytellerDueNow(post({ok: true, due: 'the end of the game is not yet narrated', dueTool: 'narrate'}));
+  ok(d && d.tool === 'narrate' && /end of the game/.test(d.why), 'a narration owed: {tool, why}');
+  ok(await storytellerDueNow(post({ok: true, phase: 'no game yet'})) === undefined && await storytellerDueNow(post(new Error('down'))) === undefined, 'an older relay or an error: undefined, so the turn is played as before');
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'claude-runner.mjs'), 'utf8');
+  ok(/st && w\.wake !== 'now'[\s\S]{0,200}storytellerDueNow[\s\S]{0,120}due === null/.test(src) && /lastTurn = true/.test(src), 'the Claude runner skips a soft wake with nothing due and plays one last turn for the end');
 }
 
 console.log('no turn cap by default');

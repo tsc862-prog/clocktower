@@ -304,8 +304,14 @@ section('the Mayor\'s bounce');
   engineAnswer(B, 1);
   until(B, s => s.pending?.kind === 'mayor-bounce');
   ok(B.pending?.kind === 'mayor-bounce', 'the demon attacks the Mayor');
-  headerOk(B, api2, 'mayor-bounce', ['Mayor', 'Truth: Bram dies']);
-  const r = call(B, api2, 'decide', {value: 'Odette', reason: REASON});
+  const hb = headerOk(B, api2, 'mayor-bounce', ['Mayor', 'Your call, not a rule: the kill may land on Bram (the Mayor dies) or bounce to any of 5 other players']);
+  ok(!/Truth:/.test(hb), 'the bounce has no "truth" line: where the kill lands is the Storyteller\'s call (#90)');
+  ok(/Your call, not a rule/.test(call(B, api2, 'what_is_asked').pending.yourCall || ''), 'what_is_asked says the bounce is the Storyteller\'s call');
+  // #90: game 4's Mayor reason called the landing on the Mayor "the true outcome"
+  const g4 = call(B, api2, 'decide', {value: 'Bram', reason: 'The engine\'s truth is that the kill lands on Bram with no bounce, as the true outcome requires.'});
+  ok(!g4.ok && /your call, not a rule/.test(g4.error) && B.pending?.kind === 'mayor-bounce', `a reason calling one landing the truth is refused (${g4.error})`);
+  ok(reasonFactsError(B, B.pending, 'Good is ahead by two, so letting the kill land on the Mayor keeps the game close.') === null, 'a reason that weighs the game passes');
+  const r = call(B, api2, 'decide', {value: 'Odette', reason: 'A bounce onto the demon would end the game far too soon.'});
   ok(!r.ok && /not an option/.test(r.error), 'the attacking demon is not a legal landing');
   const ok2 = call(B, api2, 'decide', {value: 'Fitch', reason: 'The Mayor living longer keeps good in the game.'});
   ok(ok2.ok && !B.seats[5].alive && B.seats[1].alive, 'the kill lands on Fitch instead');
@@ -594,8 +600,72 @@ section('a dawn with one touch of the town, acting first (#70)');
   } else ok(false, 'the quiet game ends');
   // the prompt
   ok(/exactly two sentences/.test(STORYTELLER_SYSTEM) && /one touch of the town/.test(STORYTELLER_SYSTEM), 'the prompt asks for two sentences at dawn with one touch of the town');
-  ok(/Every execution gets one sentence/.test(STORYTELLER_SYSTEM) && /end of the game\s+gets one sentence/.test(STORYTELLER_SYSTEM), 'the prompt gives executions and the end one sentence each');
+  ok(/An execution by the vote gets one sentence/.test(STORYTELLER_SYSTEM) && /The end of the game gets two or three/.test(STORYTELLER_SYSTEM), 'the prompt gives an execution one sentence and the end two or three');
+  ok(/dies at once for a nomination was not voted on/.test(STORYTELLER_SYSTEM) && /A shot fired by\s+'?\s*\+?\s*'?day/.test(STORYTELLER_SYSTEM.replace(/\n/g, ' ')), 'the prompt tells each death as it happened: no vote for a death by nomination, a shot told even when it misses');
+  ok(/who the demon and\s+its minions were/.test(STORYTELLER_SYSTEM) && /You are woken only when something\s+waits on you/.test(STORYTELLER_SYSTEM), 'the prompt asks the end to reveal the demon and minions, and says the Storyteller is woken only when due');
   ok(/as a person/.test(STORYTELLER_SYSTEM) && /A turn that only reads is wasted/.test(STORYTELLER_SYSTEM) && /end_day/.test(STORYTELLER_SYSTEM), 'the prompt asks for the person in a death and for acting turns');
+}
+
+// ---- #90: each death told as it happened (a nomination's death, a shot, a night the game ended in), through the real api ----
+section('deaths as they happened and the end (#90)');
+{
+  const st = realApi.forSeat('storyteller');
+  // 0 Imp, 1 Virgin, 2 Poisoner, 3 Washerwoman, 4 Chef, 5 Empath, 6 Slayer
+  const G = newGame({seed: 31, roles: ['imp', 'virgin', 'poisoner', 'washerwoman', 'chef', 'empath', 'slayer']});
+  const name = i => G.seats[i].name;
+  const night = (kill = 5) => {
+    while (G.pending && G.phase !== 'day' && !G.winner) {
+      const p = G.pending;
+      if (p.seat === 'storyteller') {const r = call(G, st, 'fallback', {reason: 'The night runs on the plain default here.'}); if (!r.ok) throw new Error(r.error); continue}
+      const pick = p.role === 'poisoner' ? 4 : p.role === 'imp' ? kill : p.count ? p.options.filter(x => x !== p.seat).slice(0, p.count) : p.options.find(x => x !== p.seat);
+      realApi.answer(G, p.seat, pick);
+    }
+  };
+  night();
+  ok(G.phase === 'day' && G.day === 1, 'day one breaks');
+  ok(call(G, st, 'look').dueTool === 'narrate', 'look names narrate as the due tool at an unnarrated dawn');
+  ok(call(G, st, 'narrate', {text: 'Day one on the Square. The heron stood in the millpond like a question nobody asked.'}).ok, 'the first dawn is narrated');
+  const quietLook = call(G, st, 'look');
+  ok(quietLook.due === 'nothing' && quietLook.dueTool === null, 'mid-day with nothing owed, look says nothing is due (the runner skips the model on a soft wake)');
+  ok(call(G, st, 'what_is_asked').due === 'nothing', 'what_is_asked with nothing pending says nothing is due');
+  call(G, st, 'open_nominations', {reason: 'The check moves straight to the nominations.'});
+  // the Washerwoman nominates the Virgin: executed at once, no vote (game 4: narrated as "the town voted her off")
+  realApi.nominate(G, 3, 1);
+  ok(!G.seats[3].alive && G.executed.some(e => e.seat === 3 && e.how === 'virgin'), `${name(3)} dies at once for nominating ${name(1)}`);
+  const hv = storytellerHeader(G);
+  ok(hv.startsWith(`EXECUTION NOT YET NARRATED: ${name(3)} nominated ${name(1)} and was executed at once on Day 1, by the nomination itself: no vote was taken`), `the header says how: by the nomination, no vote\n${hv}`);
+  ok(/no vote, no wait for dusk/.test(hv) && !/put to death by the vote/.test(hv), 'the makings say there was no vote');
+  ok(storytellerDue(G)?.why === `${name(3)}'s execution is not yet narrated`, 'storytellerDue names the execution');
+  const voted = call(G, st, 'narrate', {text: `${name(3)} was taken to the square at dusk and the town voted her off the mill steps.`});
+  ok(!voted.ok && /no vote was taken/.test(voted.error), `a narration that invents a vote is refused, naming the truth (${voted.error})`);
+  ok(call(G, st, 'narrate', {text: `${name(3)} pointed at ${name(1)} and fell where she stood, before any vote could be called, her basket still on her arm.`}).ok, 'the death by nomination told as it happened is accepted');
+  // the next night, then a shot by day that misses
+  night(5);
+  ok(G.phase === 'day' && G.day === 2 && G.seats[6].alive, 'day two breaks with the shooter alive');
+  call(G, st, 'narrate', {text: `${name(5)} was found by the pump with the kettle still warm. Fog sat on Lamp Row until noon.`});
+  call(G, st, 'open_nominations', {reason: 'The check moves straight to the nominations.'});
+  realApi.dayAction(G, 6, 4);
+  const hs = storytellerHeader(G);
+  ok(hs.startsWith(`SHOT NOT YET NARRATED: ${name(6)} shot at ${name(4)} on Day 2: nothing happened, ${name(4)} lives`), `a shot is owed and told with its outcome\n${hs}`);
+  const fell = call(G, st, 'narrate', {text: `${name(6)} took aim and ${name(4)} fell dead in the road.`});
+  ok(!fell.ok && /nothing happened/.test(fell.error), `a missed shot narrated as a death is refused (${fell.error})`);
+  ok(call(G, st, 'narrate', {text: `${name(6)} fired at ${name(4)} across the Square, and ${name(4)} only brushed the dust from a sleeve.`}).ok, 'the miss is narrated');
+  // played on to the end: no votes pass, so the demon wins in a night the table never hears at a dawn
+  playOut(G, quiet, {override: p => (p.kind === 'choose' && p.role === 'poisoner' ? 4 : undefined), maxDays: 10});
+  ok(G.winner?.team === 'evil' && G.winner.phase === 'night', `the game ends in the night (${G.winner && G.winner.text})`);
+  const he = storytellerHeader(G), lastDead = (G.diedTonight || []).map(name);
+  ok(he.startsWith(`THE END NOT YET NARRATED: ${G.winner.text}`), `the end is owed first\n${he}`);
+  ok(lastDead.length > 0 && he.includes(`Not yet told: in the night ${lastDead.join(' and ')} died`), 'the end makings carry the last night\'s death, never told at a dawn');
+  ok(he.includes(`Who was who: ${name(0)} the Imp, ${name(1)} the Virgin, ${name(2)} the Poisoner`) && /roles may be named now/.test(he), 'the end makings name every role');
+  ok(he.length <= HEADER_CAP, `the end header stays under the cap (${he.length})`);
+  ok(storytellerDue(G)?.tool === 'narrate' && call(G, st, 'look').dueTool === 'narrate', 'the end is due: narrate');
+  const wrong = call(G, st, 'narrate', {text: 'Good wins at last, and the tower rings out over Thistlewick.'});
+  ok(!wrong.ok && /Not true: evil wins/.test(wrong.error), `an end narration naming the wrong side is refused (${wrong.error})`);
+  const fb = call(G, st, 'fallback', {reason: 'The owner resumed with the scripted Storyteller after its runner was gone.'});
+  ok(fb.ok && fb.owed === 'end' && /^The game is over: evil wins/.test(fb.narrated) && fb.narrated.includes(`${name(0)} the Imp`) && fb.narrated.length <= 600, `the scripted fallback narrates the end plainly with the roles: ${fb.narrated}`);
+  ok(storytellerDue(G) === null && !/NOT YET NARRATED/.test(storytellerHeader(G)), 'once the end is told nothing is due');
+  const none = call(G, st, 'fallback', {reason: 'Nothing waits, so this fallback should be refused.'});
+  ok(!none.ok, 'fallback with nothing pending and nothing owed is refused');
 }
 
 // ---- the header through the real api over whole seeded games: dawns and executions owed, the Now line kept ----
