@@ -201,7 +201,12 @@ export function nominationsWords(game) {
   return open ? 'nominations are OPEN' : `nominations are CLOSED (they open when round ${c.roundsBeforeNominations ?? '?'} is done${c.round != null ? `; it is round ${c.round}` : ''})`;
 }
 const diedNames = game => (game.diedTonight || []).map(i => seatLabel(game, i));
-export const diedWords = game => (diedNames(game).length ? `${diedNames(game).join(' and ')} died in the night` : 'nobody died in the night');
+// A quiet night in words (#110): the first night never has a death by the rules (the demon does not kill on it), so day 1's
+// dawn says so as the rule it is; from day 2 a quiet night is news.
+export const FIRST_NIGHT_QUIET = 'the first night passes without a death, as it always does';
+export const quietWords = day => (day === 1 ? FIRST_NIGHT_QUIET : 'nobody died in the night');
+const deathWords = (deaths, day) => (deaths.length ? `${deaths.join(' and ')} died in the night` : quietWords(day));
+export const diedWords = game => deathWords(diedNames(game), game.day);
 const executedNames = game => (game.executed || []).map(e => seatLabel(game, e.seat));
 export const executedWords = game => (executedNames(game).length ? `executed so far: ${executedNames(game).join(', ')}` : 'nobody has been executed yet');
 
@@ -329,10 +334,11 @@ export function owedLines(game, owed) {
   if (!owed) return [];
   const notRole = 'about the person, never a role, nothing that echoes what they claimed';
   if (owed.kind === 'dawn') {
-    const died = owed.deaths.length ? `${owed.deaths.join(' and ')} died in the night` : 'nobody died in the night';
+    const died = deathWords(owed.deaths, owed.day);
+    const first = owed.day === 1 && !owed.deaths.length ? ' The first night is quiet by the rules, not by luck: no reprieve, no demon that spared anyone.' : '';
     const person = owed.deaths.length ? ` A death deserves a sentence about the person: ${owed.deaths.join(' and ')} as a neighbour (where found, what is left), never a role, nothing that echoes what they claimed.` : '';
     return [`DAWN NOT YET NARRATED (Day ${owed.day}): ${died}. Narrate it now, before anything else.`,
-      `Makings: Day ${owed.day}; ${died}; touch of the town: ${owed.touch}. Exactly two sentences: what happened, then the touch in your words.${person}`];
+      `Makings: Day ${owed.day}; ${died}; touch of the town: ${owed.touch}. Exactly two sentences: what happened, then the touch in your words.${first}${person}`];
   }
   const also = owed.also?.length ? ` Also not yet told: ${owed.also.join('; ')}.` : '';
   if (owed.kind === 'execution' && owed.how === 'virgin') {
@@ -356,7 +362,7 @@ export function owedLines(game, owed) {
 const sentence = f => f.charAt(0).toUpperCase() + f.slice(1) + '.';
 export function scriptedNarration(game, owed) {
   if (!owed) return null;
-  if (owed.kind === 'dawn') return `Day ${owed.day} begins in Thistlewick: ${owed.deaths.length ? `${owed.deaths.join(' and ')} died in the night` : 'nobody died in the night'}.`;
+  if (owed.kind === 'dawn') return `Day ${owed.day} begins in Thistlewick: ${deathWords(owed.deaths, owed.day)}.`;
   if (owed.kind === 'execution' || owed.kind === 'shot') return [...(owed.also || []), owed.fact].map(sentence).join(' ');
   const t = `The game is over: ${owed.text}.${owed.unheard?.length ? ' ' + owed.unheard.map(sentence).join(' ') : ''} Who was who: ${owed.roles.join(', ')}.`;
   return t.length > 600 ? t.slice(0, 597) + '...' : t;
