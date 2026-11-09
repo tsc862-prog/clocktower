@@ -12,6 +12,8 @@
 //   relay state                                           GET /health
 //   voices                                                the socket's {type: 'clip'} (the relay's clip for an event), /tts/*, and
 //                                                         POST /play/heard (how far the voices have got; src/ui/voice.js)
+// While the voice is on and lines wait to be read, the square, the talk, the grimoire, the Storyteller's log, the People view and the
+// game bar's phase draw the frame that goes with the ear (pickShown below, #103): a move, a vote's result or dawn lands as it is said.
 // Two views of the same panels, switched on the game bar and remembered per browser (clocktower.view): People, the characters as the
 // main screen with the talk, the grimoire, the Storyteller's log and the agents in drawers over the stage's edge; Table, every panel
 // at once. Both are always built and fed, so switching, or opening a drawer, keeps every scroll position and open row.
@@ -37,12 +39,36 @@ const stored = k => {try {return globalThis.localStorage ? localStorage.getItem(
 const store = (k, v) => {try {if (globalThis.localStorage) localStorage.setItem(k, v)} catch {}};
 const FRAME_NAMES = {talk: 'day 1, talking', vote: 'day 1, a vote', night: 'a night', dawn: 'dawn', rooms: 'day 2, in the rooms', end: 'the end'};
 
+// Following the voices (#103). While the voice is on and a line waits, the page draws the frame that goes with the ear, not the
+// live one: the newest frame it has held that carries nothing the voice has yet to say. The page keeps the last FRAME_RING frames it
+// held, each with the highest event id it carries (max) and its order of arrival (seq).
+export const FRAME_RING = 64;
+export const maxEventId = w => ((w && w.events) || []).reduce((m, e) => Math.max(m, e.id), -1);
+// The frame to show -> {seq, trim} (trim: show that frame's events below this id only; null: the whole frame), or null for the live
+// frame. boundary: the id of the first line still waiting in the voice queue (null: nothing waits, so the live frame). now: the id of
+// the line playing, which must be in the shown frame: when no whole frame both holds it and stops before the boundary, the first
+// frame that holds it is shown cut at the boundary. shown: what is on the page; the pick never steps back from it.
+export function pickShown(ring, {boundary = null, now = null, shown = null} = {}) {
+  if (boundary == null || !ring.length) return null;
+  const below = ring.findLast(x => x.max < boundary);
+  let pick;
+  if (below && (now == null || below.max >= now)) pick = {seq: below.seq, trim: null};
+  else {const c = now == null ? ring[0] : ring.find(x => x.max >= now); pick = c ? {seq: c.seq, trim: c.max < boundary ? null : boundary} : null}
+  if (!pick) return shown;
+  const key = p => [p.seq, p.trim == null ? Infinity : p.trim];
+  if (shown) {const [a, b] = key(pick), [c, d] = key(shown); if (a < c || (a === c && b < d)) return shown}
+  return pick;
+}
+
 export function createApp({client, view = null, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end', artLoad = imageLoad, pageFetch = undefined, audio = undefined, voiceFile = undefined, voiceTick = undefined, clipWait = undefined}) {
   const $ = id => document.getElementById(id);
   const state = {watch: null, runners: null, links: null, asides: [], health: null, source: fixture ? 'recorded' : 'live', watchMissing: false, frame: null, msg: '', epoch: 0, socket: false, pace: storedPace()};
   const bar = {seed: $('seed'), rounds: $('rounds'), phase: $('phase'), winner: $('winner'), source: $('source'), relay: $('relay-state'), newGame: $('new-game'), frames: $('frames'), msg: $('act-msg'), empty: $('empty'), pace: $('pace'), paceNote: $('pace-note'), art: $('art-note'), rooms: $('rooms-line'), startAll: $('bar-start-all')};
   if (seed != null && bar.seed && !bar.seed.value) bar.seed.value = String(seed);
   let asideN = 0, seedTouched = false;
+  // following the voices: the frames held (oldest first), what is shown ({seq, trim}), and the frame drawn for it
+  const follow$ = {ring: [], seq: 0, top: null, key: null, shown: null, frame: null, behind: false};
+  let rendering = false;
   if (bar.seed) bar.seed.addEventListener('input', () => {seedTouched = true});
   if (bar.pace) {
     bar.pace.replaceChildren(...Object.entries(PACES).map(([k, p]) => {const o = document.createElement('option'); o.value = k; o.textContent = p.label; return o}));
@@ -119,17 +145,17 @@ export function createApp({client, view = null, fixture = null, runnersFixture =
   if (bar.newGame) bar.newGame.addEventListener('click', () => act('newGame'));
   // the voices: every public line read aloud through the relay's local engine, when the owner turns them on
   let drawVoice = () => {};
-  voice = createVoice({client, recorded: !!fixture, onSpeaker: who => {panels.square.setSpeaking(who); panels.stage.setSpeaking(who)}, onChange: st => {drawVoice(st); panels.stage.refresh()},
+  voice = createVoice({client, recorded: !!fixture, onSpeaker: who => {panels.square.setSpeaking(who); panels.stage.setSpeaking(who)}, onChange: st => {if (!rendering && follow()) {drawPanels(); renderBar()} drawVoice(st); panels.stage.refresh()},
     ...(audio !== undefined ? {audio} : {}), ...(voiceFile !== undefined ? {voiceFile} : {}), ...(voiceTick !== undefined ? {tick: voiceTick} : {}), ...(clipWait !== undefined ? {clipWait} : {})});
   drawVoice = voiceBar(voice, {box: $('voice'), toggle: $('voice-toggle'), skip: $('voice-skip'), mute: $('voice-mute'), whispers: $('voice-whispers'), names: $('voice-names'), note: $('voice-note'), time: $('voice-time')});
   drawVoice();
 
   function renderBar() {
-    const w = state.watch;
+    const w = state.watch, sw = follow$.frame || w; // the phase, the winner and the rooms line follow what the voice has said
     if (bar.empty) bar.empty.hidden = !!w;
-    if (bar.phase) bar.phase.textContent = w ? clockText(w) : '';
+    if (bar.phase) {const t = sw ? clockText(sw) : ''; if (bar.phase.textContent !== t) bar.phase.textContent = t}
     if (bar.rounds) bar.rounds.textContent = w ? `${w.rounds} speaking rounds a day` : '';
-    if (bar.winner) {bar.winner.textContent = w && w.winner ? `${w.winner.team === 'good' ? 'Good' : 'Evil'} wins` : ''; bar.winner.hidden = !(w && w.winner)}
+    if (bar.winner) {bar.winner.textContent = sw && sw.winner ? `${sw.winner.team === 'good' ? 'Good' : 'Evil'} wins` : ''; bar.winner.hidden = !(sw && sw.winner)}
     if (bar.seed && w && !seedTouched && document.activeElement !== bar.seed) bar.seed.value = String(w.seed);
     const live = state.source === 'live';
     if (bar.source) bar.source.innerHTML = live
@@ -143,7 +169,7 @@ export function createApp({client, view = null, fixture = null, runnersFixture =
       bar.newGame.title = can ? 'Stops every runner, then deals a new game with this seed' : 'Needs the relay to start a new game over the wire (POST /play/game/new), asked of the backend';
     }
     if (bar.frames) bar.frames.hidden = live;
-    if (bar.rooms) {const o = openRooms(w), t = o ? roomsLine(o.rooms, seatNames(w)) : ''; if (bar.rooms.textContent !== t) bar.rooms.textContent = t; bar.rooms.hidden = !o}
+    if (bar.rooms) {const o = openRooms(sw), t = o ? roomsLine(o.rooms, seatNames(w)) : ''; if (bar.rooms.textContent !== t) bar.rooms.textContent = t; bar.rooms.hidden = !o}
     if (bar.startAll) {const a = panels.agents.canStartAll(); bar.startAll.disabled = !live || !a; bar.startAll.title = !live ? 'The recorded game: nothing is sent to the relay' : a ? 'Start a runner for the Storyteller and every seat that has none' : 'Every seat has a runner, or the runner supervisor is off'}
     if (bar.art) {const a = artNote(); if (bar.art.textContent !== a) bar.art.textContent = a; bar.art.hidden = !a}
     if (bar.pace) {
@@ -156,11 +182,41 @@ export function createApp({client, view = null, fixture = null, runnersFixture =
       if (bar.paceNote && bar.paceNote.textContent !== n) bar.paceNote.textContent = n;
     }
   }
+  // Hold the live frame in the ring (a new game empties it), then pick the frame to show. -> true when what is shown changed.
+  function follow() {
+    const w = state.watch, key = w ? w.seed + ':' + state.epoch : null, F = follow$;
+    if (F.key !== key) {F.key = key; F.ring = []; F.top = null; F.shown = null}
+    if (w && F.top !== w) {F.top = w; F.ring.push({seq: ++F.seq, max: maxEventId(w), frame: w}); if (F.ring.length > FRAME_RING) F.ring.splice(0, F.ring.length - FRAME_RING)}
+    const vs = voice && voice.state, top = F.ring.at(-1);
+    const keeping = !!(w && top && state.source === 'live' && vs && vs.on && !vs.muted && !vs.blocked && vs.queue.length);
+    const pick = keeping ? pickShown(F.ring, {boundary: vs.queue[0].id, now: vs.now ? vs.now.id : null, shown: F.shown}) : null;
+    F.shown = pick || (top ? {seq: top.seq, trim: null} : null);
+    let frame = w;
+    if (pick && !(pick.seq === top.seq && pick.trim == null)) {
+      const x = F.ring.find(r => r.seq === pick.seq);
+      frame = !x ? (F.frame || w) : pick.trim == null ? x.frame : F.frame && F.frame._cut === pick.seq + ':' + pick.trim ? F.frame
+        : {...x.frame, events: x.frame.events.filter(e => e.id < pick.trim), last: Math.min(x.frame.last ?? Infinity, pick.trim - 1), _cut: pick.seq + ':' + pick.trim};
+    }
+    const behind = frame !== w;
+    if (vs && vs.behind !== behind) vs.behind = behind;
+    F.behind = behind;
+    if (frame === F.frame) return false;
+    F.frame = frame; return true;
+  }
+  // The panels: the agents (and the bar's relay state, runners, pace) stay live; the rest draw the shown frame. A runner's aside
+  // waits with the events it came after.
+  function drawPanels() {
+    const w = follow$.frame || state.watch, cut = w && w !== state.watch ? maxEventId(w) : Infinity;
+    const shown = {watch: w, runners: state.runners, links: state.links, asides: cut === Infinity ? state.asides : state.asides.filter(a => a.after <= cut), epoch: state.epoch};
+    for (const [k, p] of Object.entries(panels)) p.render(k === 'agents' ? {...shown, watch: state.watch, asides: state.asides} : shown);
+  }
   function render() {
-    const s = {watch: state.watch, runners: state.runners, links: state.links, asides: state.asides, epoch: state.epoch};
-    for (const p of Object.values(panels)) p.render(s);
+    rendering = true;
+    try {if (state.source === 'live') voice.feed(state.watch, state.epoch)} finally {rendering = false} // first: the voice must see new lines to queue them
+    follow();
+    drawPanels();
     renderBar(); // after the panels: the bar's Start all asks the agents panel
-    if (state.source === 'live') voice.feed(state.watch, state.epoch);
+    drawVoice();
   }
 
   let watchBusy = null, pushSeq = 0;

@@ -24,6 +24,8 @@
 //   - keeping time (#50): the relay's clip played when the event or the socket brings one, the page's own clip after a second without;
 //     whispers on the page's own path; POST /play/heard {last, voice} on each clip end, each skip and the 20 s tick, voice false at once
 //     on mute and off, nothing posted while the voice is off; the "keeping time" mark while the page reports
+//   - following the voices (#103): with lines waiting, a move, a vote's result and the talk wait until they are read; hands land at
+//     once; Mute and Voice off show the live game; the recorded game is unaffected; the pick of the shown frame on a hand-made ring
 //   - rooms (#28): a line said in a room carries its place, a move is a one-line mark; in the square, a seat away carries its room's
 //     name, the rooms show as discs off the table with their occupants, one line says who is where; all of it goes when the rooms close
 //   - the People view (#77): the default, the Table view one click away and remembered; seven cards in seat order with the role in a
@@ -685,6 +687,87 @@ console.log('voices');
     $('voice-names').checked = false; $('voice-names').dispatch('change');
     ok(localStorage.getItem(VO.NAMES_KEY) === 'off' && !lp.voice.state.names, 'the names choice is remembered');
     localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
+  }
+
+  // ---- the page follows the voices (#103): what is drawn is what has been said ----
+  console.log('voices: the page follows the voices');
+  {
+    const {pickShown, FRAME_RING} = await import('../src/ui/app.js');
+    // the pick on a hand-made ring: frames seq 1..4 carrying events up to 10, 12, 15, 20
+    const ring = [{seq: 1, max: 10}, {seq: 2, max: 12}, {seq: 3, max: 15}, {seq: 4, max: 20}];
+    ok(pickShown(ring, {boundary: null}) === null, 'the pick: nothing waiting, the live frame');
+    ok(JSON.stringify(pickShown(ring, {boundary: 15, now: 11})) === '{"seq":2,"trim":null}', 'the pick: the newest frame below the first waiting line');
+    ok(JSON.stringify(pickShown(ring, {boundary: 14, now: 13})) === '{"seq":3,"trim":14}', 'the pick: the line playing came with the waiting one, so its frame is cut at the waiting line');
+    ok(JSON.stringify(pickShown(ring, {boundary: 13, now: 11, shown: {seq: 3, trim: null}})) === '{"seq":3,"trim":null}', 'the pick never steps back from what is shown');
+    ok(JSON.stringify(pickShown(ring, {boundary: 16, now: 13, shown: {seq: 2, trim: null}})) === '{"seq":3,"trim":null}', 'the pick moves forward as the lines are heard');
+    ok(FRAME_RING >= 32, `the page keeps the last ${FRAME_RING} frames`);
+
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY);
+    const fr = voiceRelay(), fa = fakeAudio();
+    const fp = livePage(fr, fa); // names tick off: one clip per line
+    fr.watch = T; await fp.onSocketOpen(); await settle();
+    $('voice-toggle').click(); await settle();
+    const L = T.last, n = T.grimoire.seats.map(s => s.name), ev = (i, o) => ({id: L + i, day: T.day, night: T.night, ...o});
+    const send = async (events, extra = {}) => {fp.onSocket({type: 'watch', seed: T.seed, last: events.length ? events.at(-1).id : fp.state.watch.last, events, clock: T.clock, pending: T.pending, ballot: T.ballot, phase: T.phase, day: T.day, night: T.night, winner: T.winner, places: fp.state.watch.places, ...extra}); await settle()};
+    const talkHas = id => !!document.querySelector(`#talk .line[data-key="e${id}"]`);
+    const stage = () => document.querySelector('#stage');
+    const away = {square: [2, 3, 4, 5, 6], rooms: [{id: 'nook', name: 'the Snug', size: 2, seats: [0, 1], free: 0}, ...T.places.rooms.slice(1)], open: true};
+    await send([ev(1, {type: 'say', seat: 2, text: 'First, at the Square.'})]);
+    ok(fp.voice.state.now && fp.voice.state.now.id === L + 1 && talkHas(L + 1), 'a line that plays at once is on the page at once');
+    await send([ev(2, {type: 'say', seat: 3, text: 'Second, still waiting.'})]);
+    await send([ev(3, {type: 'move', seats: [0, 1], room: 'nook', text: `${n[0]} and ${n[1]} went to the Snug.`})], {places: away});
+    ok(fp.state.watch.places.rooms[0].seats.length === 2 && fp.voice.state.queue.length === 2, 'the live frame has the move; two lines wait for the voice');
+    ok(stage().dataset.rooms === '' && !document.querySelector('#stage .card.away'), 'the move not yet said: the stage keeps everyone at the Square');
+    ok(!talkHas(L + 2) && !talkHas(L + 3) && !document.querySelector('#square .seat.away'), 'the talk and the square wait for the voice too');
+    ok(/keeps pace/.test($('voice-note').textContent) && /keeps pace/.test($('voice-note').title), `the voice bar says the page keeps pace (${$('voice-note').textContent})`);
+    fa.end(); await settle();
+    ok(fp.voice.state.now.id === L + 2 && talkHas(L + 2) && !talkHas(L + 3) && stage().dataset.rooms === '', 'the second line plays: it shows, the move still waits');
+    fa.end(); await settle();
+    ok(fp.voice.state.now.id === L + 3 && stage().dataset.rooms === 'out' && talkHas(L + 3), 'the move is read: the stage breaks out into the rooms as it is said');
+    ok(!/keeps pace/.test($('voice-note').textContent), 'nothing waits: the page is live again and the hint goes');
+    fa.end(); await settle();
+
+    // mute: the live frame at once
+    await send([ev(4, {type: 'say', seat: 4, text: 'Third.'})]);
+    await send([ev(5, {type: 'say', seat: 5, text: 'Fourth, waiting.'})]);
+    ok(!talkHas(L + 5), 'a waiting line is not shown');
+    $('voice-mute').click(); await settle();
+    ok(talkHas(L + 5), 'Mute: the page shows the live game at once');
+    $('voice-mute').click(); await settle();
+    // voice off: always live
+    $('voice-toggle').click(); await settle();
+    await send([ev(6, {type: 'say', seat: 6, text: 'Fifth.'})]);
+    await send([ev(7, {type: 'say', seat: 2, text: 'Sixth.'})]);
+    ok(!fp.voice.state.on && talkHas(L + 6) && talkHas(L + 7), 'Voice off: every line shows as it arrives');
+    fp.voice.stop();
+
+    // a vote: hands land at once, the result waits for its reading
+    localStorage.removeItem(VO.VOICE_KEY);
+    const gr = voiceRelay(), ga = fakeAudio();
+    const gp = livePage(gr, ga);
+    const V0 = {...V, ballot: {...V.ballot, votes: {}}};
+    gr.watch = V0; await gp.onSocketOpen(); await settle();
+    $('voice-toggle').click(); await settle();
+    const M = V.last, vsend = async (events, extra = {}) => {gp.onSocket({type: 'watch', seed: V.seed, last: events.length ? events.at(-1).id : gp.state.watch.last, events, clock: V.clock, pending: V.pending, ballot: gp.state.watch.ballot, phase: V.phase, day: V.day, night: V.night, winner: null, ...extra}); await settle()};
+    const handsUp = () => document.querySelectorAll('#stage .hand-mark.up').length;
+    await vsend([{id: M + 1, day: V.day, night: V.night, phase: 'day', type: 'narration', text: 'The hands begin to rise.'}]);
+    ok(gp.voice.state.now && gp.voice.state.now.id === M + 1, 'a line plays');
+    await vsend([], {ballot: {...V.ballot, votes: {1: true}}});
+    ok(handsUp() === 1, 'a hand landing with nothing waiting shows at once');
+    const result = E.events.find(e => e.type === 'vote');
+    await vsend([{...result, id: M + 2}], {ballot: null, pending: null});
+    ok(gp.voice.state.queue.length === 1 && gp.voice.state.queue[0].id === M + 2, 'the result waits behind the line playing');
+    ok(!document.querySelector('#stage .card.flash') && !document.querySelector('#stage .result:not(.block)') && handsUp() === 1, 'the result not yet read: no tally flash, the hands as they were');
+    ga.end(); await settle();
+    ok(gp.voice.state.now && gp.voice.state.now.id === M + 2 && !!document.querySelector('#stage .card.flash'), 'the result is read: it flashes as it is heard');
+    gp.voice.stop();
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
+
+    // the recorded game is drawn as recorded
+    install(HTML);
+    const rp = createApp({client: relayClient({base: BASE, fetchImpl: voiceRelay().fetch}), fixture: GAME, runnersFixture: RUN, frame: 'rooms', audio: fakeAudio(), voiceFile: async () => null});
+    await settle();
+    ok(document.querySelector('#stage').dataset.rooms === 'out' && rp.state.source === 'recorded', 'the recorded game (rooms) is unaffected: the rooms are out');
   }
 }
 

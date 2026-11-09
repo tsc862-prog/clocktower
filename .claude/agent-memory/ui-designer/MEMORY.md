@@ -85,3 +85,10 @@
 - Room's newest line (since dawn / rooms closing) shows in its panel (.room-line, arrow at speaker, .now when it is the stage line);
   card captions hidden for away cards while broken out. Cards slide via left/top transition. #stage[data-rooms=out].
 - Recorded game: ?fixture=rooms (day 2: evil pair in the Snug, one seat alone in the Vestry); uifixture frames carry places + room talk.
+
+## The page follows the voices (issue #103, 2026-11-09; not yet reviewed by the owner)
+- app.js keeps a ring of 64 live frames {seq, max event id}; pickShown(ring, {boundary: queue[0].id, now, shown}) picks the newest
+  frame below the first waiting line (cut at the boundary when the playing line came in the same push); never steps back.
+- Panels but agents, and the bar's phase/winner/rooms line, draw the shown frame; voice.feed always gets the live frame (fed first in
+  render). Live when Voice off, muted, blocked, recorded, or nothing waits. voice.state.behind -> note "; the page keeps pace".
+- Relay hold (backend.js) only delays soft/heartbeat wakes, per seat, 30 s cap; 'now' wakes (votes, nights) are never held.

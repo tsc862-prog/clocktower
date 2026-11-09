@@ -13,6 +13,8 @@
 // Who sounds like whom: GET /tts/status carries the seat voice map as seatVoices; src/data/voices.js (the lore-keeper's) when the
 // relay does not; else the engine's default voice. With no engine the toggle says so once and stays off. The recorded game
 // (?fixture) sends nothing to the relay, so it is not spoken.
+// The page follows the ear (#103): while lines wait, src/ui/app.js draws the frame before the first of them; state.behind says so
+// and the note adds "the page keeps pace".
 // Keeping time (#50): when the relay makes the clips itself (/tts/status clipsOnSay), a spoken event carries clip: {id, ms} in the
 // watch body, or the socket sends {type: 'clip', id: <event id>, clip} a moment after the push; the page plays GET /tts?id=<clip.id>
 // and asks POST /tts/say itself only when no clip has come within about a second (whispers never have one). The page tells the relay
@@ -69,7 +71,7 @@ const defaultAudio = () => typeof Audio === 'function' ? new Audio() : null;
 export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {}, onChange = () => {}, cap = QUEUE_CAP, recorded = false, voiceFile = loadVoiceFile,
   tick = defaultTick, heardEvery = HEARD_MS, clipWait = CLIP_WAIT_MS}) {
   const st = {on: false, whispers: read(WHISPER_KEY) === 'on', names: read(NAMES_KEY) !== 'off', places: null, muted: false, blocked: false, engine: null, note: '', queue: [], now: null,
-    key: null, seen: -1, dropped: 0, fails: 0, saidNoEngine: false, checking: false, heard: -1, reporting: false, sentOn: false};
+    key: null, seen: -1, dropped: 0, fails: 0, saidNoEngine: false, checking: false, heard: -1, reporting: false, sentOn: false, behind: false};
   let finish = null, fileMap = null, fileLoaded = null;
   // the relay's clips by event id, and the lines waiting for theirs
   const clips = new Map(), waiting = new Map();
@@ -270,6 +272,11 @@ export function voiceBar(voice, els) {
     if (whispers && whispers.parentNode) whispers.parentNode.hidden = !st.on;
     if (names && names.parentNode) names.parentNode.hidden = !st.on;
     if (time) time.hidden = !(st.on && !st.muted && st.reporting && st.engine && st.engine.clipsOnSay);
-    if (note) {const n = st.note || (st.on && st.now ? `${st.now.name}${st.queue.length ? `, ${st.queue.length} waiting` : ''}` : ''); if (note.textContent !== n) note.textContent = n; note.title = st.hint || st.note || ''}
+    if (note) {
+      const n = st.note || (st.on && st.now ? `${st.now.name}${st.queue.length ? `, ${st.queue.length} waiting` : ''}${st.behind ? '; the page keeps pace' : ''}` : '');
+      if (note.textContent !== n) note.textContent = n;
+      note.title = st.hint || st.note || (st.behind ? 'The page keeps pace with the voices: it shows what has been said, and catches up with the game as the waiting lines are read.' : '');
+      if (box) box.dataset.behind = st.behind ? 'yes' : 'no';
+    }
   };
 }
