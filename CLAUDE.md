@@ -92,13 +92,18 @@ areas, plan it, hand each part to its owner, then have `lore-keeper` check every
 
 ## Commands
 
-- `npm install` once, then `npm run up`: the one-window launcher (slice 1) starts the relay and the page
-  and shows the patch notes since the owner last looked; `n` shows them again, `q` quits.
+- `npm install` once, then `play.cmd` (double-click: relay, page, browser, all eight runners at the readable pace;
+  `play.cmd 7 fast` for a seed and a pace) or `npm run up`: the one-window launcher starts the relay and the page
+  and shows the patch notes since the owner last looked; `n` shows them again, `q` quits. `stop.cmd` ends it all.
 - `npm run relay`: the relay alone (`--play-only` without a key: the page and the seats work, model
   calls fail with a clear message). `GET /health` lists the providers it can reach.
 - `npm run sim [-- --seed N]` (slice 2): a seeded headless game with scripted seats, start to finish,
   printing the grimoire per night, each day's nominations and votes, and the winner.
-- `npm run channelcheck` (slice 3), `npm run rulescheck`, `npm run notes`.
+- Checks: `npm run channelcheck`, `apicheck`, `gamecheck`, `edgecheck`, `playertoolcheck`, `storytellertoolcheck`,
+  `relaycheck`, `watchcheck`, `runnercheck`, `mockgamecheck`, `ttscheck`, `voicetimingcheck`, `artcheck`,
+  `uismoke`, `lorecheck`, `rulescheck`; all run in CI with no key and no network. `npm run notes` shows the patch notes.
+- Art: `npm run art:portraits [-- --only Name --force]` draws portraits into `assets/incoming/portraits/` (needs `HF_TOKEN`);
+  `npm run art:accept -- Name|all` moves reviewed ones into `assets/portraits/` with a credits line.
 - Local models: install Ollama, `ollama pull qwen2.5:14b`; `OLLAMA_URL` and `OLLAMA_MODEL` in `.env`.
 - `.env` keys, all optional: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `HF_TOKEN`,
   `OLLAMA_URL`. Copy `.env.example`.
@@ -170,7 +175,27 @@ input.
 - `.github/workflows/`: CI, red-main, nightly. `infra`.
 - `logs/`: git-ignored: behavior logs, runner logs, `tmp/`.
 
-## Known state
+## Known state (2026-11-08)
 
-Slice 1 (scaffold) is in progress; see issue #1 and `E:\clocktower-ops\standup-<date>.md` for what landed
-and what is next.
+Slices 1 to 6 of issue #1 are on main; slice 7 (measures) is partly there (the playtest-reviewer reads
+games and files issues; the behavior report's Clocktower tables are still Eldmoor's). What works today:
+
+- `play.cmd` (double-click) or `npm run up` starts the relay with a seeded game and the page; Start all on
+  the page starts the Storyteller and the seven seats on Haiku with the $5 game budget at the readable pace
+  (a minute between a seat's turns; fast and slow on the game bar). `stop.cmd` ends everything. New game is
+  a reset, not a start.
+- The page shows the live game: the square as a table with role tokens (our SVG, or the owner's own images
+  from the git-ignored `public/tokens-local/`), portraits on the seat markers (`assets/portraits/`, made by
+  `npm run art:portraits` from `src/data/portraits.js` and accepted by name), hands as ballots land, the
+  talk with room threads and whispers marked, the grimoire, every ruling with its reason, the agents panel.
+- Voices: with Kokoro-FastAPI at 127.0.0.1:8880 the relay makes a clip the moment a line is logged, each
+  seat in its own voice (`src/data/voices.js`); the page's Voice toggle plays them in order and reports what
+  it has heard, and the pacer holds the next speaking turn while the page lags (30 s cap). `RELAY_TTS=0` turns
+  it off.
+- The day: three speaking rounds then nominations; three rooms (the Snug for two, the Vestry for three, the
+  Taproom for four) with public moves and private words; whispers only between living neighbours at the
+  Square; the Slayer may shoot all day; the clock ends the day when everyone has nominated or passed.
+- Games so far: game 1 (seed 7, Haiku, $0.12, evil won on day 3, reviewed in #40 and fixed in #41, #42, #45,
+  #48); game 2 abandoned; game 3 (seed 23) dealt and waiting.
+
+The standups in `E:\clocktower-ops\standup-<date>.md` carry the day-by-day record.
