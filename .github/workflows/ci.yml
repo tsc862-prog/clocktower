@@ -87,6 +87,7 @@ jobs:
       - {name: Providers against their mocks, run: npm run providercheck}
       - {name: The launcher starts the relay and the page, run: npm run upcheck}
       - {name: "Narrator voice against a mock engine (probe, forced off, say and cache)", run: npm run ttscheck}
+      - {name: "Voice timing (clips made on say, the game waits for the ear)", run: npm run voicetimingcheck}
       - {name: "Portrait pipeline against a mock Hugging Face router (no token, no network)", run: npm run artcheck}
       - name: Keep the mock game's runner and behavior logs when a step failed
         if: failure()

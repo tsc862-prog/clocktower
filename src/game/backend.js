@@ -14,6 +14,7 @@
 //                                game is over and the seat has seen the end: {ok: false, gone: true}.
 //   scripted: true               a Storyteller decision nobody answers within `grace` ms (counted from the decision or the
 //                                Storyteller's last call) is answered by the scripted default, with that as its reason.
+// now: the clock, given from outside (the relay passes its own clock); the engine folder reads none.
 // No node: import; timers only, so it runs in a browser too.
 import {newGame} from './state.js';
 import {createScripted} from './scripted.js';
@@ -24,15 +25,36 @@ import {playerHeader} from '../seats/player.js';
 import {storytellerHeader} from '../seats/storyteller.js';
 
 export const SCRIPTED_GRACE_MS = 2000, PACE_MAX_MS = 30000, PUSH_MS = 250;
+// The voice's clock (issue #50): a page that reported within HEARD_FRESH_MS with its voice on, and more than one spoken line ahead
+// of what it has heard, makes a soft wake wait (HOLD_MS per poll), never longer than HOLD_CAP_MS for one seat.
+export const HEARD_FRESH_MS = 90000, HOLD_MS = 1500, HOLD_CAP_MS = 30000;
+const SPOKEN = new Set(['narration', 'dawn', 'nomination', 'vote', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'win']);
 export const SCRIPTED_REASON = 'scripted default: no Storyteller answered in time';
 const ST = api.ST;
 
 export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = SCRIPTED_GRACE_MS, players = PLAYER_TOOLS,
-  storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}} = {}) {
+  storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}, now = () => 0} = {}) {
   let game = newGame({seed, ...(seats ? {seats} : {}), ...(rounds != null ? {rounds} : {})});
   let answerer = scripted ? createScripted(seed) : null;
+  const heardWaiters = new Set();
   const socks = new Set(), waiters = new Set(), seen = {}, apis = {};
   let pendingId = null, timer = null, closed = false;
+  // Clips (the relay's voice hook: {clip(name, text) -> Promise<{id, ms}>}) and the page's heard mark.
+  let voice = null, heard = null;
+  const clips = new Map(), asked = new Set(), holdSince = {};
+  // What a public log entry says aloud: {name, text} or null (whispers and night deaths are silent).
+  const spoken = e => {
+    if (!e || typeof e.text !== 'string' || !e.text.trim()) return null;
+    if (e.type === 'say' && Number.isInteger(e.seat) && game.seats[e.seat]) return {name: game.seats[e.seat].name, text: e.text};
+    if (e.type === 'death' ? e.phase === 'day' : SPOKEN.has(e.type)) return {name: 'Storyteller', text: e.text};
+    return null;
+  };
+  const spokenAhead = last => game.log.reduce((n, e) => n + (e.id > last && spoken(e) ? 1 : 0), 0);
+  const holding = key => {
+    if (!heard || !heard.voice || now() - heard.at > HEARD_FRESH_MS || spokenAhead(heard.last) <= 1) {delete holdSince[key]; return 0}
+    const t = now(), t0 = holdSince[key] ?? (holdSince[key] = t), left = HOLD_CAP_MS - (t - t0);
+    return left > 0 ? Math.min(HOLD_MS, left) : 0;
+  };
 
   const keyOf = id => id === ST ? ST : id - 1;
   const seatOf = id => id === ST ? {index: ST, name: 'Storyteller'} : game.seats[id - 1] ? {index: id - 1, name: game.seats[id - 1].name} : null;
@@ -63,10 +85,11 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     // the Storyteller hears neither whispers nor room talk; the watcher hears both
     const told = api.events(game, ST, from), whispers = game.log.filter(e => (e.type === 'whisper' || e.type === 'say' && e.room != null) && e.id > from).map(({n, ...e}) => copy(e));
     const w = api.where(game, ST), places = {square: w.square, rooms: w.rooms, open: w.open};
+    const withClip = e => clips.has(e.id) ? {...e, clip: clips.get(e.id)} : e;
     return {ok: true, seed: game.config.seed, rounds: game.config.rounds, phase: g.phase, night: game.night, day: game.day,
       clock: {day: c.day, round: c.round, roundsBeforeNominations: c.roundsBeforeNominations, nominationsOpen: c.nominationsOpen, spoke: [...c.spoke], passedNominating: [...c.passedNominating]},
       pending: copy(game.pending), ballot: copy(game.ballot), grimoire: g, nightOrder: api.nightOrder(game), rulings: api.rulings(game),
-      winner: copy(game.winner), last, canNewGame: true, places, events: [...told, ...whispers].sort((a, b) => a.id - b.id)};
+      winner: copy(game.winner), last, canNewGame: true, places, events: [...told, ...whispers].sort((a, b) => a.id - b.id).map(withClip)};
   }
   // The live push to the page's sockets: what changed since the last push, batched per PUSH_MS tick (a vote's ballots arrive as they
   // land). {type: 'watch', seed, last, events, clock, pending, ballot, phase, day, night, winner, places}: the same fields and shapes as the
@@ -82,7 +105,21 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     const v = watchView(pushed), ballot = JSON.stringify(v.ballot);
     if (!v.events.length && ballot === lastBallot) return;
     pushed = v.last; lastBallot = ballot;
+    askClips(v.events);
     sendAll({type: 'watch', seed: v.seed, last: v.last, events: v.events, clock: v.clock, pending: v.pending, ballot: v.ballot, phase: v.phase, day: v.day, night: v.night, winner: v.winner, places: v.places});
+  }
+  // A clip per new spoken event, made behind the push (never awaited): the page gets {type: 'clip', id, clip: {id, ms}} when it is ready.
+  function askClips(events) {
+    if (!voice) return;
+    for (const e of events) {
+      const s = spoken(e); if (!s || asked.has(e.id) || clips.has(e.id)) continue;
+      asked.add(e.id);
+      const mine = game;
+      Promise.resolve().then(() => voice.clip(s.name, s.text)).then(c => {
+        if (!c || !c.id || game !== mine) return;
+        clips.set(e.id, {id: c.id, ms: c.ms}); sendAll({type: 'clip', id: e.id, clip: {id: c.id, ms: c.ms}});
+      }).catch(() => {});
+    }
   }
   // The scripted Storyteller: answers a Storyteller decision left alone for `grace` ms. The wait starts again with each
   // new decision and each Storyteller call (timers only: the engine's folder reads no clock).
@@ -138,17 +175,26 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
       return null;
     };
     const mark = r => {if (r.ok) seen[key] = Math.max(seen[key] ?? -1, latest(key)); return r};
+    // a soft wake waits while the page is still listening (never a decision, never the end of the game)
+    const hold = async r => {
+      if (!r.ok || r.wake === 'now' || r.gone || game.winner || (r.wake !== 'soft' && r.wake !== 'heartbeat')) {if (r.wake === 'now') delete holdSince[key]; return mark(r)}
+      const h = holding(key);
+      if (!h) {delete holdSince[key]; return mark(r)}
+      await new Promise(res => {const w = () => {clearTimeout(t); heardWaiters.delete(w); res()}, t = setTimeout(w, h); heardWaiters.add(w)});
+      if (!holding(key)) {delete holdSince[key]; return mark(r)} // the page caught up while we waited (or the cap ran out)
+      return {ok: true, wake: null, holdMs: h, why: 'the table is still listening to the voices', clock: clockText()};
+    };
     let r = check();
-    if (r) return mark(r);
+    if (r) return hold(r);
     const ms = Math.min(PACE_MAX_MS, Math.max(0, Number(args.realMs) || 0));
     r = await new Promise(res => {
       const w = () => {const x = check(); if (x) {clearTimeout(t); waiters.delete(w); res(x)}};
       const t = setTimeout(() => {waiters.delete(w); res(null)}, ms);
       waiters.add(w);
     });
-    if (r) return mark(r);
+    if (r) return hold(r);
     const quiet = key === ST ? 'a quiet beat' : `a quiet beat${(t => t ? ': nothing to do ' + t : '')(api.nextTurnText(game, key))}`;
-    return soft ? mark({ok: true, wake: 'heartbeat', why: quiet, clock: clockText()}) : {ok: true, wake: null, why: 'nothing new', clock: clockText()};
+    return soft ? hold({ok: true, wake: 'heartbeat', why: quiet, clock: clockText()}) : {ok: true, wake: null, why: 'nothing new', clock: clockText()};
   }
 
   const sendAll = o => {const s = JSON.stringify(o); for (const ws of socks) if (ws.readyState === 1) ws.send(s)};
@@ -177,6 +223,15 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     // included; events are the log entries after `since` with the table's sentence as `text`. A `since` past the end of this game
     // (a new game began) reads from the start.
     watch: since => watchView(since),
+    // The relay's voice hook ({clip(name, text) -> Promise<{id, ms}>}) and the page's mark of the newest line it finished playing.
+    setVoice(v) {voice = v || null},
+    heard({last, voice: on} = {}) {
+      const n = Number(last); if (!Number.isFinite(n)) return null;
+      heard = {last: Math.floor(n), at: now(), voice: on === true};
+      for (const w of [...heardWaiters]) {heardWaiters.delete(w); w()}
+      return {...heard};
+    },
+    heardMark: () => heard ? {...heard} : null,
     // A fresh seeded game in place of this one (POST /play/game/new, after the supervisor's stop-all): same seats, so the relay's
     // claims and links stay. -> {seed, rounds}
     newGame(nextSeed = game.config.seed, nextRounds = game.config.rounds) {
@@ -184,6 +239,7 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
       game = newGame({seed: nextSeed, ...(seats ? {seats} : {}), ...(nextRounds != null ? {rounds: nextRounds} : {})});
       answerer = scripted ? createScripted(nextSeed) : null;
       for (const k of Object.keys(seen)) delete seen[k];
+      clips.clear(); asked.clear(); heard = null; for (const k of Object.keys(holdSince)) delete holdSince[k];
       pendingId = null; pushed = -1; lastBallot = 'null'; changed();
       log(`[game] a new game: seed ${nextSeed}`);
       return {seed: game.config.seed, rounds: game.config.rounds};

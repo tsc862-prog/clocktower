@@ -111,7 +111,17 @@ export function makeVoice(env, log = () => {}) {
   const st = {off: forcedOff, reason: forcedOff ? 'off (RELAY_TTS=0)' : 'off (no engine answered at start; start Kokoro and restart the relay)', seatVoices: null};
   const loaded = import('../src/data/voices.js').then(m => {const v = m.SEAT_VOICES || m.VOICES || m.default; st.seatVoices = v && typeof v === 'object' ? v : null}).catch(() => {});
   const tts = {
+    extra: () => ({}), // the relay adds {heard} once the game is attached
+    // the clip of a public line in its seat's voice (src/data/voices.js): -> {id, ms}; rejects when the voice is off
+    clip(name, text) {
+      if (st.off) return Promise.reject(new Error('narrator voice is off'));
+      const v = (st.seatVoices && (st.seatVoices[name] || st.seatVoices.default)) || {}, e = typeof v === 'string' ? {voice: v} : v;
+      return engine.speak(text, e.voice || null, e.speed);
+    },
     async status() {
+      const x = await tts.status0(); return {...x, clipsOnSay: !st.off && x.enabled !== false, ...tts.extra()};
+    },
+    async status0() {
       if (st.off) return {enabled: false, ok: false, engine: null, voices: [], error: st.reason, hint: HINT.replace('{url}', engine.url), ...(st.seatVoices ? {seatVoices: st.seatVoices} : {})};
       const s = await engine.status(); return st.seatVoices ? {...s, seatVoices: st.seatVoices} : s;
     },
@@ -151,9 +161,10 @@ export function startRelay({env = loadEnv(), argv = process.argv, port = Number(
   const {server} = createRelay({providers, model, origin, limits, tts, seats: () => play ? play.backend.info() : {}});
   const flag = k => {const i = argv.indexOf(k); return i >= 0 && argv[i + 1] != null && !String(argv[i + 1]).startsWith('--') ? argv[i + 1] : null};
   const backend = argv.includes('--game') ? gameBackend({seed: Number(flag('--seed') ?? 1), ...(flag('--rounds') != null ? {rounds: Number(flag('--rounds'))} : {}),
-    scripted: argv.includes('--scripted'), log, note: rec => {if (behavior) behavior.ingest('game', rec)}}) : null;
+    scripted: argv.includes('--scripted'), log, now: () => Date.now(), note: rec => {if (behavior) behavior.ingest('game', rec)}}) : null;
   if (backend) log(`[relay] serving a game: seed ${Number(flag('--seed') ?? 1)}${argv.includes('--scripted') ? ', scripted Storyteller fallback' : ''}`);
   play = attachPlay(server, {backend, origin, verbose, behavior, log});
+  if (backend && tts) {backend.setVoice({clip: (name, text) => tts.clip(name, text)}); tts.extra = () => ({heard: backend.heardMark()})}
   const runnersOn = argv.includes('--runners') || /^(1|true|yes)$/i.test(env.RELAY_RUNNERS || '');
   const sup = attachRunners(server, {play, enabled: runnersOn, origin, base: () => `http://127.0.0.1:${server.address() ? server.address().port : port}`, log, env});
   // Quit: every runner gets "stop" on its stdin and a moment to let go of its seat; exit kills the rest.
