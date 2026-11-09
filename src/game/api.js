@@ -149,7 +149,7 @@ export function legalNow(game, seat) {
   }
   const p = pendingFor(game, seat);
   if (p && !p.standing && (!ONCE_EACH.includes(p.kind) || p.mine === null)) return p.kind === 'vote' ? `A vote is open on ${nameOf(game, p.nominee)}: vote yes or no.`
-    : p.kind === 'thoughts' ? `${p.question} Answer with a sentence or two (or nothing); only the watcher hears it.`
+    : p.kind === 'thoughts' ? `${p.question} Answer with a sentence or two (or nothing); nobody at the table hears it.`
     : p.kind === 'nomination' ? 'Nominations are open: nominate a player or pass.' : `A choice waits on you: ${p.question}`;
   if (game.phase === 'night') return `It is night ${game.night}: nothing is asked of you now; wait for the day.`;
   if (game.phase === 'setup') return 'The Storyteller is setting up the game; wait.';

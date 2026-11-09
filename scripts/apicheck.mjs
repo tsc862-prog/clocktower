@@ -412,7 +412,7 @@ section('the night thoughts (#111): the api');
   ok(/Your minion is Corwin/.test(api.pendingFor(tg, 2).tonight) && !/Washerwoman/.test(api.pendingFor(tg, 2).tonight), `the demon's night, nothing of others' ("${api.pendingFor(tg, 2).tonight.slice(0, 120)}")`);
   ok(api.pendingFor(tg, ST) === null && throws(() => api.answer(tg, ST, {0: 'x'}, 'a reason'), /Nothing waits on the Storyteller/), 'the Storyteller is not asked and cannot answer the scene');
   ok([0, 1, 2, 3, 4, 5, 6].every(i => api.mustAct(tg, i) && api.canAct(tg, i)), 'every living seat must act (a runner is woken now)');
-  ok(/what are you thinking\? Answer with a sentence or two/.test(api.legalNow(tg, 0)), `legalNow says it: "${api.legalNow(tg, 0)}"`);
+  ok(/what are you thinking\? Answer with a sentence or two \(or nothing\); nobody at the table hears it\./.test(api.legalNow(tg, 0)) && !/watcher/i.test(api.legalNow(tg, 0)), `legalNow says it: "${api.legalNow(tg, 0)}"`);
   ok(api.nightOrder(tg).every(x => x.status === 'done'), 'during the scene the night order reads done');
   ok(throws(() => api.think(tg, 0, 42), /sentence or two of text/), 'a thought that is not text is refused');
   const r0 = api.think(tg, 0, SECRET);
