@@ -30,6 +30,7 @@ export async function quietEnv(extra = {}) {
   const env = {...process.env, ...tmpEnv()};
   for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'HF_TOKEN', 'RELAY_RUNNERS', 'RELAY_TTS', 'AGENT_PROVIDER']) delete env[k];
   const logs = mkTmp('relaycheck-');
+  if (!extra.TTS_URL) extra = {...extra, TTS_URL: 'http://127.0.0.1:' + await freePort()}; // never the real engine on this PC
   return {...env, OLLAMA_URL: 'http://127.0.0.1:' + await freePort(), AGENT_LOGS: logs, BEHAVIOR_DIR: join(logs, 'behavior'), ...extra};
 }
 // Start the relay script; resolves once it listens. -> {child, base, out: [lines], stop()}
@@ -53,7 +54,7 @@ async function main() {
   try {
     console.log('health');
     const h = await req(base, '/health');
-    const names = Object.keys(h.providers || {});
+    const names = Object.keys(h.providers || {}).filter(n => n !== 'tts'); // tts is the voice engine, checked by ttscheck
     ok(h.ok && ['anthropic', 'ollama', 'openai', 'huggingface', 'google'].every(n => names.includes(n)), `GET /health lists the providers (${names.join(', ')})`);
     ok(names.every(n => h.providers[n].ok === false), 'with no key and no Ollama no provider is reached, and each says why: ' + names.map(n => `${n}: ${String(h.providers[n].error || '').slice(0, 40)}`).join('; '));
     ok(h.providers.anthropic && /no ANTHROPIC_API_KEY/.test(h.providers.anthropic.error || ''), 'Claude says plainly that there is no key');
