@@ -46,6 +46,8 @@ const DEATHS = ['execution', 'death'];
 // A room's name from its id ('parlour' -> 'the parlour'), from the view's room list; null is the Square.
 export const placeNameOf = (view, id) => id == null ? 'the Square' : (view?.rooms || []).find(r => r.id === id)?.name || String(id);
 const bare = name => String(name).replace(/^the\s+/i, '');
+// Day 1's dawn with nobody dead, in words that say why: the demon does not kill on the first night (#110).
+export const FIRST_DAWN = 'Day 1 breaks. Nobody died, as always on the first night: the demon does not kill then, so this says nothing about anyone.';
 export function cleanEvent(view, me, e) {
   if (!e || typeof e !== 'object' || !EVENT_KINDS.includes(e.type)) return null;
   const isMe = x => x === me || (x != null && x === view?.name);
@@ -75,6 +77,7 @@ export function cleanEvent(view, me, e) {
   if (e.type === 'whisper-seen') out.text = `${out.from} whispered to ${out.to}.`;
   else if (e.type === 'nomination' && out.by && out.target) out.text = nominationText(out.by, out.target); // both parts named (#89)
   else if (e.type === 'virgin' && out.by && out.target) out.text = virginText(out.by, out.target);
+  else if (e.type === 'dawn' && e.day === 1 && !(e.deaths || []).length) out.text = FIRST_DAWN; // the first night is quiet by the rules (#110)
   else if (typeof e.text === 'string') out.text = e.text;
   return out;
 }
@@ -354,8 +357,8 @@ function nudgeLine(v, asked, waiting) {
     return 'Nobody nominated yet. With nothing solid, nominate someone anyway and let the vote decide: a day with no execution is a day given to the demon.';
   if (v.day === 1 && v.alive !== false && !v.clock?.nominationsOpen && !asked) {
     const why = ['townsfolk', 'outsider'].includes(v.role?.team) && nothingYet(v.role.id);
-    if (why) return `First day: the ${v.role.name} ${why}, so you have nothing to tell yet; say so if asked, and ask a player a question by name.`;
-    return 'First day: say something about yourself or ask a player a question by name, rather than pass.';
+    if (why) return `First day: the ${v.role.name} ${why}, so you have nothing to tell yet; say so if asked, and ask a player a question by name. A quiet night 1 is the rule, no clue.`;
+    return 'First day: say something about yourself or ask a player a question by name, rather than pass. A quiet night 1 is the rule, no clue.';
   }
   return null;
 }
