@@ -193,6 +193,29 @@ Seven voices a listener can tell apart, mixed on both counts; speed is held with
 | Yusuf | `am_fenrir` | 1.0 | American, deeper and guarded: not yet convinced. |
 | Storyteller | `bm_daniel` | 0.95 | British, plain and a little dry: the clerk reading the minutes. |
 
+### The night aloud
+
+With the page's Voice on, the Storyteller tells the watcher the night as it happens, in its own plain voice
+(`nightSpoken` in `src/ui/voice.js`); the same words make the night's list on the page. A role is named by
+its display name.
+
+| Event | Spoken |
+| --- | --- |
+| A seat is woken | The Storyteller wakes {Name}, the {Role}. |
+| The Drunk is woken | The Storyteller wakes {Name}, the {Believed role}, who is truly the Drunk. |
+| The Poisoner chooses | {Name} poisons {Target}. |
+| The Monk chooses | {Name} guards {Target}. |
+| The Imp or the Ravenkeeper chooses | {Name}, the {Role}, chooses {Target}. |
+| The Fortune Teller chooses | {Name}, the Fortune Teller, checks {A} and {B}. |
+| The Butler chooses | {Name}, the Butler, picks {Target} as master. |
+| Any other choice | {Name}, the {Role}, picks {Target}. (No one: "nobody".) |
+| A seat is told something | The Storyteller tells {Name}: {what the seat is told, as the seat hears it} |
+| A death at night | {Name} dies. |
+| The kill passes | The kill passes from {A} to {B}. |
+
+Before dawn each seat's thought is said in its own voice, after the Storyteller's tag "{Name}, thinking.";
+in the night's list it reads "{Name} thinks: {thought}", and in the talk it is marked "{Name} thinks, unheard".
+
 ## Portraits
 
 One portrait per seat and one for the Storyteller, made by an image generator from the briefs below
