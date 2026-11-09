@@ -249,7 +249,7 @@ img.ghost-coin.spent { opacity: .4; filter: grayscale(1); }
   --stage-bg: #17141d; --stage-glow: #241f2c; --stage-night: #0a0b15; --stage-night-glow: #151830; --moon: #9aa3d8; --dawn: #e9c98f;
   --card-w: min(18.5vh, 9.6vw); --card-frame: #3d3649; --card-face: #262230; --speak: #e6b95c; --speak-glow: rgba(230, 185, 92, .55);
   --caption-bg: #f1e8d3; --caption-ink: #231d16; --caption-head: #7a6a52; --whisper-bg: #241d31;
-  --st-w: clamp(220px, 14vw, 480px); --st-face: min(250px, 17.5vh); --rail-w: 52px; --drawer-w: clamp(480px, 34vw, 1100px);
+  --st-w: clamp(220px, 14vw, 480px); --st-face: min(250px, 17.5vh, 12vw); --rail-w: 52px; --drawer-w: clamp(480px, 34vw, 1100px);
   --pip-off: #6d6758; --pip-yes: #7fbf7f; --table-oval: #2c2118; --table-oval-edge: #4a3727;
 }
 .view-switch { display: inline-flex; } .view-switch button { border-radius: 0; } .view-switch button:first-child { border-radius: 4px 0 0 4px; }
@@ -261,7 +261,7 @@ body[data-view="table"] .roles-switch { display: none; }
 
 @media (min-width: 601px) {
   body[data-view="people"] { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-  body[data-view="people"] #view { flex: 1; min-height: 0; position: relative; }
+  body[data-view="people"] #view { flex: 1; min-height: 0; position: relative; overflow: clip; }
 }
 body[data-view="people"] #stage { display: grid; grid-template-columns: var(--st-w) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; height: 100%;
   gap: 6px 18px; padding: 10px calc(var(--rail-w) + 14px) 8px 18px; background: radial-gradient(ellipse at 58% 46%, var(--stage-glow), var(--stage-bg) 72%); transition: background 1.2s; }
@@ -415,3 +415,30 @@ body[data-view="people"] .drawer-close { display: block; position: absolute; top
   #drawer-tabs button { writing-mode: horizontal-tb; flex: 1; padding: 4px; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .card.voicing .face, .stage-st.voicing .face, .card.flash .result { animation: none; } body[data-view="people"] #board { transition: none; } }
+
+@media (min-width: 601px) {
+  /* the stage fits the window (#79): src/ui/stage.js measures the table and writes the card size, each card's place and the free
+     middle as variables; the middle holds its own text (sized to its box, scrolled inside it) and never runs onto a face */
+  #stage .table { --card-w: var(--ring-cw, min(18.5vh, 9.6vw)); }
+  #stage .card { left: var(--x, 50%); top: var(--y, 50%); }
+  #stage .card .name { font-size: var(--ring-name, 1.45rem); }
+  #stage .table::before { left: calc(var(--mid-x, 25%) + var(--mid-w, 50%) / 2); top: calc(var(--mid-y, 30%) + var(--mid-h, 40%) / 2);
+    width: calc(var(--mid-w, 50%) * 1.02); height: calc(var(--mid-h, 40%) * 1.3); }
+  #stage .table-centre { left: var(--mid-x, 29%); top: var(--mid-y, 30%); width: var(--mid-w, 42%); height: var(--mid-h, 40%); transform: none; container-type: size;
+    display: flex; flex-direction: column; justify-content: safe center; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #4a3727 transparent; }
+  #stage .table-centre .vote-what { font-size: clamp(1rem, min(9cqh, 4.6cqw), 1.7rem); }
+  #stage .table-centre .tally-big b { font-size: clamp(1.8rem, min(26cqh, 12cqw), 5rem); }
+  #stage .table-centre .tally-big span { font-size: clamp(.95rem, min(8cqh, 4.2cqw), 1.5rem); }
+  #stage .table-centre .meter .pip { width: clamp(14px, 9cqh, 30px); height: clamp(14px, 9cqh, 30px); }
+  #stage .table-centre .meter { gap: clamp(6px, 3.6cqh, 12px); margin: clamp(.2rem, 3cqh, .7rem) 0 clamp(.1rem, 2cqh, .4rem); }
+  #stage .table-centre .sub { font-size: clamp(12px, min(6cqh, 3cqw), 15px); }
+  #stage .table-centre .night-big { font-size: clamp(2rem, min(28cqh, 12cqw), 4.5rem); }
+  #stage .table-centre .winner-big { font-size: clamp(2rem, min(28cqh, 12cqw), 5rem); }
+  #stage .table-centre .dawn-big { font-size: clamp(1.05rem, min(12cqh, 4.8cqw), 2.7rem); }
+  #stage .table-centre .dawn-words { font-size: clamp(.9rem, min(8cqh, 3.2cqw), 1.7rem); margin-top: clamp(.3rem, 3cqh, 1rem); }
+  #stage .table-centre .quiet, #stage .table-centre .day-line { font-size: clamp(1rem, min(10cqh, 4.6cqw), 1.6rem); }
+  #stage .card .caption { max-height: min(46vh, calc(var(--table-h, 60vh) * .6)); }
+  #stage .stage-st .st-words { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #4a3727 transparent; }
+  #stage .recent { height: clamp(4.9rem, 16vh, 13.2rem); min-height: 0; overflow: hidden; }
+  #stage .recent .r-line { flex: none; }
+}

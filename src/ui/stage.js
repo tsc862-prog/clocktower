@@ -27,10 +27,86 @@ const ST_WORDS = new Set(['narration', 'dawn', 'night', 'win', 'execution', 'no-
 const LEAVES = new Set(['nomination', 'night', 'win']); // after these the caption leaves the stage altogether
 const TALK_AFTER = new Set(['say', 'whisper', 'pass', 'nomination']);
 
-// Where seat i of n sits on the stage, in percent of the table, and on which side of its card the caption goes (towards the middle).
+// Where seat i of n sits on the ring, as a direction from the middle (cos, sin), clockwise from the top, and on which side of its card
+// the caption goes (towards the middle).
 export function seatPlace(i, n) {
   const a = (-90 + i * 360 / n) * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
-  return {x: 50 + 39 * c, y: 50 + 37 * s, side: c > 0.2 ? 'l' : 'r'};
+  return {c, s, x: 50 + 39 * c, y: 50 + 37 * s, side: c > 0.2 ? 'l' : 'r'};
+}
+
+// The stage's geometry (#79), in pixels of the table it is given, so it fits any window: the largest card that lets the ring stand
+// inside the table with no card on another and room left in the middle; the middle is the free box inside the ring, and what is
+// drawn there is held to it (its own size and its own scroll), never over a face. Measured from the table's box, height first.
+//   label    the name and alive/dead under the face: the name's size follows the card
+//   pad      what a card shows past its box: a speaker's face grows, the nominee's tag above, hands and tokens on the corners
+export const cardLabel = cw => {const namePx = Math.round(Math.min(26, Math.max(16, cw * 0.13))); return {namePx, label: Math.round(namePx * 1.2 + 6 + 18)}};
+const cardPad = cw => ({x: Math.round(cw * 0.08 + 20), y: Math.round(cw * 0.1 + 14)});
+const hits = (a, b, gap = 0) => a.l < b.r + gap && b.l < a.r + gap && a.t < b.b + gap && b.t < a.b + gap;
+
+// n points round an ellipse at equal distances along its edge, clockwise from the top: on a wide table the seats spread along the long
+// sides instead of bunching at the ends.
+function ellipseSteps(rx, ry, n) {
+  const K = 720, len = [0];
+  const pt = k => {const a = (-90 + k * 360 / K) * Math.PI / 180; return [rx * Math.cos(a), ry * Math.sin(a)]};
+  for (let k = 1; k <= K; k++) {const [x0, y0] = pt(k - 1), [x1, y1] = pt(k); len.push(len[k - 1] + Math.hypot(x1 - x0, y1 - y0))}
+  const out = [];
+  for (let i = 0, k = 0; i < n; i++) {
+    const want = len[K] * i / n;
+    while (k < K && len[k + 1] <= want) k++;
+    const a = (-90 + k * 360 / K) * Math.PI / 180;
+    out.push({c: Math.cos(a), s: Math.sin(a)});
+  }
+  return out;
+}
+
+function ring(w, h, seats, cw) {
+  const {namePx, label} = cardLabel(cw), ch = cw + label, pad = cardPad(cw), n = seats.length;
+  const rx = Math.min(w * 0.39, w / 2 - cw / 2 - pad.x), ry = h / 2 - ch / 2 - pad.y;
+  if (rx <= 0 || ry <= 0) return null;
+  const pos = {}, boxes = [], at = ellipseSteps(rx, ry, n);
+  seats.forEach((seat, i) => {
+    const p = at[i], x = w / 2 + rx * p.c, y = h / 2 + ry * p.s;
+    pos[seat] = {x: Math.round(x), y: Math.round(y), side: p.c > 0.2 ? 'l' : 'r'};
+    boxes.push({seat, x, y, l: x - cw / 2, r: x + cw / 2, t: y - ch / 2, b: y + ch / 2, pad});
+  });
+  return {cw, ch, namePx, pos, boxes};
+}
+
+// The free box in the middle of a ring, centred left to right: of the boxes between the cards' edges, the largest with no card in it.
+export function freeMiddle(w, h, boxes, gap = 14) {
+  const tops = [0, ...boxes.map(b => b.b)].filter(t => t < h / 2), bottoms = [h, ...boxes.map(b => b.t)].filter(b => b > h / 2);
+  let best = {x: Math.round(w / 2), y: Math.round(h / 2), w: 0, h: 0}, area = -1;
+  for (const t0 of tops) for (const b0 of bottoms) {
+    const top = t0 + gap, bottom = b0 - gap;
+    if (bottom <= top) continue;
+    const near = boxes.filter(b => b.t < bottom && b.b > top);
+    if (near.some(b => b.l < w / 2 && b.r > w / 2)) continue;
+    const half = Math.min(w / 2, ...near.map(b => b.x > w / 2 ? b.l - w / 2 : w / 2 - b.r)) - gap;
+    if (half <= 0) continue;
+    const a = half * 2 * (bottom - top);
+    if (a > area) {area = a; best = {x: Math.round(w / 2 - half), y: Math.round(top), w: Math.round(half * 2), h: Math.round(bottom - top)}}
+  }
+  return best;
+}
+
+// -> {cw, ch, namePx, pos: {seat: {x, y, side}}, mid: {x, y, w, h}} for a table of w x h pixels and the seats in seat order.
+export function stageLayout(w, h, seats) {
+  if (!(w > 0 && h > 0) || !seats.length) return null;
+  const hi = Math.floor(Math.min(320, h * 0.34, w * 0.16)), minMid = {w: Math.min(520, w * 0.28), h: Math.min(260, h * 0.24)};
+  let best = null;
+  for (let cw = hi; cw >= 48; cw -= 2) {
+    const g = ring(w, h, seats, cw);
+    if (!g) continue;
+    const inside = g.boxes.every(b => b.l - b.pad.x >= -1 && b.r + b.pad.x <= w + 1 && b.t - b.pad.y >= -1 && b.b + b.pad.y <= h + 1);
+    const apart = g.boxes.every((a, i) => g.boxes.every((b, j) => j <= i || !hits(a, b, 12)));
+    if (!inside || !apart) continue;
+    const mid = freeMiddle(w, h, g.boxes, Math.round(14 + g.cw * 0.1));
+    best = best || {...g, mid};
+    if (mid.w >= minMid.w && mid.h >= minMid.h) {best = {...g, mid}; break}
+  }
+  if (!best) {const g = ring(w, h, seats, 48) || {cw: 48, ch: 48 + cardLabel(48).label, namePx: 14, pos: {}, boxes: []}; best = {...g, mid: freeMiddle(w, h, g.boxes, Math.round(14 + g.cw * 0.1))}}
+  const {boxes, ...out} = best;
+  return out;
 }
 
 // The line on stage -> {e, speaker: seat | 'storyteller', stale, playing} or null (none once a nomination, the night or the end has
@@ -99,7 +175,32 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
   const cards = new Map();
   // a portrait that fails to load leaves the initial (error events do not bubble: caught on the way down)
   root.addEventListener('error', e => {const t = e.target; if (t && t.tagName === 'IMG' && t.classList.contains('portrait')) t.hidden = true}, true);
-  let lastVoiced = null, last = null;
+  let lastVoiced = null, last = null, geo = null, geoKey = '';
+
+  // the stage's geometry from the table's own box (#79): card size, each card's place, the free middle; written as CSS variables the
+  // wide layout reads (the phone's grid ignores them). Redone only when the table's size or the seats change.
+  function place(seats) {
+    const box = table.getBoundingClientRect ? table.getBoundingClientRect() : null;
+    const w = Math.round(box ? box.width : 0), h = Math.round(box ? box.height : 0), key = w + 'x' + h + ':' + seats.join(',');
+    if (key === geoKey) return;
+    geoKey = key; geo = stageLayout(w, h, seats);
+    if (!geo) return;
+    // the middle's box on the table itself: the table's oval (drawn by the table) and the middle's text both read it
+    table.setAttribute('style', `--ring-cw:${geo.cw}px;--ring-name:${geo.namePx}px;--table-h:${h}px;--mid-x:${geo.mid.x}px;--mid-y:${geo.mid.y}px;--mid-w:${geo.mid.w}px;--mid-h:${geo.mid.h}px`);
+    for (const seat of seats) {
+      const r = cards.get(seat), p = geo.pos[seat];
+      if (!r || !p) continue;
+      const at = `--x:${p.x}px;--y:${p.y}px`;
+      if (r.at !== at) {r.node.setAttribute('style', at); r.at = at}
+      if (r.side !== p.side) {r.side = p.side; r.node.className = r.node.className.replace(/cap-[lr]/, 'cap-' + p.side)}
+    }
+  }
+  if (globalThis.ResizeObserver) new ResizeObserver(() => {if (last) draw()}).observe(table);
+  else if (globalThis.addEventListener) globalThis.addEventListener('resize', () => {if (last) draw()});
+  // the People view never scrolls the window: a drag-select or a find could push it sideways and cut the Storyteller and the strip off
+  if (globalThis.addEventListener && globalThis.scrollTo) globalThis.addEventListener('scroll', () => {
+    if (document.body.dataset.view === 'people' && !matchMedia('(max-width: 600px)').matches && (globalThis.scrollX || globalThis.scrollY)) globalThis.scrollTo(0, 0);
+  });
 
   function voiceNow() {
     const vs = voiceState();
@@ -178,9 +279,7 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
     list.forEach((s, i) => {
       let r = cards.get(s.seat);
       if (!r) {
-        const p = seatPlace(i, list.length);
-        r = {node: el('div', {class: 'card', dataset: {seat: String(s.seat)}}), h: null, side: p.side};
-        r.node.style.left = p.x.toFixed(2) + '%'; r.node.style.top = p.y.toFixed(2) + '%';
+        r = {node: el('div', {class: 'card', dataset: {seat: String(s.seat)}}), h: null, side: seatPlace(i, list.length).side, at: ''};
         table.append(r.node); cards.set(s.seat, r);
       }
       const room = open ? open.roomOf[s.seat] || null : null;
@@ -193,6 +292,7 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
       if (r.node.className !== cls) r.node.className = cls;
     });
     for (const [k, r] of cards) if (!list.some(s => s.seat === k)) {r.node.remove(); cards.delete(k)}
+    place(list.map(s => s.seat));
     const c = centreHtml(w, v, names, vote, dawn);
     if (centre._h !== c) {centre.innerHTML = c; centre._h = c}
     // the Storyteller, apart, with its latest words
