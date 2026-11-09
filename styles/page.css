@@ -442,3 +442,27 @@ body[data-view="people"] .drawer-close { display: block; position: absolute; top
   #stage .recent { height: clamp(4.9rem, 16vh, 13.2rem); min-height: 0; overflow: hidden; }
   #stage .recent .r-line { flex: none; }
 }
+
+/* rooms break the stage out (#80): the Square closes up round its table on the left, each room in use is a panel on the right with its
+   people side by side and its newest line on the speaker's face; the cards slide between the two, and back when the rooms close */
+@media (min-width: 601px) {
+  #stage .card { transition: left .7s ease, top .7s ease, filter .8s, opacity .8s; }
+  #stage .room-group { position: absolute; z-index: 0; border: 2px dashed var(--room-rim); border-radius: 18px; background: rgba(60, 44, 28, .28);
+    box-shadow: 0 0 40px #0006 inset; }
+  #stage .room-group .room-name { position: absolute; left: 0; right: 0; top: 6px; text-align: center; font: 600 15px var(--sans); text-transform: uppercase;
+    letter-spacing: .1em; color: var(--room-tag); }
+  #stage .card.away .face { opacity: 1; border-style: solid; border-color: var(--card-frame); }
+  #stage .card.away.speaking .face { border-color: var(--speak); }
+  #stage .card .away-tag { display: none; }
+  #stage[data-rooms="out"] .card.away .caption { display: none; }
+  #stage .room-line { position: absolute; left: 14px; right: 14px; bottom: 12px; height: calc(var(--line-h, 90px) - 14px); text-align: left;
+    background: var(--caption-bg); color: var(--caption-ink); font: 1.05rem/1.4 var(--serif); padding: .45rem .8rem; border-radius: 10px; border-left: 5px solid var(--room-rim);
+    box-shadow: 0 6px 18px #0009; opacity: .78; transition: opacity .4s, box-shadow .4s; }
+  #stage .room-line .rl-text { height: 100%; overflow: hidden; -webkit-mask-image: linear-gradient(#000 75%, transparent); mask-image: linear-gradient(#000 75%, transparent); }
+  #stage .room-line::before { content: ''; position: absolute; top: -11px; left: calc(var(--arrow, 50%) - 14px - 11px); border: 11px solid transparent; border-top: 0; border-bottom-color: var(--caption-bg); }
+  #stage .room-line .who { font: 600 13px var(--sans); margin-right: .3rem; }
+  #stage .room-line .who.sc-0 { color: #8a5a1c; } #stage .room-line .who.sc-1 { color: #2f5f86; } #stage .room-line .who.sc-2 { color: #8a3b3b; } #stage .room-line .who.sc-3 { color: #3d6b3d; }
+  #stage .room-line .who.sc-4 { color: #6a4a8a; } #stage .room-line .who.sc-5 { color: #7a6a2c; } #stage .room-line .who.sc-6 { color: #2c6f6a; }
+  #stage .room-line.now { opacity: 1; box-shadow: 0 0 0 3px var(--speak), 0 8px 24px #000b; }
+}
+@media (prefers-reduced-motion: reduce) { #stage .card { transition: none; } }

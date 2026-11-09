@@ -89,8 +89,8 @@ export function freeMiddle(w, h, boxes, gap = 14) {
   return best;
 }
 
-// -> {cw, ch, namePx, pos: {seat: {x, y, side}}, mid: {x, y, w, h}} for a table of w x h pixels and the seats in seat order.
-export function stageLayout(w, h, seats) {
+// The ring alone: -> {cw, ch, namePx, pos: {seat: {x, y, side}}, mid: {x, y, w, h}} for a table of w x h pixels and the seats in seat order.
+function ringLayout(w, h, seats) {
   if (!(w > 0 && h > 0) || !seats.length) return null;
   const hi = Math.floor(Math.min(320, h * 0.34, w * 0.16)), minMid = {w: Math.min(520, w * 0.28), h: Math.min(260, h * 0.24)};
   let best = null;
@@ -106,8 +106,50 @@ export function stageLayout(w, h, seats) {
   }
   if (!best) {const g = ring(w, h, seats, 48) || {cw: 48, ch: 48 + cardLabel(48).label, namePx: 14, pos: {}, boxes: []}; best = {...g, mid: freeMiddle(w, h, g.boxes, Math.round(14 + g.cw * 0.1))}}
   const {boxes, ...out} = best;
-  return out;
+  return {...out, groups: []};
 }
+
+// -> {cw, ch, namePx, pos: {seat: {x, y, side, cw?, namePx?, shift?}}, mid: {x, y, w, h}, groups: [{id, name, x, y, w, h}]} for a table
+// of w x h pixels, the seats in seat order and the rooms with people in them ([{id, name, seats}], #80). With nobody away, the ring.
+// With a room in use the stage breaks out: the Square closes up round its table on the left, and on the right one panel per occupied
+// room, stacked, its name on top and its people side by side. The split is the one that gives the smaller of the two card sizes the most.
+export const ROOM_HEAD = 34, ROOM_PAD = 14, ROOM_GAP = 16;
+const roomLineH = h => Math.round(Math.min(118, Math.max(64, h * 0.11))); // the room's newest line, under its people
+export function stageLayout(w, h, seats, rooms = []) {
+  const used = (rooms || []).filter(r => r && r.seats && r.seats.length);
+  if (!used.length) return ringLayout(w, h, seats);
+  if (!(w > 0 && h > 0)) return null;
+  const away = new Set(used.flatMap(r => r.seats)), square = seats.filter(s => !away.has(s));
+  let best = null;
+  for (const f of [0.26, 0.31, 0.36, 0.42, 0.48]) {
+    const wr = Math.round(w * f), ws = w - wr - ROOM_GAP;
+    const sq = square.length ? ringLayout(ws, h, square) : {cw: Infinity, pos: {}, mid: {x: 0, y: 0, w: 0, h: 0}};
+    const panelH = (h - ROOM_GAP * (used.length - 1)) / used.length;
+    const rcw = Math.floor(Math.min(...used.map(r => {
+      const k = r.seats.length, byW = (wr - 2 * ROOM_PAD - (k - 1) * ROOM_GAP - k * 2 * cardPadX(0)) / k;
+      let cw = Math.min(byW, 320);
+      while (cw > 40 && cw + cardLabel(cw).label + ROOM_HEAD + roomLineH(h) + 2 * ROOM_PAD + cardPad(cw).y > panelH) cw -= 2;
+      return cw;
+    })));
+    const score = Math.min(sq ? sq.cw : 0, rcw) + 0.01 * (sq ? Math.min(sq.cw, 400) : 0);
+    if (!best || score > best.score) best = {score, wr, ws, sq, rcw, panelH};
+  }
+  const {wr, ws, sq, panelH} = best, cw = sq && Number.isFinite(sq.cw) ? sq.cw : best.rcw, rcw = Math.min(best.rcw, Math.round(cw * 1.1));
+  const pos = {...(sq ? sq.pos : {})}, groups = [], {namePx, label} = cardLabel(rcw);
+  used.forEach((r, i) => {
+    const k = r.seats.length, x0 = ws + ROOM_GAP, y0 = Math.round(i * (panelH + ROOM_GAP));
+    const rowW = k * rcw + (k - 1) * (ROOM_GAP + 2 * cardPadX(rcw)), gw = Math.min(wr, rowW + 2 * ROOM_PAD + 2 * cardPadX(rcw));
+    const lineH = roomLineH(h), gh = Math.min(Math.round(panelH), ROOM_HEAD + rcw + label + lineH + 2 * ROOM_PAD + cardPad(rcw).y), gx = x0 + Math.round((wr - gw) / 2), gy = y0 + Math.round((panelH - gh) / 2);
+    groups.push({id: r.id, name: r.name || r.id, x: gx, y: gy, w: gw, h: gh, lineH});
+    const cy = gy + ROOM_HEAD + Math.round((gh - ROOM_HEAD - lineH) / 2), left = gx + Math.round((gw - rowW) / 2);
+    r.seats.forEach((s, j) => {
+      const x = left + rcw / 2 + j * (rcw + ROOM_GAP + 2 * cardPadX(rcw));
+      pos[s] = {x: Math.round(x), y: cy, side: 'l', cw: rcw, namePx, room: r.id};
+    });
+  });
+  return {cw, ch: cw + cardLabel(cw).label, namePx: sq && sq.namePx || namePx, pos, mid: sq ? sq.mid : {x: 0, y: 0, w: 0, h: 0}, groups};
+}
+const cardPadX = cw => cardPad(cw).x;
 
 // The line on stage -> {e, speaker: seat | 'storyteller', stale, playing} or null (none once a nomination, the night or the end has
 // come after the newest line). voiced: the id of the line the voice plays (or played
@@ -140,6 +182,19 @@ export function freshVote(w) {
   const ev = w.events || [], i = ev.findLastIndex(e => e.type === 'vote' && e.day === w.day);
   if (i < 0) return null;
   return ev.slice(i + 1).some(e => ['say', 'whisper', 'nomination', 'phase', 'night'].includes(e.type)) ? null : ev[i];
+}
+
+// The newest line said in each room in use, while its speaker is still there: {room id: event}. Shown in the room's panel under its people.
+export function roomLines(w) {
+  const open = openRooms(w), out = {};
+  if (!open) return out;
+  const ev = (w && w.events) || [], start = ev.findLastIndex(e => e.type === 'move' && e.closed || e.type === 'dawn');
+  for (const r of open.rooms) {
+    if (!r.seats.length) continue;
+    const e = ev.findLast((x, i) => i > start && x.type === 'say' && x.room === r.id && x.text);
+    if (e && r.seats.includes(e.seat)) out[r.id] = e;
+  }
+  return out;
 }
 
 // What the Storyteller does tonight, as only it (and the watcher) sees: the last few of tonight's wakings, choices, deaths and tellings.
@@ -176,21 +231,32 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
   // a portrait that fails to load leaves the initial (error events do not bubble: caught on the way down)
   root.addEventListener('error', e => {const t = e.target; if (t && t.tagName === 'IMG' && t.classList.contains('portrait')) t.hidden = true}, true);
   let lastVoiced = null, last = null, geo = null, geoKey = '';
+  const groups = new Map();
 
   // the stage's geometry from the table's own box (#79): card size, each card's place, the free middle; written as CSS variables the
   // wide layout reads (the phone's grid ignores them). Redone only when the table's size or the seats change.
-  function place(seats) {
+  function place(seats, rooms) {
     const box = table.getBoundingClientRect ? table.getBoundingClientRect() : null;
-    const w = Math.round(box ? box.width : 0), h = Math.round(box ? box.height : 0), key = w + 'x' + h + ':' + seats.join(',');
+    const used = (rooms || []).filter(r => r.seats.length).map(r => ({id: r.id, name: r.name, seats: r.seats.filter(i => seats.includes(i))})).filter(r => r.seats.length);
+    const w = Math.round(box ? box.width : 0), h = Math.round(box ? box.height : 0), key = w + 'x' + h + ':' + seats.join(',') + ':' + used.map(r => r.id + '=' + r.seats.join('+')).join(';');
     if (key === geoKey) return;
-    geoKey = key; geo = stageLayout(w, h, seats);
+    geoKey = key; geo = stageLayout(w, h, seats, used);
+    root.dataset.rooms = used.length ? 'out' : '';
+    // one panel per room in use, behind its people: its name on top
+    const keep = new Set(geo ? geo.groups.map(g => g.id) : []);
+    for (const [id, node] of groups) if (!keep.has(id)) {node.remove(); groups.delete(id)}
+    for (const g of geo ? geo.groups : []) {
+      let node = groups.get(g.id);
+      if (!node) {node = el('div', {class: 'room-group', dataset: {room: String(g.id)}}); table.insertBefore(node, centre); groups.set(g.id, node)}
+      node.setAttribute('style', `left:${g.x}px;top:${g.y}px;width:${g.w}px;height:${g.h}px;--line-h:${g.lineH}px`);
+    }
     if (!geo) return;
     table.setAttribute('style', `--ring-cw:${geo.cw}px;--ring-name:${geo.namePx}px;--table-h:${h}px`);
     centre.setAttribute('style', `--mid-x:${geo.mid.x}px;--mid-y:${geo.mid.y}px;--mid-w:${geo.mid.w}px;--mid-h:${geo.mid.h}px`);
     for (const seat of seats) {
       const r = cards.get(seat), p = geo.pos[seat];
       if (!r || !p) continue;
-      const at = `--x:${p.x}px;--y:${p.y}px`;
+      const at = `--x:${p.x}px;--y:${p.y}px` + (p.cw ? `;--card-w:${p.cw}px;--ring-name:${p.namePx}px` : '');
       if (r.at !== at) {r.node.setAttribute('style', at); r.at = at}
       if (r.side !== p.side) {r.side = p.side; r.node.className = r.node.className.replace(/cap-[lr]/, 'cap-' + p.side)}
     }
@@ -273,7 +339,7 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
     const list = (w && w.grimoire && w.grimoire.seats) || [], names = seatNames(w), rooms = roomNames(w), open = openRooms(w);
     const v = voteView(w), vote = freshVote(w), dawn = dawnView(w), vn = voiceNow();
     const line = w ? stageLine(w, vn) : null;
-    const night = nightLines(w, names);
+    const night = nightLines(w, names), inRooms = roomLines(w);
     const roles = (globalThis.document && document.body && document.body.dataset.roles) !== 'off';
     const block = w && w.phase === 'day' && v && v.block && v.block.seat != null ? v.block : null;
     list.forEach((s, i) => {
@@ -292,7 +358,14 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
       if (r.node.className !== cls) r.node.className = cls;
     });
     for (const [k, r] of cards) if (!list.some(s => s.seat === k)) {r.node.remove(); cards.delete(k)}
-    place(list.map(s => s.seat));
+    place(list.map(s => s.seat), open ? open.rooms : []);
+    // each room's panel: its name, and its newest line under its people, pointing at whoever said it (lit while it is the line on stage)
+    for (const [id, node] of groups) {
+      const g = geo && geo.groups.find(x => x.id === id), e = inRooms[id], p = e && geo && geo.pos[e.seat];
+      const now = !!(e && line && line.e.id === e.id && !line.stale);
+      const html = `<div class="room-name">${esc(g ? g.name : id)}</div>` + (e ? `<div class="room-line${now ? ' now' : ''}${line && line.playing && line.e.id === e.id ? ' voicing' : ''}" data-event="${e.id}" style="--arrow:${p && g ? p.x - g.x : 0}px"><div class="rl-text"><span class="who sc-${e.seat % 7}">${esc(names[e.seat] ?? 'seat ' + e.seat)}</span> ${esc(e.text)}</div></div>` : '');
+      if (node._h !== html) {node.innerHTML = html; node._h = html}
+    }
     const c = centreHtml(w, v, names, vote, dawn);
     if (centre._h !== c) {centre.innerHTML = c; centre._h = c}
     // the Storyteller, apart, with its latest words

@@ -333,7 +333,7 @@ install(HTML);
 relay = fakeRelay();
 app = createApp({client: relayClient({base: BASE, fetchImpl: relay.fetch}), fixture: GAME, runnersFixture: RUN});
 ok(document.querySelectorAll('#square .seat').length === 7 && document.querySelectorAll('#talk .line').length > 50 && document.querySelectorAll('#agents .agent').length === 8, 'every panel renders from the recording');
-ok($('frames').options.length === 5 && !$('frames').hidden, 'a picker offers the recorded moments: talk, a vote, a night, a dawn, the end');
+ok($('frames').options.length === 6 && !$('frames').hidden, 'a picker offers the recorded moments: talk, a vote, a night, a dawn, the rooms, the end');
 $('frames').value = 'talk'; $('frames').dispatch('change');
 ok(document.querySelectorAll('#talk .line.win').length === 0 && /round \d of 2/.test($('phase').textContent), 'picking an earlier moment shows that moment');
 for (const b of document.querySelectorAll('button')) b.click();
