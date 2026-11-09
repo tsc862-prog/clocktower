@@ -793,6 +793,23 @@ section('game 3 fixes: claims checked before repeated (#67), a reason to use a r
   const sys = systemFor('player', 'Corwin');
   ok(/look it up with claims/.test(sys) && /quote both of their lines/.test(sys), 'the prompt: check a claim with claims before repeating it, quote both lines before saying it changed');
   ok(/claims \(every role/.test(PLAYER_TOOL_LINES), 'the tool lines name claims');
+  // #81: every character is in play at most once. Two players claim the Mayor: the header marks it; one alone is no mark.
+  const g2 = fakeGame('day');
+  const ev2 = e => g2.events.push({id: g2.events.length, ...e});
+  ev2(say(3, "I'm the Mayor, so keep me alive.")); ev2(say(6, 'Empath here. I got a 0.'));
+  let h2 = playerHeader(g2, 4, fakeApi);
+  ok(/Corwin Mayor \(day 1\)/.test(h2) && !/Same role twice/.test(h2), `one Mayor claim alone shows no clash mark: ${h2}`);
+  ev2(say(0, "I'm the Mayor, and Corwin is lying.", 2));
+  h2 = playerHeader(g2, 4, fakeApi);
+  ok(/Same role twice: Mayor: Odette and Corwin \(at most one is\)\. claims shows the lines\./.test(h2) && !/Empath: /.test(h2), `two Mayor claims are marked as a clash, the Empath is not: ${h2}`);
+  ok(h2.length <= HEADER_CAP, `the header with a clash stays under ${HEADER_CAP} (${h2.length})`);
+  const r2 = run(g2, 'claims', {}, 4);
+  clean(r2, 'claims');
+  ok(r2.sameRole?.length === 1 && /^Mayor: claimed by Odette, Corwin. Each character is in play at most once/.test(r2.sameRole[0]), `the claims tool names the clash: ${JSON.stringify(r2.sameRole)}`);
+  ok(!run(g, 'claims', {}, 4).sameRole, 'no clash, no sameRole field');
+  const sys2 = systemFor('player', 'Bram');
+  ok(/Every character is in play at most once/.test(sys2) && /lying, or is the Drunk/.test(sys2) && /bluffs are characters not in play/.test(sys2), 'the prompt: each character at most once, a second claim is a contradiction, bluffs are not in play');
+  ok(/Every character is in play at most once/.test(systemFor('storyteller')), 'the Storyteller prompt carries the rule too');
 }
 {
   // #68: the header names one player to take to a room when the seat has a reason, and nobody when it has none
