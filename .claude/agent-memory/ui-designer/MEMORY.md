@@ -56,3 +56,16 @@
 - mergePush ignores `clip` when testing replay. Smoke timers: Windows setTimeout(0) ~16 ms, so clip waits in the smoke are 600 ms.
 - places {square, rooms:[{id,name,size,seats,free}], open}: square.js openRooms/roomsLine; tag .away-tag under the marker, discs in
   .rooms-strip under the ring (roomDisc in tokens.js, clip ids ct-room-N-i), --room-* variables. All hidden when !open. Not yet reviewed.
+
+## People view (PR #78, issue #77, owner decision 2026-11-08: "make the people the main screen"; layout not yet reviewed)
+- Default view: src/ui/stage.js. body[data-view=people|table] (localStorage clocktower.view; ?view= one visit, not stored),
+  body[data-roles] (clocktower.roles), body[data-drawer=talk|grimoire|rulings|agents|''].
+- 3440: Storyteller column left (portrait, latest ST words, tonight's ST-only lines) | ellipse of 7 cards (seatPlace: rx 39%, ry 37%,
+  caption on the inward side) | right tab rail. Recent strip (8 lines, newest first, fading) under it. Centre: day line / vote tally +
+  pip bar with need marker / fresh result / Night N / dawn large / winner.
+- Drawers = the Table view's own #board panels, absolutely stacked and visibility-hidden (never unmounted, scroll kept).
+- Caption = newest say/whisper/narration/dawn (voice on: the line playing, else last played); dims after a vote/phase; gone after
+  nomination/night/win. Phone <600: 2-col grid, speaker card spans both with caption under, drawers fixed full-screen, tabs bottom.
+- Recorded game: model.fixtureMoments(end) adds 'night' and 'dawn' cut by frameAt (dawn events carry grimoire snapshots).
+- Screens: logs/tmp/shot.mjs pattern (CDP, Emulation.setDeviceMetricsOverride); vite preview binds localhost (IPv6), not 127.0.0.1.
+- Bash heredocs with quotes in this tool can fail to parse: write edit scripts/CSS chunks with the Write tool, then run/append.
