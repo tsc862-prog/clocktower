@@ -1,10 +1,15 @@
-// The town square: the seven seats in a circle in seat order (clockwise from the top), alive or dead, the ghost vote, the nominee
-// and the nominator while a vote is open, each hand as its ballot lands, and the running tally against the bar. Under each seat,
-// what only the Storyteller (and the watcher) sees: the true role and the tokens that matter, as short words.
+// The town square as a table seen from above: the seven seat markers round it in seat order (clockwise from the top), each with the
+// character's name round its rim and a shroud when dead, the ghost vote as a coin, the nominee and the nominator marked while a vote
+// is open, each hand raised or kept down as its ballot lands, and the running tally in the middle. Beside each marker, what only
+// the Storyteller (and the watcher) sees: the true role as its token, and under it the tokens that matter, as short words.
+// The drawings are src/ui/tokens.js.
 import {esc, el} from './dom.js';
 import {roleName, teamOf, voteView, tokenWord, SQUARE_TOKENS, seatNames} from './model.js';
+import {seatMarker, roleToken, ghostCoin, handMarker, installDefs} from './tokens.js';
 
 export function createSquare(root) {
+  installDefs();
+  root.classList.add('table-view');
   const ring = root.querySelector('.ring') || root.appendChild(el('div', {class: 'ring'}));
   const centre = root.querySelector('.centre') || ring.appendChild(el('div', {class: 'centre'}));
   const seats = new Map();
@@ -13,18 +18,21 @@ export function createSquare(root) {
     const marks = [];
     if (v && v.nominee === s.seat) marks.push('<span class="mark nominee">nominated</span>');
     if (v && v.nominator === s.seat) marks.push('<span class="mark nominator">nominates</span>');
-    const handTxt = !v ? '' : hand === true ? '<span class="hand up" title="voted yes">&#9650; yes</span>'
-      : hand === false ? '<span class="hand down" title="voted no">&#9660; no</span>'
-      : voter ? '<span class="hand none" title="not voted yet">&middot;</span>' : '';
-    const ghost = s.alive ? '' : `<span class="ghost ${s.ghostVote ? 'unspent' : 'spent'}">${s.ghostVote ? 'ghost vote unspent' : 'ghost vote spent'}</span>`;
+    const handTxt = !v ? '' : hand === true ? `<span class="hand up" title="voted yes">${handMarker('up')}<span class="hw">yes</span></span>`
+      : hand === false ? `<span class="hand down" title="voted no">${handMarker('down')}<span class="hw">no</span></span>`
+      : voter ? `<span class="hand none" title="not voted yet">${handMarker('none')}</span>` : '';
+    const ghost = s.alive ? '' : `<span class="ghost ${s.ghostVote ? 'unspent' : 'spent'}" title="${s.ghostVote ? 'ghost vote unspent' : 'ghost vote spent'}">${ghostCoin(s.ghostVote)}</span>`;
     const toks = s.tokens.filter(t => SQUARE_TOKENS.has(t.token)).map(t => {
       const w = t.token === 'master' && t.by != null ? `master of ${names[t.by]}` : t.token === 'is-the-drunk' ? 'drunk' : tokenWord(t);
       return `<span class="tok${t.active === false ? ' off' : ''}">${esc(w)}</span>`;
     }).join(' ');
     const believed = s.believed !== s.role ? ` <span class="believed">(thinks ${esc(roleName(s.believed))})</span>` : '';
-    return `<div class="name">${esc(s.name)}</div><div class="life">${s.alive ? 'alive' : 'dead'} ${ghost}</div>` +
-      `<div class="marks">${marks.join(' ')} ${handTxt}</div>` +
-      `<div class="st"><span class="sees" title="Only the Storyteller and you see this">ST sees</span> <span class="role team-${esc(teamOf(s.role))}">${esc(roleName(s.role))}</span>${believed}${toks ? '<br>' + toks : ''}</div>`;
+    const team = teamOf(s.role) || '';
+    return `<div class="marks">${marks.join(' ')} ${handTxt}</div>` +
+      `<div class="pieces">${seatMarker(s.name, {dead: !s.alive})}` +
+      `<span class="role-piece" title="Only the Storyteller and you see this">${roleToken(s.role, {name: roleName(s.role), team, title: roleName(s.role) + ' (' + team + ')'})}</span>${ghost}</div>` +
+      `<div class="life">${s.alive ? 'alive' : 'dead'}</div>` +
+      `<div class="st"><span class="sees" title="Only the Storyteller and you see this">ST sees</span> <span class="role team-${esc(team)}">${esc(roleName(s.role))}</span>${believed}${toks ? '<br>' + toks : ''}</div>`;
   }
   function render({watch: w}) {
     root.dataset.empty = w ? 'no' : 'yes';

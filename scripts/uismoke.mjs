@@ -102,6 +102,30 @@ ok(rul.length === w.rulings.length && rul.length > 0, `every ruling shows in the
 ok(rul.filter(r => r.classList.contains('scripted')).length === w.rulings.filter(r => /^scripted default/.test(r.reason)).length && rul.some(r => r.classList.contains('scripted')), 'scripted-default rulings are marked');
 ok(rul[0].querySelector('.why').textContent === w.rulings[0].reason, 'a ruling shows its reason');
 
+// ---- our own tokens ----
+console.log('tokens');
+{
+  const {SCRIPT} = await import('../src/data/script.js');
+  const T = await import('../src/ui/tokens.js');
+  const missing = SCRIPT.roles.filter(r => !T.ROLE_ICONS[r.id]).map(r => r.id);
+  ok(missing.length === 0, `every role in the script has a token icon${missing.length ? ' (missing: ' + missing.join(', ') + ')' : ''} (${SCRIPT.roles.length})`);
+  const box = document.createElement('div');
+  box.innerHTML = SCRIPT.roles.map(r => T.roleToken(r.id, {name: r.name, team: r.team})).join('');
+  const toks = box.querySelectorAll('svg.role-token');
+  ok(toks.length === SCRIPT.roles.length && toks.every((t, i) => t.dataset.role === SCRIPT.roles[i].id && t.textContent.includes(SCRIPT.roles[i].name) && t.classList.contains('team-' + SCRIPT.roles[i].team)),
+    'each role token carries its name and its team\'s rim');
+  ok(['poisoned', 'is-the-drunk', 'protected', 'master', 'red-herring', 'dead'].every(k => T.REMINDER_ICONS[k]), 'reminder discs exist for poisoned, drunk, protected, master, red herring and dead');
+  const src = readFileSync(join(ROOT, 'src/ui/tokens.js'), 'utf8');
+  ok(!/<image|\.png|\.jpe?g|\.webp|https?:\/\//i.test(src), 'the tokens are drawn by hand: no image and no outside link');
+  const markers = document.querySelectorAll('#square .seat .seat-marker');
+  ok(markers.length === 7 && JSON.stringify(markers.map(m => m.querySelector('.name').textContent)) === JSON.stringify(names), 'the square renders seven seat markers round the table, in seat order');
+  ok(document.querySelectorAll('#square .seat .role-token').every((t, i) => t.dataset.role === w.grimoire.seats[i].role), 'each seat shows its true role as a token');
+  const rem = document.querySelectorAll('#grimoire .grim-row .reminder-token');
+  const want = w.grimoire.seats.reduce((n, s) => n + s.tokens.length + (s.alive ? 0 : 1), 0);
+  ok(rem.length === want && want > 0, `reminders render in the grimoire as discs (${rem.length})`);
+  ok(document.querySelectorAll('#grimoire .grim-row .role-token').length === 7, 'every grimoire row shows its role token');
+}
+
 // ---- the vote frame ----
 console.log('day 1, a vote');
 relay.watch = GAME.frames.vote;
