@@ -21,6 +21,7 @@
 //   - voices (a fake engine and a fake audio element): off on a first visit and nothing posted; one click on, remembered; lines read
 //     in order one at a time in their speaker's voice, the speaker lit; whispers only when asked; the queue capped; skip, mute;
 //     no engine: says so once and stays off; the recorded game is not spoken
+//   - rooms (#28): a line said in a room carries its place, a move is a one-line mark
 import {readFileSync, readdirSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -558,6 +559,29 @@ console.log('voices');
   ok(rr.calls.length === 0 && /recorded game/.test($('voice-note').textContent), 'the recorded game sends nothing to the voice engine and says so');
   ok(!/\b(nominate|vote|whisper|speak)\b/i.test(document.querySelectorAll('button').map(b => b.textContent).join(' ')), 'no voice control speaks, votes or whispers for a seat');
   localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY);
+}
+
+// ---- rooms in the talk (#28) ----
+console.log('rooms in the talk');
+{
+  install(HTML);
+  const rr = fakeRelay();
+  const ra = createApp({client: relayClient({base: BASE, fetchImpl: rr.fetch}), refreshMs: null, audio: null, voiceFile: async () => null});
+  const T = GAME.frames.talk, n = T.grimoire.seats.map(s => s.name), L = T.last;
+  const extra = [
+    {id: L + 1, type: 'move', day: T.day, night: T.night, seats: [0, 1], room: 'nook', from: null, by: 0, text: `${n[0]} and ${n[1]} went to the snug.`},
+    {id: L + 2, type: 'say', day: T.day, night: T.night, seat: 0, room: 'nook', text: 'Only for your ears.'},
+    {id: L + 3, type: 'say', day: T.day, night: T.night, seat: 2, text: 'Said at the Square.'},
+  ];
+  rr.watch = {...T, last: L + 3, events: [...T.events, ...extra], places: {square: [2, 3, 4, 5, 6], rooms: [{id: 'nook', name: 'the snug', size: 2, seats: [0, 1], free: 0}], open: true}};
+  await ra.pollWatch();
+  const line = k => document.querySelector(`#talk .line[data-key="e${k}"]`);
+  ok(line(L + 1) && line(L + 1).classList.contains('move') && line(L + 1).textContent === extra[0].text, 'a move shows as a one-line mark');
+  ok(line(L + 2) && line(L + 2).classList.contains('in-room') && /^in the snug:/.test(line(L + 2).querySelector('.place').textContent) && line(L + 2).querySelector('.who').textContent === n[0] && line(L + 2).textContent.includes('Only for your ears.'),
+    `a line said in a room carries its place, named from the watch body (${line(L + 2) && line(L + 2).textContent})`);
+  ok(line(L + 3) && !line(L + 3).classList.contains('in-room') && !line(L + 3).querySelector('.place'), 'a line at the Square has no place mark');
+  const {talkLine} = await import('../src/ui/talk.js');
+  ok(/in the nook:/.test(talkLine({type: 'say', seat: 0, room: 'nook', text: 'x'}, n).html), 'without places in the body, the room is named from the rooms as data');
 }
 
 console.log(fails ? `${fails} check(s) failed` : 'the page renders the game and changes nothing');

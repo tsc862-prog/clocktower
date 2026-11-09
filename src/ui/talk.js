@@ -2,17 +2,25 @@
 // day ends), nominations, votes with their hands, executions, the Storyteller's narration in its own style. Whispers sit inline as
 // "A leaned in to B" with their text beneath, marked as something the table did not hear. What each seat was told by night and a
 // runner's own asides are the watcher's too, each marked so (both can be hidden). New lines are appended, never rebuilt; the
-// list follows the newest line until the owner scrolls up, and one click follows it again.
+// list follows the newest line until the owner scrolls up, and one click follows it again. A line said in a room (#28) carries its
+// place ("in the nook: Odette ..."), heard only by those in it; a move between the Square and the rooms is a one-line mark.
 import {esc} from './dom.js';
 import {follower} from './dom.js';
 import {roleName, seatNames} from './model.js';
+import {ROOMS} from '../data/rooms.js';
+
+// room id -> its name ('the nook'), from the watch body's places when it has them, else the rooms as data
+export const roomNames = w => Object.fromEntries([...ROOMS, ...((w && w.places && w.places.rooms) || [])].map(r => [r.id, r.name || r.id]));
 
 const BREAKS = new Set(['phase', 'dawn']);
-export function talkLine(e, names) {
+export function talkLine(e, names, rooms = roomNames(null)) {
   const n = i => esc(names[i] ?? `seat ${i}`);
   const who = i => `<b class="who sc-${Number.isInteger(i) ? i % 7 : 'x'}">${n(i)}</b>`; // each seat's own colour (styles/page.css --seat-c0..6)
   switch (e.type) {
-    case 'say': return {cls: 'say', html: `${who(e.seat)} <span class="text">${esc(e.text)}</span>`};
+    case 'say': return e.room != null
+      ? {cls: 'say in-room', html: `<span class="place" title="Only those in the room heard this">in ${esc(rooms[e.room] || e.room)}:</span> ${who(e.seat)} <span class="text">${esc(e.text)}</span>`}
+      : {cls: 'say', html: `${who(e.seat)} <span class="text">${esc(e.text)}</span>`};
+    case 'move': return {cls: 'move', html: esc(e.text)};
     case 'pass': return {cls: 'pass', html: `<span class="dim">${esc(e.text)}</span>`};
     case 'whisper': return {cls: 'whisper', html: `<div class="lean">${who(e.from)} leaned in to ${who(e.to)} <span class="unheard" title="Only the two of them heard this">the table did not hear this</span></div><div class="text">${esc(e.text)}</div>`};
     case 'whisper-seen': return null; // the table's view of a whisper; the whisper itself carries it
@@ -44,14 +52,14 @@ export function createTalk(root) {
   function render({watch: w, asides = [], epoch: ep = 0}) {
     if (!w) return;
     const key = w.seed + ':' + ep; if (epoch !== key) {box.replaceChildren(); shown.clear(); epoch = key}
-    const names = seatNames(w);
+    const names = seatNames(w), rooms = roomNames(w);
     // asides come from the socket with no game id: they sit after the last event that was in when they arrived
     const items = [...w.events.map(e => ({k: 'e' + e.id, at: e.id, e})), ...asides.map(a => ({k: 'a' + a.n, at: a.after + 0.5, e: {type: 'aside', ...a}}))]
       .filter(x => !shown.has(x.k)).sort((a, b) => a.at - b.at);
     let added = 0;
     for (const x of items) {
       shown.add(x.k);
-      const l = talkLine(x.e, names);
+      const l = talkLine(x.e, names, rooms);
       if (!l) continue;
       const row = document.createElement('div');
       row.className = 'line ' + l.cls; row.dataset.key = x.k; row.innerHTML = l.html;

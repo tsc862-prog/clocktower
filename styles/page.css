@@ -211,3 +211,9 @@ img.ghost-coin.spent { opacity: .4; filter: grayscale(1); }
 .centre.st-speaking .quiet, .centre.st-speaking .vote .what { color: var(--gold); text-shadow: 0 0 12px rgba(230, 185, 92, .6); }
 @keyframes ct-speak { from { filter: drop-shadow(0 0 4px rgba(230, 185, 92, .5)); } to { filter: drop-shadow(0 0 14px rgba(230, 185, 92, .9)); } }
 @media (prefers-reduced-motion: reduce) { .seat.speaking .seat-marker { animation: none; } }
+
+/* rooms (#28): a line said in a room carries its place; a move is a quiet one-line mark */
+.line.say.in-room { margin-left: 1.2rem; border-left: 2px solid #6b5f8a; padding-left: calc(1.2em + .5rem); }
+.line.say.in-room .place { font: 12px var(--sans); color: #a99bd0; letter-spacing: .02em; }
+.line.move { font: 12px var(--sans); color: var(--dim); padding: .1rem 0 .1rem 1.2rem; }
+.line.move::before { content: '\2192  '; color: var(--faint); }
