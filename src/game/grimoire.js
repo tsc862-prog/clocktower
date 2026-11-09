@@ -42,7 +42,8 @@ export const isDrunk = (state, i) => !!roleOf(state, state.seats[i].role)?.disgu
 export const isPoisoned = (state, i) => hasToken(state, i, 'poisoned', t => t.active);
 export const malfunctioning = (state, i) => isDrunk(state, i) || isPoisoned(state, i);
 
-// Who may see a log entry: 'all' (the table), [seat indexes] (those seats alone) or 'storyteller'. Every entry carries one;
+// Who may see a log entry: 'all' (the table), [seat indexes] (those seats alone), 'storyteller', or 'watcher' (the owner's page
+// and the behavior log alone: a seat's night thought, #111; neither a seat nor the Storyteller ever reads it). Every entry carries one;
 // src/game/api.js shows a seat only the entries whose audience includes it. A death by day happens in front of the table;
 // a death by night is announced at dawn (the dawn entry), so the death itself is the Storyteller's.
 export const PUBLIC_TYPES = ['night', 'dawn', 'nomination', 'vote', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'win'];

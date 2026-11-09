@@ -90,6 +90,7 @@ function quiet(state) {
   switch (p.kind) {
     case 'vote': return Object.fromEntries(p.seats.map(s => [s, false]));
     case 'nomination': return null;
+    case 'thoughts': return {};
     case 'demon-bluffs': return p.options.slice(0, p.count);
     case 'info': return (p.truth.length ? p.truth : p.options)[0];
     case 'choose':
@@ -431,6 +432,7 @@ section('integration: a real newGame through src/game/api.js');
   say(call(G, st, 'fallback', {reason: 'Nothing better for the Drunk tonight than the default.'}), 'the scripted fallback through the real api');
   while (G.pending && G.phase !== 'day') {
     if (G.pending.seat === 'storyteller') call(G, st, 'fallback', {reason: 'The rest of the first night runs on the default.'});
+    else if (G.pending.kind === 'thoughts') for (const i of G.pending.seats) realApi.think(G, i, '');
     else realApi.answer(G, G.pending.seat, G.pending.count ? G.pending.options.filter(x => x !== G.pending.seat).slice(0, G.pending.count) : G.pending.options.find(x => x !== G.pending.seat));
   }
   ok(G.phase === 'day' && G.day === 1, 'day one breaks');
@@ -642,6 +644,7 @@ section('deaths as they happened and the end (#90)');
     while (G.pending && G.phase !== 'day' && !G.winner) {
       const p = G.pending;
       if (p.seat === 'storyteller') {const r = call(G, st, 'fallback', {reason: 'The night runs on the plain default here.'}); if (!r.ok) throw new Error(r.error); continue}
+      if (p.kind === 'thoughts') {for (const i of p.seats) realApi.think(G, i, ''); continue}
       const pick = p.role === 'poisoner' ? 4 : p.role === 'imp' ? kill : p.count ? p.options.filter(x => x !== p.seat).slice(0, p.count) : p.options.find(x => x !== p.seat);
       realApi.answer(G, p.seat, pick);
     }
