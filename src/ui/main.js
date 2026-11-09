@@ -15,7 +15,7 @@ async function boot() {
   const client = relayClient({base: RELAY});
   if (params.has('fixture')) {
     const [g, r] = await Promise.all([import('./fixtures/game.json'), import('./fixtures/runners.json')]);
-    window.clocktower = createApp({client, fixture: g.default || g, runnersFixture: r.default || r});
+    window.clocktower = createApp({client, fixture: g.default || g, runnersFixture: r.default || r, frame: params.get('fixture') || 'end'}); // ?fixture=vote opens on that moment
     return;
   }
   const app = createApp({client, seed: SEED});

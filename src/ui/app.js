@@ -23,7 +23,7 @@ import {esc} from './dom.js';
 const PACE_KEY = 'clocktower.pace';
 function storedPace() {try {const v = globalThis.localStorage && localStorage.getItem(PACE_KEY); return PACES[v] ? v : DEFAULT_PACE} catch {return DEFAULT_PACE}}
 
-export function createApp({client, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500}) {
+export function createApp({client, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end'}) {
   const $ = id => document.getElementById(id);
   const state = {watch: null, runners: null, links: null, asides: [], health: null, source: fixture ? 'recorded' : 'live', watchMissing: false, frame: null, msg: '', epoch: 0, socket: false, pace: storedPace()};
   const bar = {seed: $('seed'), rounds: $('rounds'), phase: $('phase'), winner: $('winner'), source: $('source'), relay: $('relay-state'), newGame: $('new-game'), frames: $('frames'), msg: $('act-msg'), empty: $('empty'), pace: $('pace'), paceNote: $('pace-note')};
@@ -178,7 +178,8 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
   if (fixture) {
     if (bar.frames) {bar.frames.replaceChildren(...Object.keys(fixture.frames).map(k => {const o = document.createElement('option'); o.value = k; o.textContent = {talk: 'day 1, talking', vote: 'day 1, a vote', end: 'the end'}[k] || k; return o}));
       bar.frames.addEventListener('change', () => showFrame(bar.frames.value))}
-    showFrame('end'); if (bar.frames) bar.frames.value = 'end';
+    const first = fixture.frames[frame] ? frame : 'end';
+    showFrame(first); if (bar.frames) bar.frames.value = first;
   } else render();
   return {state, panels, act, render, pollWatch, tickWatch, pollRunners, pollHealth, onSocket, onSocketOpen, onSocketClose, flushRefresh, showFrame};
 }

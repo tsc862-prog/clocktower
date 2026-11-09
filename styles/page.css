@@ -55,7 +55,7 @@ a { color: var(--gold); }
 .seat-marker .sm-initial { font: 30px var(--serif); fill: var(--seat-ink); }
 .seat-marker .sm-name { font: 13px var(--serif); fill: var(--seat-ink); letter-spacing: .04em; }
 .seat-marker .shroud { fill: var(--tk-shroud); stroke: #e8e2d4; stroke-width: 2; }
-.seat-marker.is-dead .sm-rim { fill: #2a2632; } .seat-marker.is-dead .sm-name, .seat-marker.is-dead .sm-initial { fill: var(--dim); }
+.seat-marker.is-dead .sm-rim { fill: #2a2632; } .seat-marker.is-dead .sm-name { fill: var(--dim); } .seat-marker.is-dead .sm-initial { display: none; }
 .reminder-token .rm-face { fill: var(--tk-face); stroke: var(--private); stroke-width: 5; } .reminder-token { --rim: var(--private); }
 .reminder-token.rem-poisoned .a { fill: #4f8a3c; } .reminder-token.rem-dead .a { fill: var(--tk-shroud); }
 .reminder-token.rem-protected .a { fill: var(--rim-townsfolk); } .reminder-token.rem-red-herring .a { fill: var(--rim-demon); }

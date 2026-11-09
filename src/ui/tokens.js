@@ -81,7 +81,7 @@ export function seatMarker(name, {dead = false} = {}) {
     `<circle class="sm-rim" cx="50" cy="50" r="48"/><circle class="sm-face" cx="50" cy="50" r="27"/>` +
     `<text class="sm-initial" x="50" y="60" text-anchor="middle">${esc(String(name).slice(0, 1))}</text>` +
     `<text class="name sm-name"><textPath href="#ct-arc-seat" startOffset="25%" text-anchor="middle">${esc(name)}</textPath></text>` +
-    (dead ? '<path class="shroud" d="M32 0h36v50L50 38 32 50z"/>' : '') + '</svg>';
+    (dead ? '<path class="shroud" d="M38 25h24v40L50 56 38 65z"/>' : '') + '</svg>';
 }
 
 // reminderToken('poisoned', {title: 'poisoned · by Odette', off}) -> a small disc
