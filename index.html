@@ -19,6 +19,13 @@
     <label class="field pace" title="How far apart the runners' turns are; goes with the next start">pace <select id="pace" name="pace"></select></label>
     <span id="pace-note" class="dim pace-note"></span>
     <span id="art-note" class="dim art-note" hidden title="Token images (PNG or WebP) from your own folder, public/tokens-local; the drawn token wherever there is none"></span>
+    <span id="voice" class="voice" data-state="off">
+      <button id="voice-toggle" aria-pressed="false" title="Click to hear each line spoken (the local voice engine)">Voice: off</button>
+      <button id="voice-skip" hidden disabled title="End the line playing">Skip</button>
+      <button id="voice-mute" hidden title="Hush now and hold new lines until unmuted">Mute</button>
+      <label class="field" hidden title="Also read the whispers the watcher sees (the table does not hear them)"><input type="checkbox" id="voice-whispers"> whispers</label>
+      <span id="voice-note" class="dim voice-note" aria-live="polite"></span>
+    </span>
     <span class="grow"></span>
     <span id="act-msg" class="dim" aria-live="polite"></span>
     <button id="new-game" disabled title="Needs the relay to start a new game over the wire">New game</button>
