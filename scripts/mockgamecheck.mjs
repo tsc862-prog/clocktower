@@ -87,9 +87,10 @@ async function main() {
     const stopped = rs => live.every(k => {const r = rs.find(x => x.key === k); return r && ['stopped', 'crashed'].includes(r.state)});
     let selfStop = await until(async () => {const rs = (await view()).runners || []; return stopped(rs) ? rs : null}, ms(30000, 15000));
     if (selfStop) selfStop = await until(async () => {const rs = (await view()).runners || []; return live.every(k => (rs.find(x => x.key === k) || {}).endWhy === 'the game is over') ? rs : null}, ms(10000, 10000)) || (await view()).runners;
+    const tookMs = Date.now() - tWin; // how long after the win the last runner showed its end (#116)
     const notOver = live.filter(k => {const r = (selfStop || []).find(x => x.key === k); return !r || r.endWhy !== 'the game is over'});
     const overEnds = (selfStop || []).filter(r => r.endWhy === 'the game is over').map(r => r.key);
-    ok(!!selfStop && !notOver.length && overEnds.length >= 5, `every runner playing at the win stops by itself, "the game is over" (${overEnds.join(', ')}${notOver.length ? '; not: ' + notOver.join(', ') : ''})`);
+    ok(!!selfStop && !notOver.length && overEnds.length >= 5, `every runner playing at the win stops by itself, "the game is over" (${overEnds.join(', ')}${notOver.length ? '; not: ' + notOver.map(k => {const r = (selfStop || []).find(x => x.key === k); return k + ' [' + (r ? r.state + ', why: ' + r.endWhy : 'unknown') + ']'}).join(', ') : ''}; all showed within ${tookMs} ms)`);
     const v = await view();
     await req(base, '/play/runner/stop-all', {method: 'POST', origin: PAGE, body: {why: 'the check is done'}});
     const look = await req(base, '/play/call', {method: 'POST', body: {player: 1, runner: 'mockgamecheck', tool: 'look', args: {}}});
