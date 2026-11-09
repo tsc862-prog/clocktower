@@ -1,7 +1,8 @@
 // The page's only way to the relay. Every route the page may touch is listed here; the page reads the game and starts or stops
 // runners, and nothing else. It never posts to a seat's routes (/play/call, /play/storyteller, /play/narrate, /mcp): nothing on the
 // page speaks, whispers, nominates or votes for a seat (npm run uismoke checks it). The voice engine's routes (VOICE) read aloud
-// the lines the page already shows.
+// the lines the page already shows; /play/heard tells the relay how far the voices have got (the newest event id played or skipped
+// and whether the voice is on), so it can let a speaking turn wait for the voices.
 export const READS = {health: '/health', runners: '/play/runner', watch: '/play/watch'};
 export const ACTIONS = {
   start: '/play/runner/start',       // {kind, player?, provider?, model?, budget?, by: 'owner'}
@@ -13,7 +14,7 @@ export const ACTIONS = {
 export const SOCKET = '/play';
 // The local voice engine (scripts/providers/tts.mjs): its state and seat voice map, a clip made from a line the page already shows,
 // and the clip itself. It speaks for nobody at the table: it reads aloud what was said.
-export const VOICE = {status: '/tts/status', say: '/tts/say', clip: '/tts'};
+export const VOICE = {status: '/tts/status', say: '/tts/say', clip: '/tts', heard: '/play/heard'};
 
 export function relayClient({base, fetchImpl = (...a) => fetch(...a), timeoutMs = 4000} = {}) {
   const url = p => base + p;
@@ -51,6 +52,13 @@ export function relayClient({base, fetchImpl = (...a) => fetch(...a), timeoutMs 
           signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(30000) : undefined});
         let j = null; try {j = await r.json()} catch {}
         return r.ok && j ? j : {ok: false, status: r.status, error: (j && j.error) || `HTTP ${r.status}`};
+      } catch (e) {return {ok: false, error: String(e && e.message || e)}}
+    },
+    heard: async body => { // {last, voice} -> {ok, heard} | {ok: false, error}
+      try {
+        const r = await fetchImpl(url(VOICE.heard), {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify({last: body.last, voice: body.voice === true}), signal: signal()});
+        let j = null; try {j = await r.json()} catch {}
+        return r.ok ? (j || {ok: true}) : {ok: false, status: r.status, error: (j && j.error) || `HTTP ${r.status}`};
       } catch (e) {return {ok: false, error: String(e && e.message || e)}}
     },
     ttsClipUrl: id => url(VOICE.clip + '?id=' + encodeURIComponent(id)),

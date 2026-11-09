@@ -21,6 +21,9 @@
 //   - voices (a fake engine and a fake audio element): off on a first visit and nothing posted; one click on, remembered; lines read
 //     in order one at a time in their speaker's voice, the speaker lit; whispers only when asked; the queue capped; skip, mute;
 //     no engine: says so once and stays off; the recorded game is not spoken
+//   - keeping time (#50): the relay's clip played when the event or the socket brings one, the page's own clip after a second without;
+//     whispers on the page's own path; POST /play/heard {last, voice} on each clip end, each skip and the 20 s tick, voice false at once
+//     on mute and off, nothing posted while the voice is off; the "keeping time" mark while the page reports
 //   - rooms (#28): a line said in a room carries its place, a move is a one-line mark
 import {readFileSync, readdirSync} from 'node:fs';
 import {dirname, join} from 'node:path';
@@ -432,13 +435,13 @@ console.log('voices');
   const SEATV = {Odette: {voice: 'v_odette', speed: 0.95}, Bram: 'v_bram', Ines: {voice: 'v_ines'}, Corwin: {voice: 'v_corwin'}, Thea: {voice: 'v_thea'}, Fitch: {voice: 'v_fitch'}, Yusuf: {voice: 'v_yusuf'}, Storyteller: {voice: 'v_st', speed: 0.95}};
   const clipId = n => n.toString(16).padStart(24, '0');
   // a relay with a voice engine: /tts/status answers {ok, seatVoices}; /tts/say makes a clip id per line
-  const voiceRelay = ({engine = true} = {}) => {
+  const voiceRelay = ({engine = true, clipsOnSay = false} = {}) => {
     const r = fakeRelay(), base = r.fetch; r.says = []; r.status = 0;
     r.fetch = async (url, opt = {}) => {
       const path = String(url).replace(BASE, '').split('?')[0];
       if (path === VOICE.status) {
         r.calls.push({path, method: 'GET'}); r.status++;
-        return {ok: true, status: 200, json: async () => engine ? {enabled: true, ok: true, engine: 'kokoro', voices: ['v_odette'], seatVoices: SEATV} : {enabled: true, ok: false, voices: [], error: 'not answering'}};
+        return {ok: true, status: 200, json: async () => engine ? {enabled: true, ok: true, engine: 'kokoro', voices: ['v_odette'], seatVoices: SEATV, ...(clipsOnSay ? {clipsOnSay: true, heard: null} : {})} : {enabled: true, ok: false, voices: [], error: 'not answering'}};
       }
       if (path === VOICE.say) {
         r.calls.push({path, method: 'POST'}); r.says.push(JSON.parse(opt.body));
@@ -559,6 +562,86 @@ console.log('voices');
   ok(rr.calls.length === 0 && /recorded game/.test($('voice-note').textContent), 'the recorded game sends nothing to the voice engine and says so');
   ok(!/\b(nominate|vote|whisper|speak)\b/i.test(document.querySelectorAll('button').map(b => b.textContent).join(' ')), 'no voice control speaks, votes or whispers for a seat');
   localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY);
+
+  // ---- keeping time (#50): the relay's clips and the heard report ----
+  console.log('voices keeping time');
+  {
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY);
+    const kr = voiceRelay({clipsOnSay: true}), ka = fakeAudio();
+    let tickFn = null;
+    install(HTML);
+    const kp = createApp({client: relayClient({base: BASE, fetchImpl: kr.fetch}), refreshMs: null, audio: ka, voiceFile: async () => null,
+      voiceTick: (fn, ms) => {tickFn = fn; kr.tickMs = ms; return () => {}}, clipWait: 600}); // long beside a timer tick (about 16 ms on Windows)
+    const heards = () => kr.posts.filter(p => p.path === VOICE.heard).map(p => p.body);
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const L = T.last, line = (k, extra = {}) => ({id: L + k, type: 'say', day: T.day, night: T.night, seat: k % 7, text: 'Line ' + k + ' at the Square.', ...extra});
+    const sendLine = async ev => {kp.onSocket({type: 'watch', seed: T.seed, last: ev.id, events: [ev], clock: T.clock, pending: T.pending, ballot: null, phase: T.phase, day: T.day, night: T.night, winner: null}); await settle()};
+    kr.watch = T; await kp.onSocketOpen(); await settle();
+    ok(typeof tickFn === 'function' && kr.tickMs === VO.HEARD_MS && VO.HEARD_MS === 20000, 'the heard report has a 20 s tick');
+    await sendLine(line(1)); tickFn(); await settle();
+    ok(heards().length === 0 && kr.says.length === 0, 'voice off: no heard report on lines or on the tick');
+    ok($('voice-time').hidden, 'voice off: no "keeping time" mark');
+
+    $('voice-toggle').click(); await settle();
+    ok(heards().length === 1 && heards()[0].voice === true && heards()[0].last === L + 1, `voice on: the page reports at once, everything seen so far heard (${JSON.stringify(heards()[0])})`);
+    ok(!$('voice-time').hidden && /keeping time/.test($('voice-time').textContent), 'the "keeping time" mark shows while the relay makes the clips and the page reports');
+
+    // a clip in the event itself (the watch body): played from the relay, nothing asked of /tts/say
+    const c2 = 'a'.repeat(24);
+    await sendLine(line(2, {clip: {id: c2, ms: 300}}));
+    ok(ka.plays.at(-1) === BASE + VOICE.clip + '?id=' + c2 && kr.says.length === 0 && kp.voice.state.now && kp.voice.state.now.via === 'clip', "an event's clip plays from GET /tts?id=, no clip asked for");
+    ka.end(); await settle();
+    ok(heards().length === 2 && heards()[1].last === L + 2 && heards()[1].voice === true, `a clip's end reports it heard (${JSON.stringify(heards()[1])})`);
+
+    // the clip arrives on the socket after the push
+    const c3 = 'b'.repeat(24);
+    await sendLine(line(3)); await sleep(5);
+    ok(ka.plays.at(-1) !== BASE + VOICE.clip + '?id=' + c3 && kr.says.length === 0, 'a line without its clip waits a moment for the relay');
+    kp.onSocket({type: 'clip', id: L + 3, clip: {id: c3, ms: 250}}); await settle();
+    ok(ka.plays.at(-1) === BASE + VOICE.clip + '?id=' + c3 && kr.says.length === 0, "the socket's clip message is played when it comes");
+    // skipped: reported heard too
+    $('voice-skip').click(); await settle();
+    ok(heards().at(-1).last === L + 3 && heards().at(-1).voice === true, `a skip reports the line heard (${JSON.stringify(heards().at(-1))})`);
+
+    // no clip within the wait: the page asks for its own
+    const before = kr.says.length;
+    await sendLine(line(4)); await sleep(700); await settle();
+    ok(kr.says.length === before + 1 && kr.says.at(-1).text === line(4).text && kp.voice.state.now && kp.voice.state.now.via === 'say', 'no clip within the wait: the page asks POST /tts/say itself');
+    ka.end(); await settle();
+    ok(heards().at(-1).last === L + 4, 'the fallback clip ends: reported heard');
+
+    // whispers: the page's own clip at once
+    $('voice-whispers').checked = true; $('voice-whispers').dispatch('change');
+    const sb = kr.says.length;
+    await sendLine({id: L + 5, type: 'whisper', day: T.day, night: T.night, from: 2, to: 4, text: 'Between us two.'});
+    ok(kr.says.length === sb + 1 && kr.says.at(-1).text === 'Between us two.', 'a ticked whisper is asked of /tts/say at once (the relay makes none)');
+    ka.end(); await settle();
+
+    // the tick
+    const hb = heards().length; tickFn(); await settle();
+    ok(heards().length === hb + 1 && heards().at(-1).voice === true && heards().at(-1).last === L + 5, 'the 20 s tick reports while the voice is on');
+
+    // mute and off: voice false at once, nothing on the tick
+    $('voice-mute').click(); await settle();
+    ok(heards().at(-1).voice === false && heards().length === hb + 2, 'Mute reports voice: false at once');
+    ok($('voice-time').hidden, 'muted: the "keeping time" mark goes');
+    tickFn(); await settle();
+    ok(heards().length === hb + 2, 'muted: the tick posts nothing');
+    $('voice-mute').click(); await settle();
+    ok(heards().at(-1).voice === true && !$('voice-time').hidden, 'unmuted: voice true again, the mark back');
+    $('voice-toggle').click(); await settle();
+    const offN = heards().length;
+    ok(heards().at(-1).voice === false && !kp.voice.state.on, 'Voice off reports voice: false at once');
+    tickFn(); await sendLine(line(6)); await settle();
+    ok(heards().length === offN, 'voice off: nothing more is reported');
+    ok(kr.posts.every(p => !FORBIDDEN.test(p.path)), 'the heard report goes to its own route, never a seat\'s');
+
+    // the held frame's events may carry clips the push never does: a replay is still a replay
+    const {mergePush} = await import('../src/ui/model.js');
+    const held = {...T, events: T.events.map((e, i) => i === T.events.length - 1 ? {...e, clip: {id: c2, ms: 1}} : e)};
+    ok(!mergePush(held, {type: 'watch', seed: T.seed, last: T.last, events: T.events}).full, 'a replayed push is still a replay when the held event carries its clip');
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY);
+  }
 }
 
 // ---- rooms in the talk (#28) ----

@@ -102,8 +102,10 @@ export function mergeFrame(old, next) {
 export function mergePush(old, push) {
   const events = Array.isArray(push && push.events) ? push.events : [];
   // a push from event 0 that is not a replay of what the page holds: a new game began
-  const byId = old ? new Map(old.events.map(e => [e.id, JSON.stringify(e)])) : null;
-  const replay = byId && events.every(e => byId.get(e.id) === JSON.stringify(e));
+  // (an event's clip, which the watch body carries once the relay has made it and the push never does, is no difference)
+  const same = e => JSON.stringify({...e, clip: undefined});
+  const byId = old ? new Map(old.events.map(e => [e.id, same(e)])) : null;
+  const replay = byId && events.every(e => byId.get(e.id) === same(e));
   if (!old || !push || push.seed !== old.seed || (events.length && events[0].id === 0 && old.events.length && !replay)) return {frame: old, fresh: 0, full: true};
   const seen = new Set(old.events.map(e => e.id)), fresh = events.filter(e => !seen.has(e.id));
   const {type, ...rest} = push;
