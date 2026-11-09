@@ -24,7 +24,8 @@
 //   - keeping time (#50): the relay's clip played when the event or the socket brings one, the page's own clip after a second without;
 //     whispers on the page's own path; POST /play/heard {last, voice} on each clip end, each skip and the 20 s tick, voice false at once
 //     on mute and off, nothing posted while the voice is off; the "keeping time" mark while the page reports
-//   - rooms (#28): a line said in a room carries its place, a move is a one-line mark
+//   - rooms (#28): a line said in a room carries its place, a move is a one-line mark; in the square, a seat away carries its room's
+//     name, the rooms show as discs off the table with their occupants, one line says who is where; all of it goes when the rooms close
 import {readFileSync, readdirSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -663,6 +664,39 @@ console.log('rooms in the talk');
   ok(line(L + 2) && line(L + 2).classList.contains('in-room') && /^in the snug:/.test(line(L + 2).querySelector('.place').textContent) && line(L + 2).querySelector('.who').textContent === n[0] && line(L + 2).textContent.includes('Only for your ears.'),
     `a line said in a room carries its place, named from the watch body (${line(L + 2) && line(L + 2).textContent})`);
   ok(line(L + 3) && !line(L + 3).classList.contains('in-room') && !line(L + 3).querySelector('.place'), 'a line at the Square has no place mark');
+  // the square while the rooms are open: a tag on each seat away, the rooms off the table's edge, one line of who is where
+  const sq = () => document.querySelector('#square');
+  const away = () => document.querySelectorAll('#square .seat.away').map(s => +s.dataset.seat);
+  const tags = () => document.querySelectorAll('#square .away-tag').map(t => t.textContent);
+  ok(JSON.stringify(away()) === '[0,1]' && JSON.stringify(tags()) === '["the snug","the snug"]', `the two seats in a room carry its name as a tag (${tags().join(', ')})`);
+  ok(!document.querySelectorAll('#square .seat').filter(s => ![0, 1].includes(+s.dataset.seat)).some(s => s.querySelector('.away-tag')), 'a seat at the Square has no tag');
+  const strip = sq().querySelector('.rooms-strip');
+  ok(strip && !strip.hidden && strip.querySelectorAll('.room').length === 1 && strip.querySelector('.room[data-room="nook"] .room-name').textContent === 'the snug', 'the room shows as a labelled disc off the table');
+  ok(strip.querySelectorAll('.room[data-room="nook"] .rd-person').length === 2 && strip.querySelector('.room[data-room="nook"] .room-count').textContent === '2 of 2', 'its disc holds its two occupants and says how full it is');
+  {
+    const P = {square: [3, 4, 5, 6], rooms: [{id: 'nook', name: 'the Snug', size: 2, seats: [0, 1], free: 0}, {id: 'parlour', name: 'the Vestry', size: 3, seats: [], free: 3}, {id: 'backroom', name: 'the Taproom', size: 4, seats: [2], free: 3}], open: true};
+    rr.watch = {...rr.watch, places: P}; await ra.pollWatch();
+    const want = `${n[0]} and ${n[1]} in the Snug; ${n[2]} in the Taproom; the Vestry empty`;
+    ok(strip.querySelector('.rooms-line').textContent === want, `one line under the table says who is where (${strip.querySelector('.rooms-line').textContent})`);
+    ok(strip.querySelectorAll('.room').length === 3 && strip.querySelector('.room[data-room="parlour"]').classList.contains('empty') && strip.querySelector('.room[data-room="parlour"] .room-count').textContent === 'empty', 'all three rooms show; an empty one says so');
+    ok(JSON.stringify(away()) === '[0,1,2]' && tags()[2] === 'the Taproom', 'a third seat in another room carries that room\'s name');
+    const {roomsLine} = await import('../src/ui/square.js');
+    ok(roomsLine(P.rooms.map(r => ({...r, seats: []})), n) === 'Everyone is at the Square; the rooms stand empty', 'with every room empty the line says everyone is at the Square');
+    const T2 = await import('../src/ui/tokens.js');
+    const disc = T2.roomDisc(P.rooms[0], [{name: n[0], portrait: '/assets/portraits/x.png'}, {name: n[1]}]);
+    ok(/<image class="rd-portrait"[^>]*clip-path="url\(#ct-room-2-0\)"/.test(disc) && /rd-initial[^>]*>B</.test(disc.replace(n[1][0], 'B')) && !/#[0-9a-f]{3,6}\b/i.test(disc.replace(/url\(#ct-room-\d-\d\)/g, '')),
+      'a room disc draws a portrait where there is one, the initial otherwise, and no colour of its own (the colours are page variables)');
+    const dbox = {}; T2.installDefs({body: {append: b => {dbox.b = b}}, getElementById: () => null, createElement: () => ({setAttribute() {}})});
+    ok(['ct-room-1-0', 'ct-room-2-1', 'ct-room-3-2', 'ct-room-4-3'].every(id => dbox.b.innerHTML.includes('id="' + id + '"')), 'the clip shapes for up to four occupants are on the page');
+    const css = readFileSync(join(ROOT, 'styles/page.css'), 'utf8');
+    ok(['--room-rim', '--room-face', '--room-tag'].every(v => css.includes(v + ':')), 'the rooms\' colours are page variables');
+    // the rooms close: the tags, the discs and the line go
+    rr.watch = {...rr.watch, places: {...P, open: false, rooms: P.rooms.map(r => ({...r, seats: [], free: r.size}))}}; await ra.pollWatch();
+    ok(away().length === 0 && tags().length === 0 && strip.hidden && !strip.querySelector('.room'), 'when the rooms close, the tags, the discs and the line go');
+    rr.watch = {...rr.watch, places: P}; await ra.pollWatch();
+    rr.watch = {...rr.watch, places: undefined}; await ra.pollWatch();
+    ok(away().length === 0 && strip.hidden, 'a watch body without places shows no rooms');
+  }
   const {talkLine} = await import('../src/ui/talk.js');
   const {ROOMS} = await import('../src/data/rooms.js');
   ok(talkLine({type: 'say', seat: 0, room: ROOMS[0].id, text: 'x'}, n).html.includes(`in ${ROOMS[0].name}:`), `without places in the body, the room is named from the rooms as data (${ROOMS[0].name})`);
