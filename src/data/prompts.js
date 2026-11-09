@@ -9,7 +9,7 @@ export const PLAYER_TOOL_LINES = [
   'read_talk (what was said since you last read), my_whispers, my_notes, what_is_asked (the decision waiting on you), who_voted, ' +
   'note (a private note to yourself).',
   'Act (each one is your turn): speak (one line to the table), whisper (to one player), nominate, vote (yes or no), ' +
-  'night_choice (when your role is asked to pick), pass.',
+  'night_choice (when your role is asked to pick), slay (the Slayer\'s shot, at any moment by day, or hold it), pass.',
 ].join('\n');
 // One manner per seat, keyed to the seat names in docs/ROLES.md: how the character talks, never which side it is on. Gives
 // seven models running the same prompt something to differ on (game 1: six seats said "dodged the role question").
