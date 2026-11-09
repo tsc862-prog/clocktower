@@ -36,3 +36,12 @@
 - Now line via nowLine(): owed -> narrate first then the usual tools; mine -> decide, what_is_asked, fallback; dayDone -> end_day; due acts get "Act first: X is due", otherwise "Nothing is due from you ... (a turn that only reads is wasted)". The Now line survives the cap (body cut first). Longest real header 1132/1200.
 - storytellerDue(game, api) -> {tool, why}|null exported for the pace. Backend's ST wake is `now` only on a pending decision (rules-keeper's file); asked in #74 to make ST mustAct = storytellerDue and soft ST wakes only when due.
 - Prompt: dawn exactly two sentences (what happened, one touch in own words); execution one sentence at once; end one sentence; a death gets words about the person; follow Now's first tool.
+
+## Game 4 fixes (#90, #91, PR #96)
+- Owed narration kinds: dawn, execution (how 'vote' | 'virgin'), shot (Slayer, died or not), end. `dayHappenings(game, evs, after)` builds facts from raw ST events (execution.how, virgin.nominator, vote.block/tally, death.cause 'slayer'); owed = everything after the last narration or dawn. Header first lines: EXECUTION / SHOT / THE END NOT YET NARRATED.
+- `narrationError(game, text, api)` also refuses: a vote for a virgin execution (unless negated: no/without/before any vote), a death for a missed shot, the wrong side winning at the end.
+- End owed carries `unheard` (day facts + the final night's deaths, which never get a dawn) and `roles` ("Name the Role"); prompt: end in two or three sentences, demon and minions named.
+- Mayor bounce: no truth (truthWords null); `choiceWords` -> header line and `yourCall` in what_is_asked; reasonFactsError refuses "the truth"/"true outcome"/"rules say".
+- `fallback` with nothing pending but a narration owed narrates `scriptedNarration` (plain facts, end with roles).
+- `look` returns `due` + `dueTool`. Runner side (infra files, edited with permission): pacing `storytellerDueNow(post)`; claude-runner skips soft/heartbeat wakes when nothing due (no model call) and plays one last turn after `gone` when the end is owed; scripted runner does the same via fallback. backend.js left alone (after the win every pace still answers gone).
+- Manager's expected shape for #91 was a cheap pre-check before the model call consulting storytellerDue: done that way.

@@ -17,7 +17,7 @@
 import {mkdirSync} from 'node:fs';
 import {join, dirname, resolve, relative, isAbsolute} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
-import {makePacer, paceSettings, failTracker, turnCap, capText, wakeNote, briefText, takeClaudeSlot, grabSpend, paceText} from './pacing.mjs';
+import {makePacer, paceSettings, failTracker, turnCap, capText, wakeNote, briefText, takeClaudeSlot, grabSpend, paceText, storytellerDueNow} from './pacing.mjs';
 import {warmUp, claudeWarmAdapter} from './warmup.mjs';
 import {loadSession, saveSession, setAside, runnerSettings, loadStorytellerSession, saveStorytellerSession, setAsideStoryteller, LOGS} from './agent-sessions.mjs';
 import {ctxOf, ctxText, rollDue, rollPoint, rollSession, withCompactWindow, reportThreshold} from './session-roll.mjs';
@@ -104,7 +104,7 @@ export async function runClaudeSeat({kind, opt, flag, env, base, runner, say, ct
   const mcpUrl = `${base}/mcp?${st ? 'role=storyteller' : 'player=' + seatId.player}&runner=${encodeURIComponent(runner)}`;
   const headers = {...(st ? {'X-Clocktower-Role': 'storyteller'} : {'X-Clocktower-Player': String(seatId.player)}), 'X-Clocktower-Runner': runner};
   const to = toolOptions(false, mcpUrl);
-  let spent = 0, ended = null, turns = 0, netSaid = false;
+  let spent = 0, ended = null, turns = 0, netSaid = false, lastTurn = false;
   try {
     await warmUp({base, seat: seatId, runner, model, ...(sdk.warm ? {call: sdk.warm} : {adapter: await claudeWarmAdapter(env.ANTHROPIC_API_KEY)}), log: s => say(`${tag} ${s}`)});
     const pacer = makePacer({base, ...(st ? {role: 'storyteller'} : {player: seatId.player}), runner, heartbeat: pace.heartbeat, minGap: pace.minGap, pollMs: Number(env.AGENT_POLL_MS) || undefined, log: say, stopped: () => stopReq});
@@ -112,9 +112,18 @@ export async function runClaudeSeat({kind, opt, flag, env, base, runner, say, ct
     const r0 = await pacer.ready(); if (r0.stopped) ended = stopWhy || 'stopped'; else if (r0.dead || r0.gone) ended = r0.dead ? 'out of the game' : 'the game is over';
     while (!ended && turns < cap) {
       if (spent >= budget) {ended = 'budget reached'; break}
-      const w = await pacer.next();
+      let w = await pacer.next();
       if (w.stopped || stopReq) {ended = stopWhy || 'stopped'; break}
-      if (w.dead || w.gone) {ended = w.dead ? 'out of the game' : 'the game is over'; break}
+      if (w.dead || w.gone) {
+        // #90: the game is over, but the table is owed its end: the Storyteller plays one last turn to narrate it, then stops
+        const due = st && !w.dead && !lastTurn ? await storytellerDueNow(post) : null;
+        if (!due || due.tool !== 'narrate') {ended = w.dead ? 'out of the game' : 'the game is over'; break}
+        lastTurn = true; w = {wake: 'now', why: `narrate: ${due.why}`};
+      } else if (st && w.wake !== 'now') {
+        // #91: a soft or heartbeat wake with nothing due from the Storyteller ends here, before any model call
+        const due = await storytellerDueNow(post);
+        if (due === null) {pacer.turnDone(); say(`[pace] ${w.wake} wake with nothing due from the Storyteller: no model call`); continue}
+      }
       if (w.gameId && sess.gameId && w.gameId !== sess.gameId) {rollSession(sess, aside); sess.gameId = w.gameId; save(); say(`[session] new game ${w.gameId}: fresh session`)} // #66: never carried into another game
       const rd = rollDue(sess, rollAt, {busy: w.wake === 'now'});
       if (rd) {rollSession(sess, aside); save(); say('  ' + rd.line)}
@@ -165,6 +174,7 @@ export async function runClaudeSeat({kind, opt, flag, env, base, runner, say, ct
       save();
       if (spent >= budget) {ended = 'budget reached'; break}
       if (fails.ok(!err && tools > 0) && !ended) ended = fails.why();
+      if (lastTurn && !ended) ended = 'the game is over';
     }
     if (!ended) ended = stopReq ? stopWhy || 'stopped' : 'turn cap reached';
     say(`${tag} stopped after ${turns} turns (${ended}); this run ${money(spent)}, session ${money(sess.costUsd)}, ${sess.rolls || 0} rolls, ${sess.compacts || 0} compactions`);
