@@ -8,7 +8,7 @@
 // role, a Storyteller reason or a whisper between two others never reaches a seat (npm run playertoolcheck proves it).
 // Every refusal comes back as {ok: false, error} with what is open to the seat now. With no game behind the relay (the
 // stub backend: no ctx.game or ctx.api) look answers "no game yet" and the rest say so.
-import {seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf, shotOf,
+import {clashesOf, seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf, shotOf,
   placeText, placeNameOf, andList, claimsOf, roleChangeOf, staleNote, noteText} from '../seats/player.js';
 
 const READ_CAP = 40; // read_talk and my_whispers show at most this many entries
@@ -120,6 +120,7 @@ function claims(args, ctx) {
   return {ok: true, claims: ledger.map(p => ({player: p.player, roles: p.claims.map(c => ({role: c.role, day: c.day, said: c.said,
       ...(c.times > 1 ? {times: c.times} : {}), ...(c.in ? {in: c.in} : {}), ...(c.whispered ? {whispered: `to ${c.whispered}`} : {})}))})),
     ...(who ? {} : {noClaim: none}),
+    ...(who || !clashesOf(ledger).length ? {} : {sameRole: clashesOf(ledger).map(c => `${c.role}: claimed by ${listNames(c.players)}. Each character is in play at most once, so at most one of them is the ${c.role}.`)}),
     note: two.length ? `Named more than one role: ${listNames(two)}; the lines are above.`
       : 'Nobody has named two roles for themself. A player who claimed one role has not changed their claim.'};
 }

@@ -344,12 +344,27 @@ export function claimsOf(view, me, events) {
   return [...by.entries()].sort((x, y) => order.indexOf(x[0]) - order.indexOf(y[0])).map(([player, claims]) => ({player, claims}));
 }
 // "Claims so far: Odette Ravenkeeper (day 1), Bram Librarian (day 1) then Washerwoman (day 2). claims shows the lines."
-// Only what was said aloud (the table or a room): a whispered claim stays in the claims tool.
+// Only what was said aloud (the table or a room): a whispered claim stays in the claims tool. A role two or more players
+// named for themselves (#81) is marked: each character is in play at most once, so at most one of them holds it.
 export function claimsText(ledger) {
   const pub = (ledger || []).map(p => ({player: p.player, claims: p.claims.filter(c => !c.whispered)})).filter(p => p.claims.length);
   if (!pub.length) return null;
   const one = c => `${c.role}${c.day != null ? ` (day ${c.day})` : ''}`;
-  return `Claims so far: ${pub.map(p => `${p.player} ${p.claims.map(one).join(' then ')}`).join(', ')}. claims shows the lines.`;
+  const clash = clashesOf(pub).map(c => `${c.role}: ${c.players.length > 1 ? c.players.slice(0, -1).join(', ') + ' and ' + c.players.at(-1) : c.players[0]} (at most one is)`);
+  return `Claims so far: ${pub.map(p => `${p.player} ${p.claims.map(one).join(' then ')}`).join(', ')}. ` +
+    (clash.length ? `Same role twice: ${clash.join('; ')}. ` : '') + 'claims shows the lines.';
+}
+// The roles named by two or more players, in the order first claimed: [{role, players: [names in seat order]}]. Every
+// character is in play at most once, so two claims to one role are a contradiction, never two holders (#81).
+export function clashesOf(ledger) {
+  const by = new Map();
+  for (const p of ledger || []) for (const c of p.claims) {
+    if (!by.has(c.role)) by.set(c.role, {first: c.id ?? 0, players: []});
+    const r = by.get(c.role);
+    r.first = Math.min(r.first, c.id ?? 0);
+    if (!r.players.includes(p.player)) r.players.push(p.player);
+  }
+  return [...by.entries()].filter(([, r]) => r.players.length > 1).sort((x, y) => x[1].first - y[1].first).map(([role, r]) => ({role, players: r.players}));
 }
 
 // ---- a role that changed (#71): the Scarlet Woman who became the Imp ----
