@@ -4,7 +4,10 @@
 // 1. Plant. The real relay (scripts/relay.mjs --game --seed 5 --scripted, in this process) plays seed 5 with eight fake runners
 //    (seven players and the Storyteller, each claiming its own seat) up to the first day with a dead seat. On the way the
 //    Storyteller answers its first decision with a unique reason. That day: seat A (a living seat with night information) writes a
-//    note and whispers a unique word to B, the Storyteller narrates a unique line, C says a unique line. A's own secrets are its
+//    note and whispers a unique word to B (its living neighbour: whispers are between neighbours, #28), the Storyteller narrates a
+//    unique line, C says a unique line. A room conversation (#28): P takes Q to a room and says a unique line there; then the dead
+//    seat D joins the room late and speaks. The table sees the moves, never the words; D never hears the line said before it came
+//    in; the Storyteller does not hear room talk either. A's own secrets are its
 //    role's ability text and what it was told at night (the check knows them from the grimoire), and its role's name for every seat
 //    that was never told it.
 // 2. Read. Every other seat, as its own claimed runner: every player tool with sensible and hostile arguments (other seats' names
@@ -133,7 +136,7 @@ async function channels() {
     plantDay = g.day;
     const told = i => api.view(g, i).told.filter(t => t.what !== 'role');
     const living = g.seats.filter(s => s.alive).map(s => s.index), D = g.seats.find(s => !s.alive).index;
-    const A = living.find(i => told(i).length), B = living.find(i => i !== A); C = living.find(i => i !== A && i !== B);
+    const A = living.find(i => told(i).length), B = api.where(g, A).canWhisper[0]; C = living.find(i => i !== A && i !== B);
     const nm = i => g.seats[i].name, vA = api.view(g, A);
     console.log(`  day ${g.day}: A ${nm(A)} (${vA.role.name}), B ${nm(B)}, C ${nm(C)}, dead ${nm(D)}`);
     S.ability = vA.role.ability;
@@ -142,13 +145,21 @@ async function channels() {
     ok((await T.call(A, 'note', {text: `My private note: ${plant('note', 'Notemark')}.`})).ok, `${nm(A)} writes a note`);
     ok((await T.call(A, 'whisper', {to: nm(B), text: `Just between us: ${plant('whisper', 'Whispermark')}.`})).ok, `${nm(A)} whispers to ${nm(B)}`);
     ok((await T.stCall('narrate', {text: `The town clerk notes the morning: ${plant('narr', 'Narrmark')}.`})).ok, 'the Storyteller narrates');
+    // the room plant (the player tools for rooms come with the player-builder's PR; the moves go through the seats' own api)
+    const [P, Q] = living.filter(i => i !== A && i !== C && !g.clock.spoke.includes(i));
+    ok(P != null && Q != null, `P ${nm(P)} and Q ${nm(Q)} are free to take a room`);
+    api.invite(g, P, Q, 'parlour');
+    api.say(g, P, `Only for this room: ${plant('room', 'Roommark')}.`);
+    api.go(g, D, 'parlour');
+    api.say(g, D, 'I came in late, and I am dead, but I am listening now.');
+    ok(g.log.filter(e => e.type === 'move' && e.room === 'parlour').length === 2, `${nm(P)} takes ${nm(Q)} to the parlour; ${nm(D)} (dead) joins late`);
     await T.drive(() => !!Cline && game().log.some(e => e.type === 'say' && e.text === Cline));
     ok(!!Cline, `${nm(C)} says a line at the table`);
 
     // who may carry what: A all of its own; B the whisper; the Storyteller the ruling, A's role, ability and night information
     const roleNameKnown = i => i === A || api.view(g, i).told.some(t => t.text.includes(vA.role.name)) || api.view(g, i).role.name === vA.role.name
       || api.events(g, i, -1).some(e => ['slayer-shot', 'win', 'virgin'].includes(e.type) && e.text.includes(vA.role.name));
-    const allowed = (seat, k) => seat === A ? true : seat === 'st' ? ['ruling', 'ability', 'roleName', 'narr', 'say'].includes(k) || /^told/.test(k)
+    const allowed = (seat, k) => k === 'room' ? seat === P || seat === Q : seat === A ? true : seat === 'st' ? ['ruling', 'ability', 'roleName', 'narr', 'say'].includes(k) || /^told/.test(k)
       : k === 'whisper' ? seat === B : k === 'roleName' ? roleNameKnown(seat) : k === 'narr' || k === 'say';
     S.roleName = vA.role.name;
     const leaksIn = (seat, text) => Object.entries(S).filter(([k, s]) => !allowed(seat, k) && (k === 'roleName' ? new RegExp(`\\b${s}\\b`).test(text) : text.includes(s))).map(([k]) => k);
@@ -161,7 +172,8 @@ async function channels() {
         look: [{}, {player: A + 1}, {seat: A}], my_role: [{}, {player: A + 1}, {name: nm(A)}], read_talk: [{}, {since: 0}, {since: -5}, {since: 'x'}, {since: 1e9}, {since: 0, player: A + 1}],
         my_whispers: [{}, {to: nm(A)}, {player: A + 1}], my_notes: [{}, {seat: A}, {player: A + 1}, {name: nm(A)}], what_is_asked: [{}, {player: A + 1}], who_voted: [{}],
         note: [{text: ''}], speak: [{text: ''}], whisper: [{to: nm(i), text: 'x'}, {to: 'Storyteller', text: 'x'}, {to: String(A), text: 'x'}, ...other.slice(0, 2).map(o => ({to: o, text: ''}))],
-        nominate: [{target: nm(A)}, {target: 'Storyteller'}, {target: String(A)}], vote: [{yes: 'yes'}, {yes: 'maybe'}], night_choice: [{pick: [nm(A)]}, {pick: other}],
+        nominate: [{target: nm(A)}, {target: 'Storyteller'}, {target: String(A)}], vote: [{yes: 'yes'}, {yes: 'maybe'}], night_choice: [{pick: [nm(A), 'Storyteller']}, {pick: other}], // never one name: by day one name fires a Slayer's shot (#37)
+        slay: [{}, {target: 'Storyteller'}, {target: String(A)}], // hostile but never a real shot: the read must not change the game
       }};
     ok(PLAYER_TOOLS.every(t => t.name in variants(0) || t.name === 'pass'), 'every player tool is read with hostile arguments (pass is played, not probed)');
     const heard = {}, tRead = Date.now();
@@ -186,6 +198,9 @@ async function channels() {
     const talkOf = async i => J(await T.call(i, 'read_talk', {since: 0}));
     for (let i = 0; i < g.seats.length; i++) {const t = await talkOf(i); ok(t.includes(S.narr) && t.includes(S.say), `${nm(i)}${i === D ? ' (dead)' : ''} hears the narration and ${nm(C)}'s line`)}
     for (const i of [A, B]) ok(J(await T.call(i, 'my_whispers')).includes(S.whisper) && (await talkOf(i)).includes(S.whisper), `${nm(i)} has the whisper (my_whispers, read_talk)`);
+    for (const i of [P, Q]) ok((await talkOf(i)).includes(S.room), `${nm(i)}, in the room, hears the room line (read_talk)`);
+    ok(/I came in late/.test(await talkOf(D)) && !(await talkOf(D)).includes(S.room), `${nm(D)}, the late joiner, hears the room from its arrival on, not before`);
+    ok(g.seats.every(s => api.events(g, s.index).filter(e => e.type === 'move' && e.room === 'parlour').length === 2), 'every seat sees who went to the parlour (presence is public)');
     // positive controls: A's secrets are in A's own channels, so a clean read above means something
     ok(heard[A].includes(S.ability) && Object.keys(S).filter(k => /^told/.test(k)).every(k => heard[A].includes(S[k])), `${nm(A)}'s own channels carry its ability and its night information`);
     ok(J(await T.call(A, 'my_notes')).includes(S.note), `${nm(A)}'s note is in its own my_notes`);

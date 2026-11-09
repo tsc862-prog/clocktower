@@ -6,6 +6,10 @@
 //     reason, and no view, pending or event ever carrying a token, a reason or another seat's role.
 //  2. forSeat: a player's api acts and reads only as itself and has no Storyteller function.
 //  3. A plain (JSON) copy restores to the same game.
+//  3b. Rooms and neighbour whispers (#28): presence public and words private, a late joiner, capacity, invite, leave, whispers
+//     only between the nearest living neighbours at the Square (the dead skipped), none in a room, a room line as the seat's
+//     turn, the rooms closing when nominations open or the day ends, a dead seat in a room, the watch view's places and room
+//     lines, and the seeded sim using rooms. APICHECK_VERBOSE=1 prints every check.
 //  4. Scripted games played to their end through the api alone (players: say, pass, nominate, vote, answer; the
 //     Storyteller: answer with reasons) make the same engine decisions and the same winner as `npm run sim`, and the same
 //     seed gives the same transcript twice.
@@ -18,7 +22,7 @@ import {gameBackend} from '../src/game/backend.js';
 import {simulate} from './headless.mjs';
 
 let fails = 0, passes = 0;
-const ok = (cond, msg) => {if (cond) passes++; else {fails++; console.log(`  FAIL ${msg}`)}};
+const ok = (cond, msg) => {if (cond) passes++; else {fails++; console.log(`  FAIL ${msg}`)} if (process.env.APICHECK_VERBOSE) console.log(`  ${cond ? "ok  " : "FAIL"} ${msg}`)};
 const section = name => console.log(`- ${name}`);
 const ST = 'storyteller';
 const throws = (f, re) => {try {f(); return false} catch (e) {return e instanceof api.ApiError && (!re || re.test(e.message))}};
@@ -96,11 +100,11 @@ section('day 1: the talk and the clock');
   ok(g.clock.round === 2 && api.events(g, 3).some(e => e.type === 'phase' && e.what === 'round' && e.round === 2), 'the round ends when every living seat has spoken or passed, and the table hears it');
   ok(throws(() => api.say(g, 0, 'good morning, all'), new RegExp(api.REPEAT_MESSAGE.replace(/[.;]/g, '.'))), `a repeat of one of the last three lines is refused: "${msgOf(() => api.say(g, 0, 'Good morning, all.')).slice(0, 60)}"`);
   ok(throws(() => api.say(g, 0, 'Это моя реплика здесь'), /English/), 'a line not in English is refused');
-  api.whisper(g, 0, 5, 'Psst, Fitch: the secret word is marmalade.');
-  ok(api.events(g, 5).some(e => e.type === 'whisper' && /marmalade/.test(e.text)), 'the whisper reaches its listener');
+  api.whisper(g, 0, 6, 'Psst, Yusuf: the secret word is marmalade.');
+  ok(api.events(g, 6).some(e => e.type === 'whisper' && /marmalade/.test(e.text)), 'the whisper reaches its listener');
   ok(api.events(g, 0).some(e => e.type === 'whisper' && /marmalade/.test(e.text)), 'and its speaker');
   const third = api.events(g, 1);
-  ok(!JSON.stringify(third).includes('marmalade') && third.some(e => e.type === 'whisper-seen' && e.from === 0 && e.to === 5), 'a third seat sees only whisper-seen');
+  ok(!JSON.stringify(third).includes('marmalade') && third.some(e => e.type === 'whisper-seen' && e.from === 0 && e.to === 6), 'a third seat sees only whisper-seen');
   ok(!JSON.stringify(api.events(g, ST)).includes('marmalade'), 'the Storyteller does not hear the whisper either');
   ok(throws(() => api.whisper(g, 0, 0, 'me'), /yourself/) && throws(() => api.whisper(g, 0, 12, 'hi'), /seat number/), 'a whisper to oneself or to no seat is refused');
   talkRound(g, 'second'); talkRound(g, 'third');
@@ -237,6 +241,112 @@ section('game 1 (#30): a pass from a night header never burns a day turn');
   ok(g7.log.filter(e => e.type === 'say' && e.day === 1 && [0, 2].includes(e.seat)).length === 2, 'Odette and Ines each have a real choice in round 1, and speak');
   ok(throws(() => api.pass(g7, 0), /had your turn/) && g7.clock.round === 1 && g7.clock.spoke.length === 2, 'a refused pass after a line moves nothing either');
   ok(!api.canAct(g7, 0) && api.nextTurnText(g7, 0) === 'until round 2' && api.canAct(g7, 1), 'a seat that has had its turn cannot act until round 2; one that has not, can');
+}
+
+section('rooms and neighbour whispers (#28)');
+{
+  // Odette washerwoman 0, Bram soldier 1, Ines imp 2, Corwin poisoner 3, Thea butler 4, Fitch empath 5, Yusuf chef 6
+  const g = newGame({seed: 1, roles: ROLES});
+  settle(g, {poisoner: () => 6, butler: () => 0}, gm => gm.phase === 'night' && gm.pending?.seat === ST);
+  ok(throws(() => api.go(g, 0, 'nook'), /only in the day/) && throws(() => api.leave(g, 0), /only in the day/) && throws(() => api.invite(g, 0, 1, 'nook'), /only in the day/), 'no rooms at night');
+  settle(g, {poisoner: () => 6, butler: () => 0});
+  const w0 = api.where(g, 0);
+  ok(w0.place === null && w0.square.length === 7 && w0.open && JSON.stringify(w0.rooms.map(r => [r.id, r.size, r.free])) === JSON.stringify([['nook', 2, 2], ['parlour', 3, 3], ['backroom', 4, 4]]),
+    'where: everyone at the Square, three open rooms for 2, 3 and 4');
+  ok(JSON.stringify(w0.neighbours) === JSON.stringify([6, 1]) && JSON.stringify(w0.canWhisper) === JSON.stringify([6, 1]), "where: Odette's neighbours are Yusuf and Bram");
+  ok(throws(() => api.go(g, 0, 'cellar'), /no room "cellar".*nook/), 'an unknown room is refused, naming the rooms');
+  ok(throws(() => api.leave(g, 0), /at the Square already/), 'leave from the Square is refused');
+  const before = g.log.length;
+  const r1 = api.go(g, 0, 'the Parlour');
+  const mv = g.log.slice(before).filter(e => e.type === 'move');
+  ok(r1.place === 'parlour' && mv.length === 1 && mv[0].audience === 'all', 'go: Odette goes to the parlour (a room named loosely), a public move');
+  ok(g.seats.every(s => api.events(g, s.index).some(e => e.type === 'move' && e.room === 'parlour' && e.text === 'Odette went to the parlour.')) && api.events(g, ST).some(e => e.type === 'move'),
+    'presence is public: every seat and the Storyteller see "Odette went to the parlour."');
+  ok(api.view(g, 4).seats[0].room === 'parlour' && api.view(g, 0).place.room === 'parlour' && api.view(g, 0).place.name === 'the parlour', 'view: who is where, and my own place');
+  ok(!g.clock.spoke.includes(0), 'a move is not a turn');
+  api.invite(g, 0, 1);
+  ok(g.places[1] === 'parlour' && g.log.at(-1).text === 'Odette called Bram into the parlour.' && JSON.stringify(api.view(g, 0).place.with) === JSON.stringify([1]), 'invite (room omitted: my own room): Bram joins Odette, in public');
+  api.say(g, 0, 'Just the two of us: the word is quince.');
+  const line = g.log.at(-1);
+  ok(line.room === 'parlour' && JSON.stringify(line.audience) === JSON.stringify([0, 1]), 'a line in a room has the room and its occupants as the audience');
+  ok(api.events(g, 1).some(e => e.type === 'say' && e.room === 'parlour' && /quince/.test(e.text)), 'Bram, in the room, hears it, with its room');
+  ok([2, 3, 4, 5, 6].every(i => !JSON.stringify(api.events(g, i)).includes('quince')) && !JSON.stringify(api.events(g, ST)).includes('quince'), 'words are private: no seat outside the room hears them, nor the Storyteller');
+  ok(g.clock.spoke.includes(0), 'a line in a room is the seat\'s turn of the round');
+  ok(throws(() => api.say(g, 0, 'And another thing.'), /had your turn/), 'so a second line in the same round is refused, in the room as at the Square');
+  ok(throws(() => api.whisper(g, 0, 1, 'psst'), /no whispers in a room/), 'no whispers in a room');
+  api.go(g, 2, 'parlour');
+  ok(!JSON.stringify(api.events(g, 2)).includes('quince'), 'a late joiner hears nothing said before it came in');
+  api.say(g, 1, 'Ines, welcome. I am listening.');
+  ok(api.events(g, 2).some(e => e.room === 'parlour' && /welcome/.test(e.text)) && JSON.stringify(g.log.at(-1).audience) === JSON.stringify([0, 1, 2]), 'and hears what is said once it is in');
+  ok(throws(() => api.go(g, 3, 'parlour'), /holds 3 and has 3.*full/), 'capacity: the parlour holds three');
+  api.invite(g, 3, 4, 'nook');
+  ok(g.places[3] === 'nook' && g.places[4] === 'nook' && g.log.at(-1).text === 'Corwin and Thea went to the nook.', 'invite from the Square: both go, one public line');
+  ok(throws(() => api.go(g, 5, 'nook'), /full/) && throws(() => api.invite(g, 5, 6, 'nook'), /no room for the two of you/), 'capacity: the nook holds two');
+  ok(throws(() => api.invite(g, 5, 0, 'backroom'), /only someone at the Square/), 'a seat in another room cannot be invited away');
+  ok(throws(() => api.invite(g, 5, 5, 'backroom'), /yourself/) && throws(() => api.invite(g, 5, 6), /Name a room/), 'invite needs another seat and, from the Square, a room');
+  // whispers at the Square: the nearest living neighbour on each side, both at the Square
+  ok(throws(() => api.whisper(g, 5, 4, 'hi'), /Thea is in the nook/), 'a neighbour in a room cannot be whispered to');
+  ok(throws(() => api.whisper(g, 5, 1, 'hi'), /only to your nearest living neighbours: Thea and Yusuf/), 'a whisper to a non-neighbour is refused, naming the two who are');
+  api.whisper(g, 5, 6, 'Yusuf, a word.');
+  ok(api.events(g, 6).some(e => e.type === 'whisper') && api.events(g, 3).some(e => e.type === 'whisper-seen' && e.from === 5 && e.to === 6), 'a neighbour whisper reaches its listener; the table (even in a room) sees it happen');
+  api.leave(g, 2);
+  ok(g.places[2] === null && g.log.at(-1).text === 'Ines came back to the Square from the parlour.' && g.log.at(-1).audience === 'all', 'leave: back to the Square, in public');
+  api.go(g, 2, 'backroom'); api.go(g, 2, 'parlour');
+  ok(g.log.at(-1).text === 'Ines left the back room for the parlour.', 'go from one room to another names both');
+  const plain = JSON.parse(JSON.stringify(g)), back = api.restore(plain);
+  ok(JSON.stringify(back.places) === JSON.stringify(g.places) && JSON.stringify(back.log) === JSON.stringify(g.log), 'a plain copy restores the same places and the same log');
+  // the round ends when every living seat has had a line or a pass anywhere
+  for (const s of g.seats) if (!g.clock.spoke.includes(s.index)) api.say(g, s.index, `${s.name} speaks where they are.`);
+  ok(g.clock.round === 2, 'round 1 ends with lines in rooms and at the Square alike');
+  const pAway = g.seats.filter(s => g.places[s.index] != null).map(s => s.index);
+  talkRound(g, 'rooms 2'); talkRound(g, 'rooms 3');
+  const close = g.log.filter(e => e.type === 'move' && e.closed).at(-1);
+  ok(g.clock.nominationsOpen && close && JSON.stringify(close.seats) === JSON.stringify(pAway) && close.audience === 'all' && g.places.every(x => x === null),
+    `the rooms close when nominations open and everyone is called back, in public: "${close && close.text}"`);
+  ok(!api.where(g, 0).open && throws(() => api.go(g, 0, 'nook'), /rooms are closed/) && throws(() => api.invite(g, 0, 1, 'nook'), /rooms are closed/), 'no rooms once nominations are open');
+  for (let i = 0; i < 7; i++) {const bad = clean(g, i); ok(!bad.length, `${g.seats[i].name} sees no token, reason or other role with rooms (${bad.join(', ') || 'clean'})`)}
+  // the player api and the Storyteller's
+  const pa = api.forSeat(0), sa = api.forSeat(ST);
+  ok(pa.where(g, 0).place === null && throws(() => pa.go(g, 1, 'nook'), /only as yourself/) && sa.where(g, ST).square.length === 7 && throws(() => sa.go(g, 0, 'nook'), /does not go/),
+    "forSeat: a player moves only itself; the Storyteller reads where but moves nobody");
+}
+{
+  // a day with a dead seat: whispers skip the dead, the dead use rooms, endDay closes the rooms, a new day starts at the Square
+  const g = newGame({seed: 1, roles: ROLES});
+  const ch = {poisoner: () => 6, butler: () => 0, imp: () => 5};
+  settle(g, ch);
+  api.endDay(g, 'checking the rooms on day 2');
+  settle(g, ch);
+  ok(g.day === 2 && !g.seats[5].alive, `day 2 with Fitch dead (${g.seats.filter(s => !s.alive).map(s => s.name).join(', ')})`);
+  ok(JSON.stringify(api.where(g, 4).neighbours) === JSON.stringify([3, 6]) && JSON.stringify(api.where(g, 6).neighbours) === JSON.stringify([4, 0]), "the dead are skipped: Thea's neighbours are Corwin and Yusuf");
+  ok(throws(() => api.whisper(g, 4, 5, 'hi'), /neighbours: Corwin and Yusuf/), 'no whisper to a dead seat');
+  api.whisper(g, 4, 6, 'Across the empty chair.');
+  ok(api.events(g, 6).some(e => e.type === 'whisper' && /empty chair/.test(e.text)), 'a whisper across a dead seat reaches the next living neighbour');
+  api.whisper(g, 5, 4, 'From the dead.');
+  ok(api.events(g, 4).some(e => e.type === 'whisper' && /From the dead/.test(e.text)), 'a dead seat whispers to its nearest living neighbours');
+  api.invite(g, 5, 6, 'nook');
+  api.say(g, 5, 'Even dead, I have a view.');
+  ok(g.places[5] === 'nook' && api.events(g, 6).some(e => e.room === 'nook' && /Even dead/.test(e.text)) && !JSON.stringify(api.events(g, 0)).includes('Even dead'), 'a dead seat goes to a room, invites, and talks there');
+  ok(g.places.filter(x => x === 'nook').length === 2 && api.view(g, 0).seats[5].room === 'nook', 'the table sees the dead seat in the nook');
+  api.endDay(g, 'ending day 2 with the nook full');
+  ok(g.log.some(e => e.type === 'move' && e.closed && e.day === 2) && g.places.every(x => x === null), 'the Storyteller ending the day closes the rooms too');
+}
+{
+  // the watcher's view carries places and room lines with their room
+  const be = gameBackend({seed: 1});
+  const g = be.game;
+  settle(g, {});
+  const pair = g.seats.slice(0, 2).map(s => s.index);
+  api.invite(g, pair[0], pair[1], 'nook');
+  api.say(g, pair[0], 'A line for the nook and the watcher only.');
+  const w = be.watch(-1);
+  ok(w.places && w.places.open && JSON.stringify(w.places.rooms.find(r => r.id === 'nook').seats) === JSON.stringify(pair) && w.places.square.length === 5, 'the watch view carries who is where');
+  ok(w.events.some(e => e.type === 'say' && e.room === 'nook' && /watcher only/.test(e.text)) && w.events.some(e => e.type === 'move' && e.room === 'nook'), 'and the room line with its room, and the move');
+  be.close();
+}
+{
+  const sim = simulate(1).state;
+  ok(sim.log.some(e => e.type === 'move' && e.room) && sim.log.some(e => e.type === 'say' && e.room) && sim.log.some(e => e.type === 'move' && e.closed), 'the seeded sim goes to rooms, talks there and sees them close');
 }
 
 section('scripted games through the api alone match the sim');

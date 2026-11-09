@@ -1,13 +1,13 @@
 // The tools a player agent uses to play one seat. Shared by the relay's MCP server (scripts/relay-mcp.mjs), the local
 // tool loop (scripts/local-agent.mjs) and the docs. Each tool:
 //   {name, desc, act, args: {argName: {type: 'string'|'integer'|'number'|'array' (of strings), desc, optional?, enum?}}, handler}
-// act: true for a tool that spends the turn (speak, whisper, nominate, vote, a night choice, pass), false for a read.
+// act: true for a tool that spends the turn (speak, whisper, nominate, vote, a night choice, slay, pass), false for a read.
 // handler(args, ctx): ctx = {game, seat: {index, name}, api, log} (the slice 3 contract). A handler reads and acts only
 // through the api's seat-scoped functions and copies out only the fields a player may see, so a token, another seat's
 // role, a Storyteller reason or a whisper between two others never reaches a seat (npm run playertoolcheck proves it).
 // Every refusal comes back as {ok: false, error} with what is open to the seat now. With no game behind the relay (the
 // stub backend: no ctx.game or ctx.api) look answers "no game yet" and the rest say so.
-import {seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf} from '../seats/player.js';
+import {seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf, shotOf} from '../seats/player.js';
 
 const READ_CAP = 40; // read_talk and my_whispers show at most this many entries
 
@@ -21,8 +21,8 @@ const msg = e => String((e && e.message) || e || 'That did not work.');
 function openNow(ctx) {
   try {
     const v = viewOf(ctx), asked = askedOf(ctx.game, v, me(ctx), pendingOf(ctx));
-    const waiting = waitingOf(ctx.game, ctx.api, v, me(ctx), asked);
-    return `${asked && !asked.done ? asked.text + ' ' : waiting ? waiting.text + ' ' : ''}Open to you now: ${usefulTools(v, asked, null, waiting).join(', ')}.`;
+    const waiting = waitingOf(ctx.game, ctx.api, v, me(ctx), asked), shot = shotOf(ctx.game, ctx.api, v, me(ctx));
+    return `${asked && !asked.done ? asked.text + ' ' : waiting ? waiting.text + ' ' : ''}Open to you now: ${usefulTools(v, asked, null, waiting, shot).join(', ')}.`;
   } catch {return 'Use look or what_is_asked to see what is open.'}
 }
 function refuse(ctx, error) {
@@ -96,14 +96,19 @@ function myNotes(args, ctx) {
   const list = ctx.api.notes(ctx.game, me(ctx)) || [];
   return {ok: true, notes: list.map(n => (typeof n === 'string' ? n : String(n?.text ?? ''))), ...(list.length ? {} : {note: 'No notes yet.'})};
 }
+// A standing day ability (the Slayer's shot) is not a decision waiting: it shows as asked "standing" when nothing else
+// waits, and as a "standing" field beside a decision that does (#37).
 function whatIsAsked(args, ctx) {
-  const v = viewOf(ctx), asked = askedOf(ctx.game, v, me(ctx), pendingOf(ctx));
+  const v = viewOf(ctx), asked = askedOf(ctx.game, v, me(ctx), pendingOf(ctx)), shot = shotOf(ctx.game, ctx.api, v, me(ctx));
+  const standing = shot ? {text: shot.text, options: [...shot.options, 'hold'], tool: 'slay'} : null;
   if (!asked) {
     const waiting = waitingOf(ctx.game, ctx.api, v, me(ctx), null);
+    if (standing) return {ok: true, asked: 'standing', text: `Nothing waits on you. ${shot.text}${waiting ? ' ' + waiting.text : ''}`,
+      options: standing.options, tool: 'slay', useful: usefulTools(v, null, null, waiting, shot)};
     return {ok: true, asked: null, text: `Nothing is asked of you right now. ${waiting ? waiting.text : clockLine(v, me(ctx))}`, useful: usefulTools(v, null, null, waiting)};
   }
   return {ok: true, asked: asked.kind, text: asked.text, ...(asked.options ? {options: asked.options} : {}),
-    ...(asked.count > 1 ? {count: asked.count} : {}), tool: asked.tool};
+    ...(asked.count > 1 ? {count: asked.count} : {}), tool: asked.tool, ...(standing ? {standing} : {})};
 }
 function whoVoted(args, ctx) {
   const v = viewOf(ctx), p = pendingOf(ctx);
@@ -181,7 +186,15 @@ function vote(args, ctx) {
 }
 function nightChoice(args, ctx) {
   const v = viewOf(ctx), p = pendingOf(ctx), asked = askedOf(ctx.game, v, me(ctx), p);
-  if (!asked || asked.kind !== 'choose') return refuse(ctx, 'Nothing is asking you to choose now.');
+  if (!asked || asked.kind !== 'choose') {
+    // a standing day ability (the Slayer's shot) answered through night_choice: the same as slay (#37)
+    if (shotOf(ctx.game, ctx.api, v, me(ctx))) {
+      const picks = toList(args.pick);
+      if (picks.length !== 1) return refuse(ctx, 'Your shot takes one name, or "nobody" to hold it; slay does the same.');
+      return slay({target: picks[0]}, ctx);
+    }
+    return refuse(ctx, 'Nothing is asking you to choose now.');
+  }
   const picks = toList(args.pick);
   if (picks.length !== asked.count) return refuse(ctx, `Pick exactly ${asked.count === 1 ? 'one' : asked.count} of: ${listNames(asked.options)}.`);
   const labels = asked.options.map(o => o.toLowerCase()), values = [], chose = [];
@@ -193,6 +206,31 @@ function nightChoice(args, ctx) {
   if (new Set(chose).size !== chose.length) return refuse(ctx, `Pick ${asked.count} different players.`);
   ctx.api.answer(ctx.game, me(ctx), asked.count === 1 ? values[0] : values);
   return {ok: true, chose};
+}
+// The Slayer's shot, a standing day ability (#37): fire it at a player, in public, or hold it. The api refuses with the
+// reason when there is no shot to fire (not the Slayer, spent, dead, a vote open, night). The answer is what the whole
+// table sees and nothing more: the shot, any death, a win. A shot whose outcome is not in yet reads the same as a miss
+// ("is still alive"), so the answer never hints that the Storyteller had something to decide about the target.
+const HOLD = /^(nobody|no one|none|hold|hold it|keep|keep it|null)$/i;
+function slay(args, ctx) {
+  const v = viewOf(ctx), i = me(ctx), raw = String(args.target ?? '').trim();
+  if (!raw) return refuse(ctx, 'slay needs a target: a player\'s name, or "hold" to keep the shot.');
+  const shot = shotOf(ctx.game, ctx.api, v, i);
+  let target = null, name = null;
+  if (!HOLD.test(raw)) {
+    const f = findSeat(v, raw);
+    if (f.error) return refuse(ctx, f.error);
+    target = f.seat.index; name = f.seat.name;
+    if (shot && !shot.options.includes(name)) return refuse(ctx, `You cannot shoot ${name}. You may shoot: ${listNames(shot.options)}.`);
+  }
+  const before = (ctx.api.events(ctx.game, i, -1) || []).reduce((m, e) => Math.max(m, Number.isFinite(e?.id) ? e.id : -1), -1);
+  const r = ctx.api.dayAction(ctx.game, i, target) || {};
+  if (target === null || r.kept) return {ok: true, held: true, note: 'You keep your shot; you may still use it today.'};
+  const after = viewOf(ctx);
+  const seen = cleanEvents(after, i, ctx.api.events(ctx.game, i, before)).filter(e => ['slayer-shot', 'death', 'execution', 'win'].includes(e.type));
+  const alive = !!(after.seats || []).find(s => s.index === target)?.alive;
+  return {ok: true, shot: name, public: seen.map(e => e.text).filter(Boolean),
+    result: alive ? `${name} is still alive; read_talk shows anything that follows.` : `${name} dies.`};
 }
 function pass(args, ctx) {
   ctx.api.pass(ctx.game, me(ctx));
@@ -221,8 +259,10 @@ export const PLAYER_TOOLS = [
     {target: {type: 'string', desc: 'The name of the player you nominate.'}}, nominate),
   T('vote', true, 'Your vote on the open nomination: "yes" to execute, "no" to spare. A dead player has one yes left for the whole game.',
     {yes: {type: 'string', desc: '"yes" or "no".'}}, vote),
-  T('night_choice', true, 'Answer the choice your role must make (see what_is_asked): a player\'s name, two names when it asks for two, or "nobody" when that is offered.',
+  T('night_choice', true, 'Answer the choice your role must make (see what_is_asked): a player\'s name, two when it asks for two, or "nobody" when offered. A standing day ability (the Slayer\'s shot) is answered with slay.',
     {pick: {type: 'array', desc: 'The name or names you choose, as the question asks.'}}, nightChoice),
+  T('slay', true, 'The Slayer\'s shot, by day, at any moment, once a game: shoot a player in front of everyone (the demon dies of it). "hold" keeps it for later.',
+    {target: {type: 'string', desc: 'The player you shoot, or "hold" to keep the shot.'}}, slay),
   T('pass', true, 'Do nothing this round: stay quiet now, or decline to nominate.', {}, pass),
 ];
 export const TOOL_NAMES = PLAYER_TOOLS.map(t => t.name);

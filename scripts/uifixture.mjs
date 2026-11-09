@@ -77,7 +77,7 @@ export function record(seed = FIXTURE_SEED, rounds = 2) {
     if (game.phase === 'day' && !game.clock.nominationsOpen) {
       const c = game.clock, next = alive().find(i => !c.spoke.includes(i));
       if (c.spoke.length === 0 && rng.chance(0.7)) {
-        const live = alive(), a = rng.pick(live), b = rng.pick(live.filter(x => x !== a));
+        const live = alive(), a = rng.pick(live), b = rng.pick(api.where(game, a).canWhisper); // whispers are between neighbours (#28)
         api.whisper(game, a, b, WHISPERS[whispered++ % WHISPERS.length]);
       }
       let spoke = false;

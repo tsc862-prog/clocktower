@@ -155,3 +155,39 @@ maps onto them as follows; a public release would swap the right column for the 
 The Storyteller narrates plainly and a little dry, like a town clerk reading the minutes of a bad week.
 It says what happened and no more, and it is never cute. Thistlewick's own names (the Square, the Tower,
 Lamp Row) are used without comment, as if everyone already knew them.
+
+### The voices
+
+Each seat and the Storyteller speaks with a fixed voice of the local speech engine (Kokoro-FastAPI), in
+`src/data/voices.js`; `voiceFor(name)` gives `{voice, speed}`, and an unknown name gets the default
+(`af_heart`). The first letter of an id is the accent (a American, b British), the second the sex (f, m).
+Seven voices a listener can tell apart, mixed on both counts; speed is held within 0.9 to 1.1.
+
+| Seat | Voice | Speed | Why |
+| --- | --- | --- | --- |
+| Odette | `bf_emma` | 0.95 | British, even and unhurried: reads the order out. |
+| Bram | `am_michael` | 1.1 | American, brisk and flat: few words, said fast. |
+| Ines | `af_bella` | 1.05 | American, bright and quick: the one with the question. |
+| Corwin | `bm_george` | 0.9 | British, slow and low: weighing it as he goes. |
+| Thea | `af_heart` | 1.0 | American, warm and open: the default voice. |
+| Fitch | `bm_lewis` | 1.0 | British, level: the flat aside. |
+| Yusuf | `am_fenrir` | 1.0 | American, deeper and guarded: not yet convinced. |
+| Storyteller | `bm_daniel` | 0.95 | British, plain and a little dry: the clerk reading the minutes. |
+
+## Portraits
+
+One portrait per seat and one for the Storyteller, made by an image generator from the briefs below
+(also in `src/data/portraits.js`). All eight share one style so they hang together; the owner may change
+the style line and every brief follows. Rule: nothing of the official game's art is referenced, named or
+imitated in a brief, and no official token, icon or frame appears. The characters are our own townsfolk.
+
+**Style line (all eight):** painted portrait, muted palette, soft lamplight, plain dark background, head and shoulders
+
+- **Odette.** A woman of about fifty, sturdy and upright, with a long patient face, grey-streaked brown hair pinned flat, and steady dark eyes. A plain wool dress with a clean white collar and ink on her fingers. She holds a small ledger open and keeps a pencil behind her ear. Composed, unhurried, a clerk who has already written it down.
+- **Bram.** A man of about forty-five, broad and thick-necked, with a square weathered face, a short grey-flecked beard and cropped dark hair. A heavy canvas work coat over a rough shirt, sleeves pushed up, forearms scarred from the forge. He looks straight out with his jaw set, one fist resting on a hammer handle. Blunt, tired of hedging, ready to say it.
+- **Ines.** A young woman of about twenty-five, slight and quick, with a narrow bright face, dark curly hair escaping a loose scarf, and wide attentive eyes, head tilted. A patched green shawl over a cotton blouse, a pencil stub and a folded scrap of paper in her hand. Curious, mid-question, half a smile.
+- **Corwin.** A man of about sixty, tall and a little stooped, with a long thoughtful face, thinning white hair, and spectacles pushed low on his nose. A dark waistcoat and a loosened cravat, a pair of brass scales or a pocket watch held loosely in one hand. Careful and kind, brow furrowed, weighing both sides before he speaks.
+- **Thea.** A woman of about thirty-five, round-faced and sturdy, with warm brown skin, thick black hair in a loose braid over one shoulder, and crinkled eyes. A flour-dusted apron over a rust-coloured dress, sleeves rolled, a small loaf held against her chest. Open and welcoming, the one who learns everyone's name.
+- **Fitch.** A thin man of about fifty, with a long dry face, sunken cheeks, sparse sandy hair combed flat, and heavy-lidded eyes with one eyebrow raised. A shabby black coat buttoned to the throat, a stub of tobacco unlit between his lips, a gravedigger's or sexton's patient air. Unimpressed, amused by nothing, noticing everything.
+- **Yusuf.** A man of about thirty-five, lean and watchful, with olive skin, a trimmed dark beard, short black hair, and narrowed dark eyes that do not quite believe you. A travelling coat with the collar turned up, a leather satchel strap across the chest, arms folded. Guarded, a slight frown, a man who tests a coin by biting it.
+- **Storyteller.** An elderly person of indeterminate gender, thin and very still, with a pale lined face, silver hair worn long and tidy, and calm grey eyes. A dark high-collared coat of an old cut, a brass clock key on a chain at the throat, a small book of minutes closed in folded hands. Impassive, courteous, a town clerk who has read out worse weeks than this.
