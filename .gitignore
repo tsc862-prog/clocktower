@@ -11,3 +11,7 @@ overlay.local.json
 
 # Generated portraits wait here for review and are never committed (npm run art:portraits, then art:accept)
 assets/incoming/
+
+# The owner's own token images: only the README is committed (public/tokens-local/README.md says what goes there)
+public/tokens-local/*
+!public/tokens-local/README.md

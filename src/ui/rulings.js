@@ -2,6 +2,7 @@
 // fallback made (nobody answered in time) is marked. Appended, never rebuilt; follows the newest like the talk.
 import {esc, follower} from './dom.js';
 import {roleName, seatNames} from './model.js';
+import {portraitOf} from './portraits.js';
 
 const SCRIPTED = /^scripted default/i;
 export const isScripted = r => SCRIPTED.test(String(r.reason || ''));
@@ -20,7 +21,11 @@ const when = r => r.phase === 'night' ? `night ${r.night}` : r.phase === 'day' ?
 export function createRulings(root) {
   const box = root.querySelector('.lines'), f = follower(box, root.querySelector('.follow'));
   const shown = new Set(); let epoch = null;
+  const face = root.querySelector('.st-portrait');
+  if (face) face.addEventListener('error', () => {face.hidden = true});
   function render({watch: w, epoch: ep = 0}) {
+    const p = portraitOf('Storyteller');
+    if (face && p && face.getAttribute('src') !== p) {face.setAttribute('src', p); face.hidden = false}
     if (!w) return;
     const key = w.seed + ':' + ep; if (epoch !== key) {box.replaceChildren(); shown.clear(); epoch = key}
     const names = seatNames(w);

@@ -1,0 +1,82 @@
+{
+ "version": 1,
+ "portraits": {
+  "Odette": {
+   "file": "Odette.png",
+   "model": "fixture",
+   "provider": "none",
+   "licence": "ours",
+   "promptHash": "0000000000000000",
+   "seed": 1,
+   "size": 512,
+   "sha256": "0",
+   "date": "2026-11-08"
+  },
+  "Bram": {
+   "file": "Bram.png",
+   "model": "fixture",
+   "provider": "none",
+   "licence": "ours",
+   "promptHash": "0000000000000000",
+   "seed": 1,
+   "size": 512,
+   "sha256": "0",
+   "date": "2026-11-08"
+  },
+  "Ines": {
+   "file": "Ines.png",
+   "model": "fixture",
+   "provider": "none",
+   "licence": "ours",
+   "promptHash": "0000000000000000",
+   "seed": 1,
+   "size": 512,
+   "sha256": "0",
+   "date": "2026-11-08"
+  },
+  "Corwin": {
+   "file": "Corwin.png",
+   "model": "fixture",
+   "provider": "none",
+   "licence": "ours",
+   "promptHash": "0000000000000000",
+   "seed": 1,
+   "size": 512,
+   "sha256": "0",
+   "date": "2026-11-08"
+  },
+  "Thea": {
+   "file": "Thea.png",
+   "model": "fixture",
+   "provider": "none",
+   "licence": "ours",
+   "promptHash": "0000000000000000",
+   "seed": 1,
+   "size": 512,
+   "sha256": "0",
+   "date": "2026-11-08"
+  },
+  "Fitch": {
+   "file": "Fitch.png",
+   "model": "fixture",
+   "provider": "none",
+   "licence": "ours",
+   "promptHash": "0000000000000000",
+   "seed": 1,
+   "size": 512,
+   "sha256": "0",
+   "date": "2026-11-08"
+  },
+  "Storyteller": {
+   "file": "Storyteller.png",
+   "model": "fixture",
+   "provider": "none",
+   "licence": "ours",
+   "promptHash": "0000000000000000",
+   "seed": 1,
+   "size": 512,
+   "sha256": "0",
+   "date": "2026-11-08"
+  }
+ }
+}

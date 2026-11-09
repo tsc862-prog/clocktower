@@ -6,11 +6,14 @@
 import {esc, el} from './dom.js';
 import {seatState, money, ago} from './model.js';
 import {SEAT_NAMES} from '../data/script.js';
+import {portraitOf} from './portraits.js';
 
 export function createAgents(root, {act}) {
   const list = root.querySelector('.agent-rows'), pools = root.querySelector('.pools'), note = root.querySelector('.agents-note');
   const resume = root.querySelector('button[data-act="resume"]'), startAll = root.querySelector('button[data-act="start-all"]'), stopAll = root.querySelector('button[data-act="stop-all"]');
   const rows = new Map();
+  // a portrait that fails to load hides itself (error events do not bubble: caught on the way down)
+  list.addEventListener('error', e => {const t = e.target; if (t && t.tagName === 'IMG' && t.classList.contains('mini-portrait')) t.hidden = true}, true);
   let last = {runners: null};
   resume.addEventListener('click', () => act('resume'));
   startAll.addEventListener('click', () => act('startAll', {seats: [...rows.values()].filter(r => r.startable).map(r => r.body())}));
@@ -57,7 +60,8 @@ export function createAgents(root, {act}) {
       const provider = (run && run.provider) || (mind && mind.provider) || '', model = (run && run.model) || (mind && mind.model) || '';
       const defBudget = rv && rv.game && rv.game.defaults ? rv.game.defaults[x.kind] : null;
       if (r.budget.placeholder !== (defBudget != null ? `${money(defBudget)} default` : 'budget $')) r.budget.placeholder = defBudget != null ? `${money(defBudget)} default` : 'budget $';
-      const h = `<span class="who">${esc(x.label)}${x.alive ? '' : ' <small>(dead)</small>'}</span>` +
+      const face = portraitOf(x.label);
+      const h = (face ? `<img class="mini-portrait${x.alive ? '' : ' dead'}" src="${esc(face)}" alt="" draggable="false">` : '') + `<span class="who">${esc(x.label)}${x.alive ? '' : ' <small>(dead)</small>'}</span>` +
         `<span class="state s-${st}">${st}</span>` +
         `<span class="mind">${provider || model ? esc([provider, model].filter(Boolean).join(' / ')) : '<span class="dim">no runner</span>'}</span>` +
         `<span class="cost" title="cost so far of its budget">${run ? `${money(run.cost)} of ${money(run.capBudget ?? run.budget)}` : ''}${run && run.budgetSpent ? ' <b>budget spent</b>' : ''}</span>` +

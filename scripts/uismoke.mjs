@@ -14,6 +14,10 @@
 //   - the pace knob starts on "readable" and every start (one seat, start all) carries its minGap and heartbeat
 //   - nothing on the page posts to a seat's routes (/play/call, /play/storyteller, /play/narrate, /mcp), at run time or in the code
 //   - the recorded game as the page's ?fixture mode sends nothing; a fresh recording from today's engine renders too
+//   - the owner's own token images: a PNG, then a WebP, looked for once per id per page load; the drawn token wherever none loads;
+//     the shroud image over the dead; the game bar counts them; nothing in public/tokens-local is tracked but its README
+//   - portraits (a fixture assets/portraits/index.json): in each seat's disc, the initial without one, the shroud over the dead,
+//     beside each agent row and in the Storyteller's log; no index, or a broken one, and the page carries on
 import {readFileSync, readdirSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -119,7 +123,7 @@ console.log('tokens');
     'each role token carries its name and its team\'s rim');
   ok(['poisoned', 'is-the-drunk', 'protected', 'master', 'red-herring', 'dead'].every(k => T.REMINDER_ICONS[k]), 'reminder discs exist for poisoned, drunk, protected, master, red herring and dead');
   const src = readFileSync(join(ROOT, 'src/ui/tokens.js'), 'utf8');
-  ok(!/<image|\.png|\.jpe?g|\.webp|https?:\/\//i.test(src), 'the tokens are drawn by hand: no image and no outside link');
+  ok(!/\.png|\.jpe?g|\.webp|https?:\/\//i.test(src), 'the tokens are drawn by hand: no image file and no outside link');
   const markers = document.querySelectorAll('#square .seat .seat-marker');
   ok(markers.length === 7 && JSON.stringify(markers.map(m => m.querySelector('.name').textContent)) === JSON.stringify(names), 'the square renders seven seat markers round the table, in seat order');
   ok(document.querySelectorAll('#square .seat .role-token').every((t, i) => t.dataset.role === w.grimoire.seats[i].role), 'each seat shows its true role as a token');
@@ -332,6 +336,88 @@ app = createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch})
 ok(document.querySelectorAll('#square .seat').length === 7 && document.querySelectorAll('#talk .line.say').length === fresh.frames.end.events.filter(e => e.type === 'say').length, 'a game recorded now renders the same way');
 const stale = JSON.stringify(fresh.frames.end.events.map(e => e.type)) !== JSON.stringify(GAME.frames.end.events.map(e => e.type));
 if (stale) console.log('  note the recorded game differs from today\'s engine: npm run uifixture writes a new one');
+
+// ---- the owner's own token images (a git-ignored local folder) ----
+console.log("the owner's own token images");
+{
+  const A = await import('../src/ui/art.js');
+  const {execFileSync} = await import('node:child_process');
+  const fresh = (artLoad) => {A.resetArt(); install(HTML); return createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch}), fixture: GAME, runnersFixture: RUN, artLoad})};
+  // none in the folder: every token stays drawn, no note
+  let asked = [];
+  let aapp = fresh(async u => {asked.push(u); return false});
+  await aapp.art;
+  const all = [...A.ROLE_IDS, ...A.EXTRA_IDS];
+  ok(asked.length === all.length * 2 && all.every(id => asked.indexOf('/tokens-local/' + id + '.png') >= 0 && asked.indexOf('/tokens-local/' + id + '.png') < asked.indexOf('/tokens-local/' + id + '.webp')),
+    `the page looks for a PNG, then a WebP, for each role, the shroud, the ghost vote and the reminders (${asked.length})`);
+  ok(document.querySelectorAll('img.token').length === 0 && document.querySelectorAll('#square svg.role-token').length === 7 && $('art-note').hidden, 'no images: every token is the drawn one and the game bar says nothing');
+  // a loader that fails outright is the same as no image
+  aapp = fresh(async () => {throw new Error('blocked')});
+  await aapp.art;
+  ok(document.querySelectorAll('img.token').length === 0 && document.querySelectorAll('#grimoire svg.role-token').length === 7, 'an image that fails to load leaves the drawn token');
+  // the first seat's role as a WebP and the shroud as a PNG
+  const E = GAME.frames.end, role0 = E.grimoire.seats[0].role, dead = E.grimoire.seats.filter(s => !s.alive);
+  asked = [];
+  aapp = fresh(async u => {asked.push(u); return u === '/tokens-local/' + role0 + '.webp' || u === '/tokens-local/shroud.png'});
+  ok(document.querySelectorAll('img.token').length === 0, 'before the look answers, the drawn tokens show');
+  await aapp.art;
+  ok(!asked.includes('/tokens-local/shroud.webp'), 'a PNG found is not looked for again as WebP');
+  const same = E.grimoire.seats.filter(s => s.role === role0).length;
+  const sqImg = document.querySelectorAll('#square img.role-token'), grImg = document.querySelectorAll('#grimoire img.role-token');
+  ok(sqImg.length === same && grImg.length === same && [...sqImg, ...grImg].every(i => i.getAttribute('src') === '/tokens-local/' + role0 + '.webp' && i.dataset.role === role0),
+    `the ${role0} WebP replaces its token in the square and the grimoire (${sqImg.length} + ${grImg.length})`);
+  ok(document.querySelectorAll('#square svg.role-token').length === 7 - same && document.querySelectorAll('#grimoire svg.role-token').length === 7 - same, 'every other role keeps its drawn token');
+  ok(dead.length > 0 && document.querySelectorAll('#square .seat-marker image.shroud-art').length === dead.length && document.querySelectorAll('#square .seat-marker path.shroud').length === 0, `the shroud image lies over each dead seat (${dead.length})`);
+  ok(!$('art-note').hidden && $('art-note').textContent === 'local art: 1 of 22 tokens', `the game bar counts the images found (${$('art-note').textContent})`);
+  // looked for once per page load
+  const n = asked.length;
+  install(HTML);
+  aapp = createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch}), fixture: GAME, runnersFixture: RUN, artLoad: async u => {asked.push(u); return true}});
+  await aapp.art;
+  ok(asked.length === n && document.querySelectorAll('#square img.role-token').length === same, 'the page looks once per load and remembers each answer');
+  A.resetArt();
+  const tracked = execFileSync('git', ['ls-files', 'public/tokens-local'], {cwd: ROOT, encoding: 'utf8'}).split('\n').filter(Boolean);
+  ok(tracked.every(f => f === 'public/tokens-local/README.md'), `nothing in the local art folder is tracked but its README (${tracked.join(', ') || 'none yet'})`);
+  const ignored = f => {try {return execFileSync('git', ['check-ignore', f], {cwd: ROOT, encoding: 'utf8'}).trim() === f} catch {return false}};
+  ok(ignored('public/tokens-local/imp.png') && ignored('public/tokens-local/imp.webp') && !ignored('public/tokens-local/README.md'), 'an image dropped in the folder is git-ignored; its README is not');
+}
+
+// ---- portraits on the seat markers ----
+console.log('portraits');
+{
+  const PI = await import('../src/ui/portraits.js');
+  const IDX = JSON.parse(readFileSync(join(ROOT, 'src/ui/fixtures/portraits.json'), 'utf8'));
+  const E = GAME.frames.end;
+  const page = (pageFetch) => {PI.resetPortraits(); install(HTML); return createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch}), fixture: GAME, runnersFixture: RUN, pageFetch})};
+  const html = {ok: true, status: 200, json: async () => {throw new SyntaxError('Unexpected token <')}};
+  for (const [why, f] of [['no index (404)', async () => ({ok: false, status: 404, json: async () => ({})})], ['the dev server\'s HTML for a missing index', async () => html], ['a fetch that fails', async () => {throw new Error('down')}]]) {
+    const a = page(f); await a.portraits;
+    ok(document.querySelectorAll('#square image.sm-portrait').length === 0 && document.querySelectorAll('#square .sm-initial').length === 7 && document.querySelectorAll('#agents img.mini-portrait').length === 0 && $('rulings').querySelector('.st-portrait').hidden,
+      `${why}: the initials, no portraits, and the page carries on`);
+  }
+  let asked = [];
+  const a = page(async u => {asked.push(u); return {ok: true, status: 200, json: async () => copy(IDX)}});
+  await a.portraits;
+  ok(asked.length === 1 && asked[0] === PI.PORTRAIT_INDEX, 'the page reads assets/portraits/index.json once');
+  const seatsEl = document.querySelectorAll('#square .seat');
+  const has = E.grimoire.seats.map(s => !!IDX.portraits[s.name]);
+  ok(seatsEl.every((el, i) => {const im = el.querySelector('image.sm-portrait'); return has[i] ? im && im.getAttribute('href') === '/assets/portraits/' + E.grimoire.seats[i].name + '.png' : !im}),
+    `each seat with a portrait shows it in its disc (${has.filter(Boolean).length} of 7)`);
+  const bare = E.grimoire.seats.findIndex(s => !IDX.portraits[s.name]);
+  ok(bare >= 0 && !seatsEl[bare].querySelector('image.sm-portrait') && seatsEl[bare].querySelector('.sm-initial').textContent === E.grimoire.seats[bare].name[0], 'a seat with no entry keeps its initial');
+  const deadP = E.grimoire.seats.map((s, i) => [s, seatsEl[i]]).filter(([s]) => !s.alive && IDX.portraits[s.name]);
+  ok(deadP.length > 0 && deadP.every(([, el]) => {const svg = el.querySelector('.seat-marker'), kids = svg.children.map(c => c.tagName.toLowerCase()); return svg.classList.contains('is-dead') && kids.indexOf('path') > kids.indexOf('image')}),
+    `a dead seat keeps the shroud over its portrait (${deadP.length})`);
+  const minis = document.querySelectorAll('#agents .agent img.mini-portrait');
+  ok(minis.length === Object.keys(IDX.portraits).length && document.querySelector('#agents .agent[data-key="storyteller"] img.mini-portrait').getAttribute('src') === '/assets/portraits/Storyteller.png', `the agents panel shows a small portrait per row that has one (${minis.length})`);
+  const stp = $('rulings').querySelector('.st-portrait');
+  ok(!stp.hidden && stp.getAttribute('src') === '/assets/portraits/Storyteller.png', "the Storyteller's log shows the Storyteller's portrait");
+  minis[0].dispatch('error');
+  ok(minis[0].hidden, 'a portrait that fails to load hides itself');
+  ok(JSON.stringify(PI.readIndex({Odette: {file: 'assets/portraits/odette.png'}, Bram: {file: '../secret.png'}, Ines: {file: 'https://example.com/x.png'}})) === JSON.stringify({Odette: '/assets/portraits/odette.png'}),
+    'the other index shape reads too; a file outside the portraits or off the machine is ignored');
+  PI.resetPortraits();
+}
 
 console.log(fails ? `${fails} check(s) failed` : 'the page renders the game and changes nothing');
 process.exit(fails ? 1 : 0);

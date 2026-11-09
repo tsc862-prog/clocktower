@@ -187,3 +187,16 @@ a { color: var(--gold); }
   .agent-ctl input[name="model"] { width: 9rem; } .agent-head .who { min-width: 0; }
   .pools { font-size: 12px; }
 }
+
+/* the owner's own token images (src/ui/art.js, from his git-ignored public/tokens-local/): sized like the drawn tokens they replace */
+img.token { object-fit: contain; border-radius: 50%; }
+img.ghost-coin.spent { opacity: .4; filter: grayscale(1); }
+.bar .art-note { font: 12px var(--sans); }
+
+/* portraits of our own (assets/portraits/, src/ui/portraits.js): in the seat's disc, beside each agent row, in the Storyteller's log */
+.seat-marker .sm-ring { fill: none; stroke: #4d455c; stroke-width: 1.5; }
+.seat-marker.is-dead .sm-portrait { filter: grayscale(1) brightness(.55); }
+.seat.is-nominee .seat-marker .sm-ring { stroke: var(--evil); stroke-width: 2.5; } .seat.is-nominator .seat-marker .sm-ring { stroke: var(--gold); stroke-width: 2.5; }
+.mini-portrait { align-self: center; width: 28px; height: 28px; border-radius: 50%; object-fit: cover; vertical-align: middle; margin-right: .4rem; border: 1px solid var(--line); }
+.mini-portrait.dead { filter: grayscale(1) brightness(.6); }
+.st-portrait { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; vertical-align: middle; margin-right: .5rem; border: 1px solid var(--line); }

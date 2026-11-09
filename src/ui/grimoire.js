@@ -1,10 +1,11 @@
 // The grimoire as the Storyteller sees it: every seat with its true role, the role it believes it is when that differs, alive or
 // dead, its tokens with who placed them; the demon's bluffs; the decision the game waits on and who it waits on; tonight's waking
 // order. Rows are keyed by seat and patched in place. Each role shows as its token and each reminder as a small disc beside the
-// seat, its full text on hover (the drawings are src/ui/tokens.js).
+// seat, its full text on hover (the drawings are src/ui/tokens.js; the owner's own images, when he has them, src/ui/art.js).
 import {esc, keyedRows} from './dom.js';
 import {roleName, teamOf, tokenText, tokenWord, seatNames, waitsOn} from './model.js';
-import {roleToken, reminderToken, installDefs} from './tokens.js';
+import {installDefs} from './tokens.js';
+import {roleToken, reminderToken} from './art.js';
 
 export function createGrimoire(root) {
   installDefs();
