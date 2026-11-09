@@ -37,20 +37,30 @@ export const listNames = names => names.length ? names.join(', ') : 'nobody';
 // Anything else the api might hand back (a ruling, a grimoire line, another seat's whisper or night information) is
 // dropped here, so a mistake on the game side still stops at this door.
 export const EVENT_KINDS = ['say', 'pass', 'whisper', 'whisper-seen', 'dawn', 'phase', 'narration', 'nomination', 'vote-result',
-  'vote-closed', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'death', 'win', 'told'];
+  'vote-closed', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'death', 'win', 'told', 'move'];
 // a shot or a Virgin's answer is counted apart from the death it may bring (the death has its own event): one count each (#37)
 const DEATHS = ['execution', 'death'];
+
+// ---- places: the Square and the rooms (#28) ----
+// A room's name from its id ('parlour' -> 'the parlour'), from the view's room list; null is the Square.
+export const placeNameOf = (view, id) => id == null ? 'the Square' : (view?.rooms || []).find(r => r.id === id)?.name || String(id);
+const bare = name => String(name).replace(/^the\s+/i, '');
 export function cleanEvent(view, me, e) {
   if (!e || typeof e !== 'object' || !EVENT_KINDS.includes(e.type)) return null;
   const isMe = x => x === me || (x != null && x === view?.name);
   if (e.type === 'whisper' && !isMe(e.from) && !isMe(e.to)) return null;
   if (e.type === 'told' && e.seat != null && !isMe(e.seat)) return null;
+  // an entry that names its audience and leaves this seat out (a room line said elsewhere) never reaches it
+  if (Array.isArray(e.audience) && me != null && !e.audience.includes(me)) return null;
   const n = x => nameOf(view, x);
   const out = {id: e.id, type: e.type};
   if (e.day != null) out.day = e.day;
   if (e.night != null) out.night = e.night;
   switch (e.type) {
-    case 'say': case 'pass': out.from = n(e.seat ?? e.from); break;
+    case 'say': out.from = n(e.seat ?? e.from); if (e.room != null) out.in = placeNameOf(view, e.room); break;
+    case 'move': out.seats = (Array.isArray(e.seats) ? e.seats : []).map(n); out.to = placeNameOf(view, e.room);
+      if (e.from !== undefined) out.from = placeNameOf(view, e.from); if (e.by != null) out.by = n(e.by); break;
+    case 'pass': out.from = n(e.seat ?? e.from); break;
     case 'whisper': case 'whisper-seen': out.from = n(e.from ?? e.seat); out.to = n(e.to); break;
     case 'nomination': out.by = n(e.by); out.target = n(e.target); break;
     case 'vote-result': out.by = n(e.by); out.target = n(e.target); if (Array.isArray(e.yes)) out.yes = e.yes.map(n);
@@ -76,18 +86,22 @@ export function whatsNew(game, seat, since, api) {
   const view = a.view(game, me);
   const evs = cleanEvents(view, me, a.events(game, me, from));
   const n = t => evs.filter(e => e.type === t).length;
-  const said = evs.filter(e => e.type === 'say' && e.from !== view.name).length;
-  const out = {since: from, last: evs.length ? evs[evs.length - 1].id : from, said,
+  const others = evs.filter(e => e.type === 'say' && e.from !== view.name);
+  const said = others.filter(e => !e.in).length, roomSaid = others.filter(e => e.in).length;
+  // moves by others (or that took me along): the header names them; my own go and leave are not news
+  const moved = evs.filter(e => e.type === 'move' && e.by !== view.name);
+  const out = {since: from, last: evs.length ? evs[evs.length - 1].id : from, said, roomSaid,
     whispers: evs.filter(e => e.type === 'whisper' && e.from !== view.name).length, seen: n('whisper-seen'),
     nominations: n('nomination'), shots: n('slayer-shot'), votes: n('vote-result'), dawn: n('dawn'), deaths: evs.filter(e => DEATHS.includes(e.type)).length, narration: n('narration'),
-    told: n('told'), phase: n('phase')};
-  out.total = said + out.whispers + out.seen + out.nominations + out.shots + out.votes + out.dawn + out.deaths + out.narration + out.told + out.phase;
+    told: n('told'), phase: n('phase'), moves: moved.length, moveTexts: moved.map(e => e.text).filter(Boolean)};
+  out.total = said + roomSaid + out.whispers + out.seen + out.nominations + out.shots + out.votes + out.dawn + out.deaths + out.narration + out.told + out.phase + out.moves;
   return out;
 }
 export function newsLine(w) {
   const parts = [];
   const add = (k, one, many) => {if (w[k]) parts.push(`${w[k]} ${w[k] === 1 ? one : many}`)};
   add('said', 'line at the table', 'lines at the table');
+  add('roomSaid', 'line in a room with you', 'lines in a room with you');
   add('whispers', 'whisper to you', 'whispers to you');
   add('seen', 'whisper seen', 'whispers seen');
   add('nominations', 'nomination', 'nominations');
@@ -158,9 +172,40 @@ export function clockLine(v, me) {
   return 'The game is being set up.';
 }
 // The useful tools: what fits now, then slay while a standing shot is unspent (the shot never narrows the list, #37).
+// While the rooms are open a seat at the Square is offered invite, a seat in a room leave (and no whisper: a room has none).
 export function usefulTools(v, asked, news, waiting, shot) {
-  const list = baseTools(v, asked, news, waiting);
+  let list = baseTools(v, asked, news, waiting);
+  const away = v.place?.room != null;
+  if (away) list = list.filter(n => n !== 'whisper');
+  if (v.phase === 'day' && v.roomsOpen && v.place && !(asked && !asked.done)) list = [...list, away ? 'leave' : 'invite'];
   return shot && !list.includes('slay') ? [...list, 'slay'] : list;
+}
+
+// ---- places (#28): where I am, who is with me, my whisper neighbours, who is away, the rooms ----
+export const andList = xs => xs.length < 2 ? (xs[0] ?? 'nobody') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`;
+// One sentence on where this seat is, by day: at the Square with its two whisper neighbours, or in a room with whom.
+export function placeText(v) {
+  if (v.phase !== 'day' || v.winner || !v.place) return null;
+  const p = v.place, nm = xs => (xs || []).map(x => nameOf(v, x));
+  const nb = nm(p.neighbours);
+  let here;
+  if (p.room == null) here = `You are at the Square; whisper only to your neighbours ${nb.length ? andList(nb) : '(none alive)'}.`;
+  else if (!(p.with || []).length) here = `You are alone in ${p.name || placeNameOf(v, p.room)}: nobody hears you here; invite someone or leave.`;
+  else here = `You are in ${p.name || placeNameOf(v, p.room)} with ${andList(nm(p.with))}: only you ${p.with.length + 1} hear what is said here; no whispers in a room.`;
+  const away = (v.rooms || []).filter(r => (r.seats || []).length && r.id !== p.room).map(r => `${andList(nm(r.seats))} in ${r.name}`);
+  return away.length ? `${here} Away: ${away.join('; ')}.` : here;
+}
+// The rooms while they are open: how many places each has free, and that they close when nominations open.
+export function roomsText(v) {
+  if (v.phase !== 'day' || v.winner || !v.roomsOpen || !(v.rooms || []).length) return null;
+  return `Rooms, closing when nominations open: ${v.rooms.map(r => `${bare(r.name)} ${r.free > 0 ? `${r.free} free` : 'full'}`).join(', ')}.`;
+}
+// The moves since the last look, the newest few: "Moves: Odette and Bram went to the nook."
+export function movesText(news, max = 2) {
+  const t = news?.moveTexts || [];
+  if (!t.length) return null;
+  const shown = t.slice(-max).map(s => s.replace(/[.\s]+$/, '')).join('. ');
+  return `Moves: ${t.length > max ? `${t.length - max} earlier (read_talk), then ` : ''}${shown}.`;
 }
 function baseTools(v, asked, news, waiting) {
   if (waiting) return news?.total ? ['read_talk', 'look', 'my_notes'] : ['look', 'my_notes', 'note']; // nothing to act on: reads only
@@ -267,6 +312,7 @@ export function playerHeader(game, seat, api) {
     `Alive (${living.length}): ${listNames(living)}.${dead.length ? ` Dead: ${listNames(dead)}.` : ''}`,
     ...(stakes ? [stakes] : []),
     newsLine(news),
+    ...[movesText(news), placeText(v), roomsText(v)].filter(Boolean),
   ];
   if (asked && !asked.done) lines.push(`**WAITING ON YOU: ${asked.text}**`);
   if (waiting) lines.push(waiting.text);

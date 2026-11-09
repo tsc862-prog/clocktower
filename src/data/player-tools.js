@@ -1,13 +1,15 @@
 // The tools a player agent uses to play one seat. Shared by the relay's MCP server (scripts/relay-mcp.mjs), the local
 // tool loop (scripts/local-agent.mjs) and the docs. Each tool:
 //   {name, desc, act, args: {argName: {type: 'string'|'integer'|'number'|'array' (of strings), desc, optional?, enum?}}, handler}
-// act: true for a tool that spends the turn (speak, whisper, nominate, vote, a night choice, slay, pass), false for a read.
+// act: true for a tool that spends the turn (speak, whisper, nominate, vote, a night choice, slay, pass), false for a read
+// and for a move between places (go, invite, leave: moves are free, #28).
 // handler(args, ctx): ctx = {game, seat: {index, name}, api, log} (the slice 3 contract). A handler reads and acts only
 // through the api's seat-scoped functions and copies out only the fields a player may see, so a token, another seat's
 // role, a Storyteller reason or a whisper between two others never reaches a seat (npm run playertoolcheck proves it).
 // Every refusal comes back as {ok: false, error} with what is open to the seat now. With no game behind the relay (the
 // stub backend: no ctx.game or ctx.api) look answers "no game yet" and the rest say so.
-import {seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf, shotOf} from '../seats/player.js';
+import {seatIndex, nameOf, listNames, cleanEvents, markSeen, lastSeen, askedOf, sideOf, usefulTools, whatsNew, clockLine, waitingOf, shotOf,
+  placeText, placeNameOf, andList} from '../seats/player.js';
 
 const READ_CAP = 40; // read_talk and my_whispers show at most this many entries
 
@@ -101,14 +103,29 @@ function myNotes(args, ctx) {
 function whatIsAsked(args, ctx) {
   const v = viewOf(ctx), asked = askedOf(ctx.game, v, me(ctx), pendingOf(ctx)), shot = shotOf(ctx.game, ctx.api, v, me(ctx));
   const standing = shot ? {text: shot.text, options: [...shot.options, 'hold'], tool: 'slay'} : null;
+  const pl = placeText(v), place = pl ? {place: v.roomsOpen ? `${pl} The rooms close when nominations open.` : pl} : {};
   if (!asked) {
     const waiting = waitingOf(ctx.game, ctx.api, v, me(ctx), null);
     if (standing) return {ok: true, asked: 'standing', text: `Nothing waits on you. ${shot.text}${waiting ? ' ' + waiting.text : ''}`,
-      options: standing.options, tool: 'slay', useful: usefulTools(v, null, null, waiting, shot)};
-    return {ok: true, asked: null, text: `Nothing is asked of you right now. ${waiting ? waiting.text : clockLine(v, me(ctx))}`, useful: usefulTools(v, null, null, waiting)};
+      options: standing.options, tool: 'slay', useful: usefulTools(v, null, null, waiting, shot), ...place};
+    return {ok: true, asked: null, text: `Nothing is asked of you right now. ${waiting ? waiting.text : clockLine(v, me(ctx))}`, useful: usefulTools(v, null, null, waiting), ...place};
   }
   return {ok: true, asked: asked.kind, text: asked.text, ...(asked.options ? {options: asked.options} : {}),
-    ...(asked.count > 1 ? {count: asked.count} : {}), tool: asked.tool, ...(standing ? {standing} : {})};
+    ...(asked.count > 1 ? {count: asked.count} : {}), tool: asked.tool, ...(standing ? {standing} : {}), ...place};
+}
+// Who is where (#28): my place and who is with me, who is at the Square, each room with its seats and free places, whether the
+// rooms are open, my two whisper neighbours and which of them I can whisper to now. Presence is public; words are not.
+function where(args, ctx) {
+  const v = viewOf(ctx), i = me(ctx);
+  const w = typeof ctx.api.where === 'function' ? ctx.api.where(ctx.game, i) : null;
+  const p = v.place || {}, names = xs => (xs || []).map(x => nameOf(v, x));
+  const rooms = (w?.rooms || v.rooms || []).map(r => ({id: r.id, name: r.name, size: r.size, free: r.free, who: names(r.seats)}));
+  const open = !!(w ? w.open : v.roomsOpen);
+  const square = w ? names(w.square) : (v.seats || []).filter(s => s.room == null).map(s => s.name);
+  return {ok: true, place: placeNameOf(v, w ? w.place : p.room), with: names(w ? w.with : p.with), square, rooms, open,
+    neighbours: names(w ? w.neighbours : p.neighbours), canWhisper: names(w ? w.canWhisper : p.canWhisper),
+    text: [placeText(v) || 'Nobody moves between places at night.', open ? 'The rooms are open until nominations open; then everyone comes back to the Square.'
+      : v.phase === 'day' ? 'The rooms are closed: everyone is at the Square.' : ''].filter(Boolean).join(' ')};
 }
 function whoVoted(args, ctx) {
   const v = viewOf(ctx), p = pendingOf(ctx);
@@ -139,7 +156,15 @@ function speak(args, ctx) {
   const text = stripOwnName(args.text, ctx.seat?.name || viewOf(ctx).name);
   if (!text) return refuse(ctx, 'speak needs text: what you say, without your name in front.');
   ctx.api.say(ctx.game, me(ctx), text);
-  return {ok: true, said: text};
+  return {ok: true, said: text, heard: heardBy(viewOf(ctx))};
+}
+// Where a line just said went, from the seat's place after saying it (#28).
+function heardBy(v) {
+  const p = v.place;
+  if (!p || p.room == null) return 'at the Square, heard by the whole table';
+  const others = (p.with || []).map(x => nameOf(v, x));
+  const room = p.name || placeNameOf(v, p.room);
+  return others.length ? `in ${room}, heard by ${andList(others)}` : `in ${room}, heard by nobody: you are alone there`;
 }
 function whisper(args, ctx) {
   const v = viewOf(ctx), text = stripOwnName(args.text, ctx.seat?.name || v.name);
@@ -147,8 +172,46 @@ function whisper(args, ctx) {
   if (f.error) return refuse(ctx, f.error);
   if (f.seat.index === me(ctx)) return refuse(ctx, 'You cannot whisper to yourself; use note to remember something.');
   if (!text) return refuse(ctx, 'whisper needs text: what you whisper.');
+  // whispers happen only at the Square, between neighbours at the table (#28); the game refuses too, this says it plainer
+  const p = v.place;
+  if (p && v.phase === 'day') {
+    const nb = (p.neighbours || []).map(x => nameOf(v, x));
+    if (p.room != null) return refuse(ctx, `There are no whispers in a room: everyone in ${p.name || placeNameOf(v, p.room)} hears what you say, so speak, or leave for the Square to whisper to your neighbours ${andList(nb)}.`);
+    if (Array.isArray(p.neighbours) && !p.neighbours.includes(f.seat.index))
+      return refuse(ctx, `Whispers happen only at the Square, and only to your neighbours at the table: ${andList(nb)}. To talk with ${f.seat.name} in private, invite them to a room.`);
+  }
   ctx.api.whisper(ctx.game, me(ctx), f.seat.index, text);
   return {ok: true, to: f.seat.name, said: text, note: `Only ${f.seat.name} hears this; the table sees that you two whispered.`};
+}
+// ---- moves between places (#28): free, public, by day while the rooms are open ----
+const roomList = v => (v.rooms || []).map(r => `${r.id} (${r.name}, for ${r.size}, ${r.free > 0 ? `${r.free} free` : 'full'})`).join(', ');
+function moved(ctx, r, extra) {
+  const v = viewOf(ctx), p = v.place || {};
+  const room = r?.place !== undefined ? r.place : p.room;
+  const withNames = (Array.isArray(r?.with) ? r.with : p.with || []).map(x => nameOf(v, x));
+  return {ok: true, place: placeNameOf(v, room), with: withNames,
+    note: room == null ? 'You are back at the Square: the whole table hears you again.'
+      : `${extra ? extra + ' ' : ''}${withNames.length ? `Only ${andList(['you', ...withNames])} hear what is said here.` : 'Nobody else is here yet.'} The table saw you go; the rooms close when nominations open.`};
+}
+function go(args, ctx) {
+  const v = viewOf(ctx), room = String(args.room ?? '').trim();
+  if (!room) return refuse(ctx, `go needs a room: ${roomList(v) || 'there are no rooms'}.`);
+  const r = ctx.api.go(ctx.game, me(ctx), room);
+  return moved(ctx, r);
+}
+function invite(args, ctx) {
+  const v = viewOf(ctx);
+  const f = findSeat(v, args.player);
+  if (f.error) return refuse(ctx, f.error);
+  if (f.seat.index === me(ctx)) return refuse(ctx, 'You cannot invite yourself; use go to go to a room.');
+  const room = args.room == null || String(args.room).trim() === '' ? undefined : String(args.room).trim();
+  if (room === undefined && v.place && v.place.room == null) return refuse(ctx, `Name a room to take ${f.seat.name} to: ${roomList(v)}.`);
+  const r = ctx.api.invite(ctx.game, me(ctx), f.seat.index, room);
+  return moved(ctx, r, `${f.seat.name} came with you; they may leave.`);
+}
+function leave(args, ctx) {
+  const r = ctx.api.leave(ctx.game, me(ctx));
+  return moved(ctx, r);
 }
 function note(args, ctx) {
   const text = String(args.text ?? '').trim();
@@ -250,11 +313,18 @@ export const PLAYER_TOOLS = [
   T('who_voted', false, 'The open vote: who is nominated, who has voted so far and who has not.', {}, whoVoted),
   T('note', false, 'Write a private note to yourself (a claim you heard, a suspicion, a plan). Does not use your turn.',
     {text: {type: 'string', desc: 'The note, one or two sentences.'}}, note),
+  T('where', false, 'Who is where: your place and who is with you, who is in each room and how many places are free, and the two neighbours you may whisper to.', {}, where),
+  // moves (#28): free, by day until nominations open; the table sees every move, never the words said in a room
+  T('go', false, 'Go to a room by day, to talk with whoever is there out of the table\'s hearing. Free: it does not use your turn.',
+    {room: {type: 'string', desc: 'The room\'s id or name, as where lists them (for example "parlour").'}}, go),
+  T('invite', false, 'Take a player from the Square into a room with you, to make a plan in private. Free; the table sees you two go.',
+    {player: {type: 'string', desc: 'The player\'s name.'}, room: {type: 'string', optional: true, desc: 'The room (default: the room you are in).'}}, invite),
+  T('leave', false, 'Leave your room and come back to the Square, where the whole table hears you. Free.', {}, leave),
   // acts: each one spends the turn
-  T('speak', true, 'Say one short line to the whole table (day only). Say something new; a repeat is refused.',
+  T('speak', true, 'Say one short line where you are: to the whole table at the Square, or only to those in your room. Say something new; a repeat is refused.',
     {text: {type: 'string', desc: 'Only the words you say, in your own voice, without your name in front (the table shows who speaks). At most 600 characters.'}}, speak),
-  T('whisper', true, 'Whisper to one player (day only). Only they hear it; the table sees that you two whispered.',
-    {to: {type: 'string', desc: 'The player\'s name.'}, text: {type: 'string', desc: 'What you whisper, at most 600 characters.'}}, whisper),
+  T('whisper', true, 'Whisper to a neighbour at the table (by day, at the Square only). Only they hear it; the table sees that you two whispered.',
+    {to: {type: 'string', desc: 'The name of one of your two neighbours (where names them).'}, text: {type: 'string', desc: 'What you whisper, at most 600 characters.'}}, whisper),
   T('nominate', true, 'Nominate a living or dead player for execution once nominations are open. One nomination each a day; each player can be nominated once a day.',
     {target: {type: 'string', desc: 'The name of the player you nominate.'}}, nominate),
   T('vote', true, 'Your vote on the open nomination: "yes" to execute, "no" to spare. A dead player has one yes left for the whole game.',
