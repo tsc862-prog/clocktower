@@ -333,7 +333,7 @@ install(HTML);
 relay = fakeRelay();
 app = createApp({client: relayClient({base: BASE, fetchImpl: relay.fetch}), fixture: GAME, runnersFixture: RUN});
 ok(document.querySelectorAll('#square .seat').length === 7 && document.querySelectorAll('#talk .line').length > 50 && document.querySelectorAll('#agents .agent').length === 8, 'every panel renders from the recording');
-ok($('frames').options.length === 5 && !$('frames').hidden, 'a picker offers the recorded moments: talk, a vote, a night, a dawn, the end');
+ok($('frames').options.length === 6 && !$('frames').hidden, 'a picker offers the recorded moments: talk, a vote, a night, a dawn, the rooms, the end');
 $('frames').value = 'talk'; $('frames').dispatch('change');
 ok(document.querySelectorAll('#talk .line.win').length === 0 && /round \d of 2/.test($('phase').textContent), 'picking an earlier moment shows that moment');
 for (const b of document.querySelectorAll('button')) b.click();
@@ -759,6 +759,23 @@ const {frameAt} = await import('../src/ui/model.js');
   const cards = () => stage.querySelectorAll('.card');
   const card = i => stage.querySelector(`.card[data-seat="${i}"]`);
   ok(cards().length === 7 && JSON.stringify(cards().map(c => c.querySelector('.name').textContent)) === JSON.stringify(tn), 'seven cards on the stage, in seat order');
+  // the stage fits its window (#79): the cards are placed from the table's measured box, and at every table size from a small laptop
+  // to 3440x1440 no card leaves the table, no two cards touch, and the middle (dawn, tally, winner) is a box clear of every face
+  {const {stageLayout} = await import('../src/ui/stage.js');
+    ok(cards().every(c => /--x:\d+px;--y:\d+px/.test(c.getAttribute('style') || '')) && /--ring-cw:\d+px/.test(stage.querySelector('.table').getAttribute('style') || '') &&
+      /--mid-w:\d+px/.test(stage.querySelector('.table').getAttribute('style') || ''), 'the cards and the middle are placed from the measured table');
+    const sizes = [[958, 470], [1060, 520], [1300, 600], [1590, 690], [1500, 820], [2000, 700], [2850, 1150]], bad = [];
+    const hit = (p, q) => p.l < q.r && q.l < p.r && p.t < q.b && q.t < p.b;
+    for (const [w, h] of sizes) {
+      const L = stageLayout(w, h, [0, 1, 2, 3, 4, 5, 6]);
+      const box = p => ({l: p.x - L.cw / 2, r: p.x + L.cw / 2, t: p.y - L.ch / 2, b: p.y + L.ch / 2});
+      const bs = Object.values(L.pos).map(box), m = {l: L.mid.x, r: L.mid.x + L.mid.w, t: L.mid.y, b: L.mid.y + L.mid.h};
+      if (bs.some(b => b.l < 0 || b.t < 0 || b.r > w || b.b > h)) bad.push(`${w}x${h}: a card leaves the table`);
+      if (bs.some((p, i) => bs.some((q, j) => j > i && hit(p, q)))) bad.push(`${w}x${h}: two cards touch`);
+      if (L.mid.w < 200 || L.mid.h < 90 || bs.some(b => hit(b, m))) bad.push(`${w}x${h}: the middle ${JSON.stringify(L.mid)} is too small or runs onto a face`);
+    }
+    ok(!bad.length, 'at every size the cards fit the table, apart, and the middle text has its own box clear of the faces' + (bad.length ? ': ' + bad.join('; ') : ''));
+  }
   ok(cards().every((c, i) => c.querySelector('.initial').textContent === tn[i][0]), 'each card carries the initial under its portrait (no portraits here)');
   ok(cards().every((c, i) => c.querySelector('.role-corner .role-token').dataset.role === T.grimoire.seats[i].role), 'each card has its true role small in a corner');
   ok(!!stage.querySelector('.stage-st .face') && /Storyteller/.test(stage.querySelector('.stage-st .name').textContent) && stage.querySelector('.stage-st .st-line').textContent.length > 0,
@@ -848,6 +865,26 @@ const {frameAt} = await import('../src/ui/model.js');
   const D = fapp.state.watch, dawn = D.events.findLast(e => e.type === 'dawn');
   ok(stage.dataset.phase === 'day' && stage.querySelector('.dawn-big').textContent === dawn.text && stage.querySelector('.dawn-words'), `dawn: "${dawn.text}" large in the middle, with its narration`);
   ok(dawn.deaths.every(i => card(i).querySelector('.shroud')), 'the night\'s dead are shrouded at dawn');
+  // rooms break the stage out (#80): the people in a room sit inside its panel, the rest round the Square's table, left of every panel
+  $('frames').value = 'rooms'; $('frames').dispatch('change');
+  {const R = fapp.state.watch, used = R.places.rooms.filter(r => r.seats.length);
+    const num = (s, k) => {const m = new RegExp('(?:^|;)' + k + ':(-?\\d+)px').exec(s || ''); return m ? +m[1] : NaN};
+    const at = i => ({x: num(card(i).getAttribute('style'), '--x'), y: num(card(i).getAttribute('style'), '--y')});
+    const box = g => ({l: num(g.getAttribute('style'), 'left'), t: num(g.getAttribute('style'), 'top'), w: num(g.getAttribute('style'), 'width'), h: num(g.getAttribute('style'), 'height')});
+    const groups = stage.querySelectorAll('.room-group'), byId = Object.fromEntries(groups.map(g => [g.dataset.room, box(g)]));
+    const inside = (p, b) => p.x > b.l && p.x < b.l + b.w && p.y > b.t && p.y < b.t + b.h;
+    ok(used.length >= 2 && stage.dataset.rooms === 'out' && groups.length === used.length && used.every(r => byId[r.id] && stage.querySelector(`.room-group[data-room="${r.id}"] .room-name`).textContent === r.name),
+      `the stage breaks out: one panel per room in use, named (${used.map(r => r.name).join(', ')}); the empty rooms are not drawn`);
+    ok(used.every(r => r.seats.every(i => inside(at(i), byId[r.id]))), 'everyone away sits inside their own room\'s panel');
+    const left = Math.min(...Object.values(byId).map(b => b.l));
+    ok(R.places.square.every(i => at(i).x < left && !Object.values(byId).some(b => inside(at(i), b))), 'everyone at the Square sits round the table, clear of the rooms');
+    const said = R.events.findLast(e => e.type === 'say' && e.room != null), rl = stage.querySelector(`.room-group[data-room="${said.room}"] .room-line`);
+    ok(!!rl && rl.textContent.includes(said.text), `the room's newest line shows in its panel under its people ("${said.text}")`);
+    const firstCard = card(used[0].seats[0]);
+    fapp.state.watch = {...R, places: {...R.places, open: false, square: R.grimoire.seats.map(s => s.seat), rooms: R.places.rooms.map(r => ({...r, seats: []}))}}; fapp.state.epoch++; fapp.render();
+    ok(stage.querySelectorAll('.room-group').length === 0 && stage.dataset.rooms === '' && card(used[0].seats[0]) === firstCard && !inside(at(used[0].seats[0]), byId[used[0].id]),
+      'when the rooms close the panels go and the same cards slide back into the ring');
+  }
   $('frames').value = 'end'; $('frames').dispatch('change');
   ok(/wins/.test(stage.querySelector('.winner-big').textContent), 'the end: the winner in the middle');
   // phone layout and no control that acts for a seat
