@@ -1,4 +1,5 @@
-// Our own tokens, hand-built SVG, no images: one file to restyle. Everything the page draws as a token comes from here:
+// Our own tokens, hand-built SVG, no image files: one file to restyle (the owner's own images, when he has them, come from
+// src/ui/art.js and a git-ignored folder). Everything the page draws as a token comes from here:
 //   roleToken(id)        a round token per role: a simple two-colour icon and the role's name on the lower arc; the rim tells the
 //                        team (townsfolk, outsider, minion, demon)
 //   seatMarker(name)     a seat at the table: the character's name around a disc, its initial in the middle; a shroud on the dead
@@ -75,13 +76,14 @@ export function roleToken(id, {name = id, team = '', title = '', cls = ''} = {})
     `<text class="tk-name" style="font-size:${fit(name)}px"><textPath href="#ct-arc-low" startOffset="50%" text-anchor="middle">${esc(name)}</textPath></text></svg>`;
 }
 
-// seatMarker('Odette', {dead}) -> the seat's disc at the table, the name around its rim, a shroud over it when dead
-export function seatMarker(name, {dead = false} = {}) {
+// seatMarker('Odette', {dead, shroud}) -> the seat's disc at the table, the name around its rim, a shroud over it when dead.
+// shroud: the address of the owner's own shroud image (src/ui/art.js), drawn in place of ours when given.
+export function seatMarker(name, {dead = false, shroud = null} = {}) {
   return `<svg class="token seat-marker${dead ? ' is-dead' : ''}" viewBox="0 0 100 100" role="img" aria-label="${esc(name)}${dead ? ', dead' : ''}">` +
     `<circle class="sm-rim" cx="50" cy="50" r="48"/><circle class="sm-face" cx="50" cy="50" r="27"/>` +
     `<text class="sm-initial" x="50" y="60" text-anchor="middle">${esc(String(name).slice(0, 1))}</text>` +
     `<text class="name sm-name"><textPath href="#ct-arc-seat" startOffset="25%" text-anchor="middle">${esc(name)}</textPath></text>` +
-    (dead ? '<path class="shroud" d="M38 25h24v40L50 56 38 65z"/>' : '') + '</svg>';
+    (dead ? shroud ? `<image class="shroud shroud-art" href="${esc(shroud)}" x="26" y="18" width="48" height="56" preserveAspectRatio="xMidYMid meet"/>` : '<path class="shroud" d="M38 25h24v40L50 56 38 65z"/>' : '') + '</svg>';
 }
 
 // reminderToken('poisoned', {title: 'poisoned · by Odette', off}) -> a small disc

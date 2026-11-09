@@ -187,3 +187,8 @@ a { color: var(--gold); }
   .agent-ctl input[name="model"] { width: 9rem; } .agent-head .who { min-width: 0; }
   .pools { font-size: 12px; }
 }
+
+/* the owner's own token images (src/ui/art.js, from his git-ignored public/tokens-local/): sized like the drawn tokens they replace */
+img.token { object-fit: contain; border-radius: 50%; }
+img.ghost-coin.spent { opacity: .4; filter: grayscale(1); }
+.bar .art-note { font: 12px var(--sans); }

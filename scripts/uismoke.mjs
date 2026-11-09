@@ -14,6 +14,8 @@
 //   - the pace knob starts on "readable" and every start (one seat, start all) carries its minGap and heartbeat
 //   - nothing on the page posts to a seat's routes (/play/call, /play/storyteller, /play/narrate, /mcp), at run time or in the code
 //   - the recorded game as the page's ?fixture mode sends nothing; a fresh recording from today's engine renders too
+//   - the owner's own token images: a PNG, then a WebP, looked for once per id per page load; the drawn token wherever none loads;
+//     the shroud image over the dead; the game bar counts them; nothing in public/tokens-local is tracked but its README
 import {readFileSync, readdirSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -119,7 +121,7 @@ console.log('tokens');
     'each role token carries its name and its team\'s rim');
   ok(['poisoned', 'is-the-drunk', 'protected', 'master', 'red-herring', 'dead'].every(k => T.REMINDER_ICONS[k]), 'reminder discs exist for poisoned, drunk, protected, master, red herring and dead');
   const src = readFileSync(join(ROOT, 'src/ui/tokens.js'), 'utf8');
-  ok(!/<image|\.png|\.jpe?g|\.webp|https?:\/\//i.test(src), 'the tokens are drawn by hand: no image and no outside link');
+  ok(!/\.png|\.jpe?g|\.webp|https?:\/\//i.test(src), 'the tokens are drawn by hand: no image file and no outside link');
   const markers = document.querySelectorAll('#square .seat .seat-marker');
   ok(markers.length === 7 && JSON.stringify(markers.map(m => m.querySelector('.name').textContent)) === JSON.stringify(names), 'the square renders seven seat markers round the table, in seat order');
   ok(document.querySelectorAll('#square .seat .role-token').every((t, i) => t.dataset.role === w.grimoire.seats[i].role), 'each seat shows its true role as a token');
@@ -332,6 +334,51 @@ app = createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch})
 ok(document.querySelectorAll('#square .seat').length === 7 && document.querySelectorAll('#talk .line.say').length === fresh.frames.end.events.filter(e => e.type === 'say').length, 'a game recorded now renders the same way');
 const stale = JSON.stringify(fresh.frames.end.events.map(e => e.type)) !== JSON.stringify(GAME.frames.end.events.map(e => e.type));
 if (stale) console.log('  note the recorded game differs from today\'s engine: npm run uifixture writes a new one');
+
+// ---- the owner's own token images (a git-ignored local folder) ----
+console.log("the owner's own token images");
+{
+  const A = await import('../src/ui/art.js');
+  const {execFileSync} = await import('node:child_process');
+  const fresh = (artLoad) => {A.resetArt(); install(HTML); return createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch}), fixture: GAME, runnersFixture: RUN, artLoad})};
+  // none in the folder: every token stays drawn, no note
+  let asked = [];
+  let aapp = fresh(async u => {asked.push(u); return false});
+  await aapp.art;
+  const all = [...A.ROLE_IDS, ...A.EXTRA_IDS];
+  ok(asked.length === all.length * 2 && all.every(id => asked.indexOf('/tokens-local/' + id + '.png') >= 0 && asked.indexOf('/tokens-local/' + id + '.png') < asked.indexOf('/tokens-local/' + id + '.webp')),
+    `the page looks for a PNG, then a WebP, for each role, the shroud, the ghost vote and the reminders (${asked.length})`);
+  ok(document.querySelectorAll('img.token').length === 0 && document.querySelectorAll('#square svg.role-token').length === 7 && $('art-note').hidden, 'no images: every token is the drawn one and the game bar says nothing');
+  // a loader that fails outright is the same as no image
+  aapp = fresh(async () => {throw new Error('blocked')});
+  await aapp.art;
+  ok(document.querySelectorAll('img.token').length === 0 && document.querySelectorAll('#grimoire svg.role-token').length === 7, 'an image that fails to load leaves the drawn token');
+  // the first seat's role as a WebP and the shroud as a PNG
+  const E = GAME.frames.end, role0 = E.grimoire.seats[0].role, dead = E.grimoire.seats.filter(s => !s.alive);
+  asked = [];
+  aapp = fresh(async u => {asked.push(u); return u === '/tokens-local/' + role0 + '.webp' || u === '/tokens-local/shroud.png'});
+  ok(document.querySelectorAll('img.token').length === 0, 'before the look answers, the drawn tokens show');
+  await aapp.art;
+  ok(!asked.includes('/tokens-local/shroud.webp'), 'a PNG found is not looked for again as WebP');
+  const same = E.grimoire.seats.filter(s => s.role === role0).length;
+  const sqImg = document.querySelectorAll('#square img.role-token'), grImg = document.querySelectorAll('#grimoire img.role-token');
+  ok(sqImg.length === same && grImg.length === same && [...sqImg, ...grImg].every(i => i.getAttribute('src') === '/tokens-local/' + role0 + '.webp' && i.dataset.role === role0),
+    `the ${role0} WebP replaces its token in the square and the grimoire (${sqImg.length} + ${grImg.length})`);
+  ok(document.querySelectorAll('#square svg.role-token').length === 7 - same && document.querySelectorAll('#grimoire svg.role-token').length === 7 - same, 'every other role keeps its drawn token');
+  ok(dead.length > 0 && document.querySelectorAll('#square .seat-marker image.shroud-art').length === dead.length && document.querySelectorAll('#square .seat-marker path.shroud').length === 0, `the shroud image lies over each dead seat (${dead.length})`);
+  ok(!$('art-note').hidden && $('art-note').textContent === 'local art: 1 of 22 tokens', `the game bar counts the images found (${$('art-note').textContent})`);
+  // looked for once per page load
+  const n = asked.length;
+  install(HTML);
+  aapp = createApp({client: relayClient({base: BASE, fetchImpl: fakeRelay().fetch}), fixture: GAME, runnersFixture: RUN, artLoad: async u => {asked.push(u); return true}});
+  await aapp.art;
+  ok(asked.length === n && document.querySelectorAll('#square img.role-token').length === same, 'the page looks once per load and remembers each answer');
+  A.resetArt();
+  const tracked = execFileSync('git', ['ls-files', 'public/tokens-local'], {cwd: ROOT, encoding: 'utf8'}).split('\n').filter(Boolean);
+  ok(tracked.every(f => f === 'public/tokens-local/README.md'), `nothing in the local art folder is tracked but its README (${tracked.join(', ') || 'none yet'})`);
+  const ignored = f => {try {return execFileSync('git', ['check-ignore', f], {cwd: ROOT, encoding: 'utf8'}).trim() === f} catch {return false}};
+  ok(ignored('public/tokens-local/imp.png') && ignored('public/tokens-local/imp.webp') && !ignored('public/tokens-local/README.md'), 'an image dropped in the folder is git-ignored; its README is not');
+}
 
 console.log(fails ? `${fails} check(s) failed` : 'the page renders the game and changes nothing');
 process.exit(fails ? 1 : 0);
