@@ -4,7 +4,7 @@
 //   /mcp, /play/*  the seats (scripts/relay-mcp.mjs): MCP and plain JSON tools, claims, pacing, readiness, behavior turns, and the
 //                  watcher page's WebSocket
 //   /play/runner*  the runner supervisor (scripts/runners.mjs): the page starts and stops runners (--runners or RELAY_RUNNERS=1)
-//   /tts*          a local voice engine (scripts/providers/tts.mjs), borrowed and off unless RELAY_TTS=1
+//   /tts*          the local voice engine (scripts/providers/tts.mjs): probed at start, RELAY_TTS=0 off, =1 on
 //
 // Providers: scripts/providers/ (anthropic.mjs: Claude; ollama.mjs: local models at OLLAMA_URL, default http://localhost:11434,
 // cost 0; openai.mjs: OpenAI Chat Completions and the Hugging Face router; google.mjs: Gemini through Google's OpenAI-compatible
@@ -26,7 +26,7 @@ import {fileURLToPath} from 'node:url';
 import {dirname, join} from 'node:path';
 import {attachPlay, PLAY_LOG} from './relay-mcp.mjs';
 import {attachRunners} from './runners.mjs';
-import {ttsFromEnv} from './providers/tts.mjs';
+import {ttsFromEnv, HINT} from './providers/tts.mjs';
 import {behaviorLog} from './behavior-log.mjs';
 import {makeProviders, PROVIDERS, isLocal, DEFAULT_MODEL, PRICES, costOf} from './providers/index.mjs';
 import {makeLimiter, rateLimitOf} from './providers/limiter.mjs';
@@ -100,6 +100,40 @@ export function createRelay({providers, model = DEFAULT_MODEL, origin = DEV_ORIG
   return {server};
 }
 
+// The narrator voice. RELAY_TTS unset: probe TTS_URL (default Kokoro-FastAPI on 127.0.0.1:8880) at start, on when it answers, off
+// with the hint when not; RELAY_TTS=0 forces off, =1 forces on (the engine may start later). /tts/status also carries the seat voice
+// map from src/data/voices.js when that file exists (read behind a try, so the relay starts without it).
+// -> {tts: {status, route} | null, probed: Promise}; the promise settles once the start-up probe has logged its line.
+export function makeVoice(env, log = () => {}) {
+  const mode = String(env.RELAY_TTS ?? '').trim();
+  const forcedOff = /^(0|false|no|off)$/i.test(mode), forced = /^(1|true|yes|on)$/i.test(mode);
+  const engine = ttsFromEnv(env, forcedOff ? {enabled: false} : {});
+  const st = {off: forcedOff, reason: forcedOff ? 'off (RELAY_TTS=0)' : 'off (no engine answered at start; start Kokoro and restart the relay)', seatVoices: null};
+  const loaded = import('../src/data/voices.js').then(m => {const v = m.SEAT_VOICES || m.VOICES || m.default; st.seatVoices = v && typeof v === 'object' ? v : null}).catch(() => {});
+  const tts = {
+    async status() {
+      if (st.off) return {enabled: false, ok: false, engine: null, voices: [], error: st.reason, hint: HINT.replace('{url}', engine.url), ...(st.seatVoices ? {seatVoices: st.seatVoices} : {})};
+      const s = await engine.status(); return st.seatVoices ? {...s, seatVoices: st.seatVoices} : s;
+    },
+    route(req, res, send, headers) {
+      const p = new URL(req.url, 'http://x').pathname;
+      if (st.off) {
+        if (req.method === 'GET' && p === '/tts/status') {tts.status().then(s => send(200, s)); return true}
+        send(503, {error: 'narrator voice is off', hint: HINT.replace('{url}', engine.url)}); return true;
+      }
+      if (req.method === 'GET' && p === '/tts/status') {tts.status().then(s => send(200, s)); return true}
+      return engine.route(req, res, send, headers);
+    },
+  };
+  if (forcedOff) {log('[relay] voice engine off (RELAY_TTS=0)'); return {tts, probed: Promise.resolve()}}
+  const probed = loaded.then(() => engine.status()).then(s => {
+    if (s.ok) log(`[relay] voice engine found (${s.voices.length} voices) at ${s.url}${st.seatVoices ? ', seat voices mapped' : ''}`);
+    else if (forced) log(`[relay] voice engine forced on (RELAY_TTS=1) but not answering at ${engine.url}: ${s.error}`);
+    else {st.off = true; log('[relay] voice engine not found. ' + HINT.replace('{url}', engine.url))}
+  }).catch(() => {});
+  return {tts, probed};
+}
+
 // startRelay({env, argv, port, log}) -> {server, play, sup, quit, ready: Promise<port>}: what `npm run relay` runs; the checks start it too.
 export function startRelay({env = loadEnv(), argv = process.argv, port = Number(env.RELAY_PORT || PORT), log = console.log} = {}) {
   const playOnly = argv.includes('--play-only');
@@ -112,7 +146,7 @@ export function startRelay({env = loadEnv(), argv = process.argv, port = Number(
   const providers = makeProviders({anthropicClient, model, env});
   const limits = makeLimits(env);
   const behavior = argv.includes('--no-behavior') || /^(0|false|no|off)$/i.test(env.RELAY_BEHAVIOR || '') ? null : behaviorLog({game: env.CLOCKTOWER_GAME || 'clocktower', log});
-  const tts = /^(1|true|yes|on)$/i.test(env.RELAY_TTS || '') ? ttsFromEnv(env) : null; // the borrowed voice engine: off unless asked
+  const {tts, probed} = makeVoice(env, log);
   let play = null;
   const {server} = createRelay({providers, model, origin, limits, tts, seats: () => play ? play.backend.info() : {}});
   const flag = k => {const i = argv.indexOf(k); return i >= 0 && argv[i + 1] != null && !String(argv[i + 1]).startsWith('--') ? argv[i + 1] : null};

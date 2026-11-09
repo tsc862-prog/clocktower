@@ -38,7 +38,8 @@ export const listNames = names => names.length ? names.join(', ') : 'nobody';
 // dropped here, so a mistake on the game side still stops at this door.
 export const EVENT_KINDS = ['say', 'pass', 'whisper', 'whisper-seen', 'dawn', 'phase', 'narration', 'nomination', 'vote-result',
   'vote-closed', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'death', 'win', 'told'];
-const DEATHS = ['execution', 'death', 'slayer-shot', 'virgin'];
+// a shot or a Virgin's answer is counted apart from the death it may bring (the death has its own event): one count each (#37)
+const DEATHS = ['execution', 'death'];
 export function cleanEvent(view, me, e) {
   if (!e || typeof e !== 'object' || !EVENT_KINDS.includes(e.type)) return null;
   const isMe = x => x === me || (x != null && x === view?.name);
@@ -78,9 +79,9 @@ export function whatsNew(game, seat, since, api) {
   const said = evs.filter(e => e.type === 'say' && e.from !== view.name).length;
   const out = {since: from, last: evs.length ? evs[evs.length - 1].id : from, said,
     whispers: evs.filter(e => e.type === 'whisper' && e.from !== view.name).length, seen: n('whisper-seen'),
-    nominations: n('nomination'), votes: n('vote-result'), dawn: n('dawn'), deaths: evs.filter(e => DEATHS.includes(e.type)).length, narration: n('narration'),
+    nominations: n('nomination'), shots: n('slayer-shot'), votes: n('vote-result'), dawn: n('dawn'), deaths: evs.filter(e => DEATHS.includes(e.type)).length, narration: n('narration'),
     told: n('told'), phase: n('phase')};
-  out.total = said + out.whispers + out.seen + out.nominations + out.votes + out.dawn + out.deaths + out.narration + out.told + out.phase;
+  out.total = said + out.whispers + out.seen + out.nominations + out.shots + out.votes + out.dawn + out.deaths + out.narration + out.told + out.phase;
   return out;
 }
 export function newsLine(w) {
@@ -90,6 +91,7 @@ export function newsLine(w) {
   add('whispers', 'whisper to you', 'whispers to you');
   add('seen', 'whisper seen', 'whispers seen');
   add('nominations', 'nomination', 'nominations');
+  add('shots', "Slayer's shot", "Slayer's shots");
   add('votes', 'vote result', 'vote results');
   add('dawn', 'dawn report', 'dawn reports');
   add('deaths', 'death by day', 'deaths by day');
@@ -112,6 +114,7 @@ export function askedOf(game, view, me, p) {
   if (!p || typeof p !== 'object') return null;
   if (p.kind === 'choose') {
     if (p.seat != null && p.seat !== me) return null;
+    if (p.standing) return null; // a standing day ability waits on nobody: shotOf says it as a may, slay answers it (#37)
     const role = (p.role && p.role === view.role?.id ? view.role.name : optionLabel(game, view, p.role)) || view.role?.name || 'your role';
     const options = (p.options || []).map(o => optionLabel(game, view, o));
     const count = p.count || 1;
@@ -154,7 +157,12 @@ export function clockLine(v, me) {
   if (v.phase === 'ended') return `The game is over${v.winner ? `: ${v.winner.team || v.winner} wins` : ''}.`;
   return 'The game is being set up.';
 }
-export function usefulTools(v, asked, news, waiting) {
+// The useful tools: what fits now, then slay while a standing shot is unspent (the shot never narrows the list, #37).
+export function usefulTools(v, asked, news, waiting, shot) {
+  const list = baseTools(v, asked, news, waiting);
+  return shot && !list.includes('slay') ? [...list, 'slay'] : list;
+}
+function baseTools(v, asked, news, waiting) {
   if (waiting) return news?.total ? ['read_talk', 'look', 'my_notes'] : ['look', 'my_notes', 'note']; // nothing to act on: reads only
   // the dead are never in toSpeak: pass means nothing to them; they may still speak and whisper
   if (v.alive === false && v.phase === 'day' && asked?.kind !== 'vote' && asked?.tool !== 'night_choice') return news?.total ? ['read_talk', 'speak', 'whisper'] : ['speak', 'whisper', 'read_talk'];
@@ -170,15 +178,36 @@ export function usefulTools(v, asked, news, waiting) {
 // The game says whether a seat can act (canAct) and when its next turn comes (nextTurnText) in src/game/api.js; until those
 // exist, the clock answers: a living seat by day, before nominations, that has had its turn this round. Null when the seat
 // can act, or something waits on it, or it is not day.
+// An unspent standing shot makes the game's canAct true; the wait is then judged as if the shot were not there, and the
+// text says "nothing else to do" (the shot line beside it says what is still open).
 export function waitingOf(game, a, v, me, asked) {
   if (v.phase !== 'day' || v.winner || (asked && !asked.done)) return null;
+  const shot = shotOf(game, a, v, me);
   let cannot;
-  if (typeof a?.canAct === 'function') {try {cannot = !a.canAct(game, me)} catch {cannot = false}}
+  if (shot) {const c = v.clock || {}; cannot = v.alive !== false && (c.nominationsOpen ? !asked : Array.isArray(c.toSpeak) && !c.toSpeak.includes(me))}
+  else if (typeof a?.canAct === 'function') {try {cannot = !a.canAct(game, me)} catch {cannot = false}}
   else {const c = v.clock || {}; cannot = v.alive !== false && !c.nominationsOpen && Array.isArray(c.toSpeak) && !c.toSpeak.includes(me)}
   if (!cannot) return null;
   let next = null;
-  if (typeof a?.nextTurnText === 'function') {try {next = a.nextTurnText(game, me)} catch {next = null}}
-  return {text: waitText(v, typeof next === 'string' && next.trim() ? next.trim() : nextFromClock(v, asked))};
+  if (!shot && typeof a?.nextTurnText === 'function') {try {next = a.nextTurnText(game, me)} catch {next = null}}
+  const text = waitText(v, typeof next === 'string' && next.trim() ? next.trim() : nextFromClock(v, asked));
+  return {text: shot ? text.replace('nothing to do', 'nothing else to do') : text};
+}
+
+// ---- a standing day ability: the Slayer's shot (#37) ----
+// The api's dayActionFor says whether this seat may fire a day ability now. Said as a may, never "WAITING ON YOU": the seat
+// talks, whispers, passes and nominates as before, and slay fires it (or "hold" keeps it). Null with no shot, or with an api
+// that has no dayActionFor.
+export function shotOf(game, a, v, me) {
+  if (typeof a?.dayActionFor !== 'function' || v.phase !== 'day' || v.winner || v.alive === false) return null;
+  let d = null;
+  try {d = a.dayActionFor(game, me)} catch {d = null}
+  if (!d) return null;
+  const role = d.ability === v.role?.id ? v.role.name : optionLabel(game, v, d.ability);
+  const options = (d.options || []).filter(o => o !== null).map(o => optionLabel(game, v, o));
+  const text = d.ability === 'slayer' ? 'Your shot is unspent: slay <name> any time today, or hold it.'
+    : `Your ${role} ability is unspent: slay <name> uses it any time today, or hold it.`;
+  return {ability: d.ability, role, options, tool: 'slay', text};
 }
 function nextFromClock(v, asked) {
   const c = v.clock || {};
@@ -230,7 +259,7 @@ export function playerHeader(game, seat, api) {
   const living = seats.filter(s => s.alive).map(s => s.name), dead = seats.filter(s => !s.alive).map(s => s.name);
   const news = whatsNew(game, me, undefined, a);
   const asked = askedOf(game, v, me, a.pendingFor(game, me));
-  const waiting = waitingOf(game, a, v, me, asked);
+  const waiting = waitingOf(game, a, v, me, asked), shot = shotOf(game, a, v, me);
   const stakes = stakesLine(v), nudge = nudgeLine(v, asked, waiting);
   const lines = [
     `You are ${v.name}, the ${role.name || 'unknown role'} (${role.team || '?'}, ${sideOf(role.team)}), ${life}.`,
@@ -241,8 +270,9 @@ export function playerHeader(game, seat, api) {
   ];
   if (asked && !asked.done) lines.push(`**WAITING ON YOU: ${asked.text}**`);
   if (waiting) lines.push(waiting.text);
+  if (shot) lines.push(shot.text);
   if (nudge) lines.push(nudge);
-  const useful = usefulTools(v, asked, news, waiting);
+  const useful = usefulTools(v, asked, news, waiting, shot);
   lines.push(`Useful now: ${useful.join(', ')}.${useful.includes('speak') ? ' Speak without your name in front.' : ''}`);
   if (v.alive === false && v.phase === 'day' && !waiting) lines.push(`You are dead: you may still speak and whisper${v.ghostVote ? ', and vote once with your ghost vote' : ''}; there is nothing to pass.`);
   return lines.join('\n');
