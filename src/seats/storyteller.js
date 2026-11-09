@@ -71,8 +71,14 @@ export function valueWords(game, p, v) {
 export function truthWords(game, p) {
   if (p.kind === 'info' && Array.isArray(p.truth)) return p.truth.length ? p.truth.map(v => valueWords(game, p, v)).join(' | ') : 'nothing true to say';
   if (p.kind === 'register') return `${roleLabel(game, p.options[0])} (registers as itself)`;
-  if (p.kind === 'mayor-bounce') return `${seatLabel(game, p.subject)} dies (no bounce)`;
-  return null;
+  return null; // the Mayor's bounce has no truth: where the kill lands is the Storyteller's call (#90), see choiceWords
+}
+
+// A call the rules leave wholly to the Storyteller, said so plainly (#90: a Mayor ruling called "no bounce" the true outcome).
+export function choiceWords(game, p) {
+  if (p.kind !== 'mayor-bounce') return null;
+  const m = seatLabel(game, p.subject), others = (p.options || []).filter(v => v !== p.subject).length;
+  return `Your call, not a rule: the kill may land on ${m} (the Mayor dies) or bounce to any of ${others} other players; neither is "the truth". Weigh how close the game is and who a bounce would hit, and say what you weighed`;
 }
 
 // Why the decision is asked, and whether the ability it serves malfunctions.
@@ -85,7 +91,7 @@ export function malfunctionWords(game, p) {
 
 // The whole decision for the Storyteller: a plain object a tool returns and the header shortens.
 export function describePending(game, p, {max = 40} = {}) {
-  const truth = truthWords(game, p), bad = malfunctionWords(game, p);
+  const truth = truthWords(game, p), bad = malfunctionWords(game, p), choice = choiceWords(game, p);
   const opts = (p.options || []).map((v, k) => `#${k + 1} ${valueWords(game, p, v)}`);
   return {
     kind: p.kind,
@@ -97,6 +103,7 @@ export function describePending(game, p, {max = 40} = {}) {
     ...(p.why ? {why: p.why} : {}),
     malfunctioning: !!p.malfunctioning,
     ...(bad ? {note: bad + '; choose what makes the best game'} : {}),
+    ...(choice ? {yourCall: choice} : {}),
     pick: p.count ? `exactly ${p.count} different options` : 'one option',
     options: opts.length > max ? [...opts.slice(0, max), `... and ${opts.length - max} more of the same form`] : opts,
     count: opts.length,
@@ -198,8 +205,9 @@ export const diedWords = game => (diedNames(game).length ? `${diedNames(game).jo
 const executedNames = game => (game.executed || []).map(e => seatLabel(game, e.seat));
 export const executedWords = game => (executedNames(game).length ? `executed so far: ${executedNames(game).join(', ')}` : 'nobody has been executed yet');
 
-// A narration against the game: an error naming the truth when it states a clock fact that is false, else null.
-export function narrationError(game, text) {
+// A narration against the game: an error naming the truth when it states a clock fact that is false, or tells the owed
+// happening otherwise than it happened, else null.
+export function narrationError(game, text, api = ST_API) {
   const ph = phaseOf(game), sentences = String(text).split(/(?<=[.!?])\s+/);
   const names = sent => (game.seats || []).map(x => x.name).filter(n => new RegExp(`\\b${String(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(sent));
   const dated = t => /\bday\s*\d|yesterday|last (?:day|night)/i.test(t);
@@ -220,6 +228,20 @@ export function narrationError(game, text) {
       if (!nobody && who.length && !who.some(n => executedNames(game).includes(n))) return `Not true: ${executedWords(game)}.`;
     }
   }
+  // the owed narration as it happened (#90): a death by a nomination had no vote; a shot that missed killed nobody; the end
+  // names the side that won
+  let owed = null; try {owed = narrationOwed(game, api)} catch {}
+  const all = String(text), esc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (owed?.kind === 'execution' && owed.how === 'virgin' && /\bvot(?:e|ed|es|ing)\b/i.test(all) && !/\b(?:no|without|never|nor|not|before any|before a)\b[^.;]{0,30}\bvot/i.test(all)) {
+    return `Not true: ${owed.fact}. Say what happened as it happened.`;
+  }
+  if (owed?.kind === 'shot' && !owed.died && new RegExp(`\\b${esc(owed.name)}\\b[^.;]{0,40}\\b(?:died|dies|dead|fell|killed)\\b`, 'i').test(all) && !/\b(?:not|n't|never|no)\b/i.test(all)) {
+    return `Not true: ${owed.fact}.`;
+  }
+  if (owed?.kind === 'end' && (owed.team === 'good' || owed.team === 'evil')) {
+    const other = owed.team === 'good' ? 'evil' : 'good';
+    if (new RegExp(`\\b${other}\\b[^.;]{0,40}\\b(?:wins?|won|prevails?|prevailed|triumphs?|triumphed)\\b`, 'i').test(all)) return `Not true: ${owed.text}.`;
+  }
   return null;
 }
 
@@ -232,48 +254,112 @@ export function dawnOwed(game, api = ST_API) {
 }
 const seedOf = game => game?.config?.seed ?? 0;
 
-// The last execution, when the table has not heard the Storyteller since and no dawn has come after it: {day, name, touch}.
+// ---- what happened by day, as it happened (#90): an execution by the vote, one at once by a nomination (the Virgin), a shot ----
+// The day's public happenings after event id `after`: executions and shots, each with how it came about. Never a role: the
+// facts are what the table saw. [{kind: 'execution'|'shot', how, day, seat, name, fact, ...}]
+export function dayHappenings(game, evs, after = 0) {
+  const out = [];
+  for (const e of evs) {
+    if (!(e.id > after)) continue;
+    if (e.type === 'execution' && Number.isInteger(e.seat)) {
+      const name = seatLabel(game, e.seat), day = e.day ?? game.day;
+      const how = e.how || (game.executed || []).find(x => x.seat === e.seat && (x.day ?? day) === day)?.how || 'vote';
+      if (how === 'virgin') {
+        const v = evs.filter(x => x.type === 'virgin' && x.id < e.id && x.nominator === e.seat).at(-1);
+        const nominee = v && Number.isInteger(v.seat) ? seatLabel(game, v.seat) : null;
+        out.push({kind: 'execution', how, day, seat: e.seat, name, nominee,
+          fact: `${name} nominated ${nominee || 'a player'} and was executed at once on Day ${day}, by the nomination itself: no vote was taken`});
+      } else {
+        const vote = evs.filter(x => x.type === 'vote' && x.id < e.id && x.block && x.block.seat === e.seat && (x.day ?? day) === day).at(-1);
+        const tally = vote && Number.isFinite(vote.tally) ? `, ${vote.tally} votes${Number.isFinite(vote.need) ? ` (${vote.need} needed)` : ''}${Number.isInteger(vote.by) ? `, nominated by ${seatLabel(game, vote.by)}` : ''}` : '';
+        out.push({kind: 'execution', how: 'vote', day, seat: e.seat, name, fact: `${name} was executed at dusk on Day ${day}, by the town's vote${tally}`});
+      }
+    } else if (e.type === 'slayer-shot' && Number.isInteger(e.target)) {
+      const shooter = seatLabel(game, e.seat), target = seatLabel(game, e.target), day = e.day ?? game.day;
+      const died = evs.some(x => x.type === 'death' && x.seat === e.target && x.id > e.id && (x.cause ?? 'slayer') === 'slayer');
+      out.push({kind: 'shot', how: 'shot', day, seat: e.target, name: target, shooter, died,
+        fact: `${shooter} shot at ${target} on Day ${day}: ${died ? `${target} fell dead` : `nothing happened, ${target} lives`}`});
+    }
+  }
+  return out;
+}
+
+// The last execution or shot the table has not heard the Storyteller on (no narration and no dawn since):
+// {kind: 'execution'|'shot', day, name, how, fact, touch, also: [earlier facts not yet narrated]}; null when none is owed.
 export function executionOwed(game, api = ST_API) {
   const ph = phaseOf(game);
   if (ph !== 'day' && ph !== 'night') return null;
-  const evs = tableEvents(game, api, 0), ex = evs.filter(e => (e.type === 'execution' || e.type === 'virgin') && Number.isInteger(e.seat)).at(-1);
-  if (!ex || evs.some(e => (e.type === 'narration' || e.type === 'dawn') && e.id > ex.id)) return null;
-  const day = ex.day ?? game.day;
-  return {day, name: seatLabel(game, ex.seat), touch: touchFor(seedOf(game), day, 'dusk')};
+  const evs = tableEvents(game, api, 0);
+  const told = evs.filter(e => e.type === 'narration' || e.type === 'dawn').at(-1)?.id ?? 0;
+  const hs = dayHappenings(game, evs, told);
+  if (!hs.length) return null;
+  const last = hs.at(-1);
+  return {...last, touch: touchFor(seedOf(game), last.day, 'dusk'), also: hs.slice(0, -1).map(h => h.fact)};
 }
 
-// The end of the game, when it has not been narrated: {text}.
+// The end of the game, when it has not been narrated: {text, team, unheard: [facts the table never heard told], roles: [...]}.
 export function endOwed(game, api = ST_API) {
   if (phaseOf(game) !== 'ended') return null;
   const evs = tableEvents(game, api, 0), win = evs.filter(e => e.type === 'win').at(-1);
   if (evs.some(e => e.type === 'narration' && (!win || e.id > win.id))) return null;
-  return {text: game.winner?.text || win?.text || 'the game has ended'};
+  const w = game.winner || {}, told = evs.filter(e => e.type === 'narration' || e.type === 'dawn').at(-1)?.id ?? 0;
+  const unheard = dayHappenings(game, evs, told).map(h => h.fact);
+  // a game that ends in the night ends before its dawn (last, as it came last): the night's deaths were never told (#90: game 4's last night)
+  if (w.phase === 'night' && diedNames(game).length) unheard.push(`in the night ${diedNames(game).join(' and ')} died`);
+  const roles = (game.seats || []).map(s => `${s.name} the ${roleLabel(game, s.role)}${s.believed && s.believed !== s.role ? ` (believed ${roleLabel(game, s.believed)})` : ''}`);
+  return {text: w.text || win?.text || 'the game has ended', team: w.team || win?.team || null, unheard, roles};
 }
 
-// The narration the table is owed now, the first of: the end, the dawn, the execution. {kind, ...} or null.
+// The narration the table is owed now, the first of: the end, the dawn, an execution or a shot. {kind, ...} or null.
 export function narrationOwed(game, api = ST_API) {
   try {
-    const end = endOwed(game, api); if (end) return {kind: 'end', ...end};
-    const dawn = dawnOwed(game, api); if (dawn) return {kind: 'dawn', ...dawn};
-    const ex = executionOwed(game, api); if (ex) return {kind: 'execution', ...ex};
+    const end = endOwed(game, api); if (end) return {...end, kind: 'end'};
+    const dawn = dawnOwed(game, api); if (dawn) return {...dawn, kind: 'dawn'};
+    const ex = executionOwed(game, api); if (ex) return {...ex, kind: ex.kind === 'shot' ? 'shot' : 'execution'};
   } catch {}
   return null;
 }
+const owedWhy = owed => owed.kind === 'dawn' ? `the dawn of day ${owed.day} is not yet narrated`
+  : owed.kind === 'execution' ? `${owed.name}'s execution is not yet narrated`
+  : owed.kind === 'shot' ? `${owed.shooter}'s shot at ${owed.name} is not yet narrated`
+  : 'the end of the game is not yet narrated';
 
-// The owed narration in the header: the call (its first line) and the makings of the line (death, day, a touch of the town).
+// The owed narration in the header: the call (its first line) and the makings of the line (what happened and how, a touch).
 export function owedLines(game, owed) {
   if (!owed) return [];
+  const notRole = 'about the person, never a role, nothing that echoes what they claimed';
   if (owed.kind === 'dawn') {
     const died = owed.deaths.length ? `${owed.deaths.join(' and ')} died in the night` : 'nobody died in the night';
-    const person = owed.deaths.length ? ` A death deserves a sentence about the person: ${owed.deaths.join(' and ')} as a neighbour (where found, what is left), never a role.` : '';
+    const person = owed.deaths.length ? ` A death deserves a sentence about the person: ${owed.deaths.join(' and ')} as a neighbour (where found, what is left), never a role, nothing that echoes what they claimed.` : '';
     return [`DAWN NOT YET NARRATED (Day ${owed.day}): ${died}. Narrate it now, before anything else.`,
       `Makings: Day ${owed.day}; ${died}; touch of the town: ${owed.touch}. Exactly two sentences: what happened, then the touch in your words.${person}`];
   }
-  if (owed.kind === 'execution') {
-    return [`EXECUTION NOT YET NARRATED: ${owed.name} was executed at dusk on Day ${owed.day}. Narrate it now, before anything else.`,
-      `Makings: ${owed.name}, and the dusk: ${owed.touch}. One sentence: the execution and that touch in your own words, about the person, never a role.`];
+  const also = owed.also?.length ? ` Also not yet told: ${owed.also.join('; ')}.` : '';
+  if (owed.kind === 'execution' && owed.how === 'virgin') {
+    return [`EXECUTION NOT YET NARRATED: ${owed.fact}. Narrate it now, before anything else.`,
+      `Makings: ${owed.name} died the moment the nomination was made: no vote, no wait for dusk; touch: ${owed.touch}. One sentence: what happened as it happened, ${notRole}.${also}`];
   }
-  return [`THE END NOT YET NARRATED: ${owed.text}. Narrate it now: one sentence; roles may be named now.`];
+  if (owed.kind === 'execution') {
+    return [`EXECUTION NOT YET NARRATED: ${owed.fact}. Narrate it now, before anything else.`,
+      `Makings: ${owed.name}, put to death by the vote, and the dusk: ${owed.touch}. One sentence: the execution and that touch in your own words, ${notRole}.${also}`];
+  }
+  if (owed.kind === 'shot') {
+    return [`SHOT NOT YET NARRATED: ${owed.fact}. Narrate it now, before anything else.`,
+      `Makings: ${owed.shooter} fired at ${owed.name} in front of the town; ${owed.died ? `${owed.name} fell dead` : 'nothing happened'}. One sentence: what came of it, ${owed.died ? 'about the person' : 'plainly'}, never a role (not even the one claimed).${also}`];
+  }
+  const unheard = owed.unheard?.length ? ` Not yet told: ${owed.unheard.join('; ')}.` : '';
+  return [`THE END NOT YET NARRATED: ${owed.text}. Narrate it now, before anything else.`,
+    `Makings:${unheard} Who was who: ${owed.roles.join(', ')}. Two or three sentences: what happened last, who won and how, and who the demon and its minions were; roles may be named now.`];
+}
+
+// A plain narration of what is owed, for the scripted fallback (the runner gone and the owner resumed): the facts, no colour.
+const sentence = f => f.charAt(0).toUpperCase() + f.slice(1) + '.';
+export function scriptedNarration(game, owed) {
+  if (!owed) return null;
+  if (owed.kind === 'dawn') return `Day ${owed.day} begins in Thistlewick: ${owed.deaths.length ? `${owed.deaths.join(' and ')} died in the night` : 'nobody died in the night'}.`;
+  if (owed.kind === 'execution' || owed.kind === 'shot') return [...(owed.also || []), owed.fact].map(sentence).join(' ');
+  const t = `The game is over: ${owed.text}.${owed.unheard?.length ? ' ' + owed.unheard.map(sentence).join(' ') : ''} Who was who: ${owed.roles.join(', ')}.`;
+  return t.length > 600 ? t.slice(0, 597) + '...' : t;
 }
 
 // The day is done: nominations open, nothing on the table, every living seat has nominated or passed on nominating.
@@ -293,7 +379,7 @@ export function storytellerDue(game, api = ST_API) {
   let p = null;
   try {p = api.pendingFor(game, 'storyteller')} catch {}
   const owed = narrationOwed(game, api);
-  if (owed) return {tool: 'narrate', why: owed.kind === 'dawn' ? `the dawn of day ${owed.day} is not yet narrated` : owed.kind === 'execution' ? `${owed.name}'s execution is not yet narrated` : 'the end of the game is not yet narrated'};
+  if (owed) return {tool: 'narrate', why: owedWhy(owed)};
   if (p) return {tool: 'decide', why: `${KIND_WORDS[p.kind] || p.kind} waits on you`};
   if (dayDone(game)) return {tool: 'end_day', why: 'every living player has nominated or passed'};
   return null;
@@ -367,6 +453,7 @@ export function storytellerHeader(game, api = ST_API) {
       const ts = d.truth.split(' | '), truth = ts.length > 3 ? `${ts.slice(0, 3).join(' | ')} | and ${ts.length - 3} more true` : d.truth;
       lines.push(`Truth: ${truth}.${d.malfunctioning ? ' ' + malfunctionWords(game, p) + '.' : ''}`);
     }
+    if (d.yourCall) lines.push(d.yourCall + '.');
     lines.push(`Legal (${d.offered}): ${opts}`);
   } else if (ph !== 'ended') {
     lines.push(`Waiting on ${waitingOn(game)}.`);

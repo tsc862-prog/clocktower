@@ -90,6 +90,10 @@ async function main() {
     await req(base, '/play/runner/stop-all', {method: 'POST', origin: PAGE, body: {why: 'the check is done'}});
     const look = await req(base, '/play/call', {method: 'POST', body: {player: 1, runner: 'mockgamecheck', tool: 'look', args: {}}});
     ok(!!look.winner, `a winner: ${look.winner || 'none'}`);
+    // #90: the end is narrated before the Storyteller's runner stops (here the scripted one: the plain facts and every role)
+    const watched = ((await req(base, '/play/watch?since=0', {origin: PAGE})).events) || [];
+    const winAt = watched.findIndex(e => e.type === 'win'), endLine = winAt >= 0 ? watched.slice(winAt + 1).find(e => e.type === 'narration') : null;
+    ok(!!endLine && /^The game is over: (good|evil) wins/.test(endLine.text) && /Who was who: /.test(endLine.text), `the end is narrated after the win, roles revealed: ${endLine ? endLine.text.slice(0, 160) : 'no narration after the win'}`);
     console.log(`  game budget: players $${v.game.players.spent} of $${v.game.players.budget}, Storyteller $${v.game.storyteller.spent} of $${v.game.storyteller.budget}`);
     ok(v.game.players.spent > 0 && v.game.storyteller.spent > 0, 'the game budget counts the players\' and the Storyteller\'s spend apart');
 
@@ -112,7 +116,9 @@ async function main() {
     const turns = jsonl(join(env.BEHAVIOR_DIR, 'clocktower', 'turns.jsonl')), counted = v.runners.reduce((n, r) => n + r.turns, 0);
     const allTurnLines = Object.values(turnLines).reduce((n, t) => n + t.filter(l => !/\] failed \| run \$/.test(l)).length, 0); // the local loop writes no behavior line for a turn that failed outright
     ok(turns.length > 0 && turns.length === allTurnLines, `the behavior log has one line per turn (${turns.length} lines, ${allTurnLines} turn lines in the runner logs, ${counted} counted by the supervisor)`);
-    const late = turns.filter(t => Date.parse(t.ts) - (t.seconds || 0) * 1000 > tWin + 3000); // a turn that began after the win (3 s for the win's own poll)
+    // a turn that began after the win (3 s for the win's own poll); the Storyteller's one turn that narrates the end is owed (#90)
+    const endTurn = t => t.seat === 'storyteller' && t.wake && /^narrate: the end/.test(t.wake.why || '');
+    const late = turns.filter(t => Date.parse(t.ts) - (t.seconds || 0) * 1000 > tWin + 3000 && !endTurn(t));
     ok(!late.length, `no turn begins after the game is over${late.length ? ': ' + late.map(t => t.seat + (t.player ? ' #' + t.player : '') + ' ' + t.ts).join(', ') : ''}`);
     const empty = turns.filter(t => !(t.brief && typeof t.brief.text === 'string' && t.brief.text.trim()));
     ok(!empty.length, `every turn played from a non-empty header${empty.length ? ': ' + empty.length + ' without' : ''}`);
