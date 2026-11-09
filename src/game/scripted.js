@@ -7,13 +7,13 @@ import {teamOf, isEvilTeam, findToken} from './grimoire.js';
 import {PENDING_KINDS, optionKey} from './mechanics.js';
 
 export function createScripted(seed) {
-  const rng = createRng((hashSeed(seed) ^ 0x5eed5eed) >>> 0);
+  const rng = createRng((hashSeed(seed) ^ 0x5eed5eed) >>> 0), memo = new Set();
   const answerFor = state => {
     const p = state.pending;
     if (!p) throw new Error('nothing pending');
     const f = KINDS[p.kind];
     if (!f) throw new Error(`no scripted answer for ${p.kind}`);
-    return f(state, p, rng);
+    return f(state, p, rng, memo);
   };
   return answerFor;
 }
@@ -60,6 +60,18 @@ const CHOOSE = {
   },
 };
 
+function dayAction(state, p, rng, memo, now) {
+  if (!now) return null;
+  for (const d of p.dayActions || []) {
+    const k = `${state.day}:${d.by}:${d.ability}`;
+    if (memo.has(k)) continue;
+    memo.add(k);
+    const f = CHOOSE[d.ability], v = f ? f(state, {seat: d.by, options: d.options}, rng) : null;
+    if (v != null) return {by: d.by, ability: d.ability, target: v};
+  }
+  return null;
+}
+
 const KINDS = {
   'believed-role': (state, p, rng) => rng.pick(p.options),
   'red-herring': (state, p, rng) => rng.pick(p.options),
@@ -79,9 +91,12 @@ const KINDS = {
     if (p.count) return f ? f(state, p, rng) : rng.shuffle(p.options).slice(0, p.count);
     return f ? f(state, p, rng) : rng.pick(p.options);
   },
-  nomination: (state, p, rng) => {
+  nomination: (state, p, rng, memo) => {
     const t = state.today, made = t.nominators.length;
-    if (!rng.chance(made === 0 ? 0.9 : made === 1 ? 0.55 : 0.3)) return null;
+    // a standing day action (the Slayer's shot) is weighed once a day: after the day's first vote, or before the day ends
+    const shot = dayAction(state, p, rng, memo, t.votes.length > 0);
+    if (shot) return shot;
+    if (!rng.chance(made === 0 ? 0.9 : made === 1 ? 0.55 : 0.3)) return dayAction(state, p, rng, memo, true) ?? null;
     const live = p.options.filter(Boolean);
     const by = rng.pick([...new Set(live.map(o => o.by))]);
     const targets = live.filter(o => o.by === by && o.target !== by && state.seats[o.target].alive).map(o => o.target);

@@ -20,7 +20,7 @@
 - Virgin: used on first nomination even if poisoned; registering via the nominator (Spy may register as townsfolk). The Drunk is an outsider to the Virgin.
 - Butler: a yes counts only if the master's yes is in the same vote; a voided yes does not spend a ghost vote; poisoned Butler votes freely; dead Butler votes freely.
 - Ghost vote spent only by a counted yes. Bar = ceil(alive/2); a tie clears the block but keeps the bar.
-- Slayer offered once at the start of each day (open: mid-day shots come with slice 5).
+- Slayer: a standing day action, callable any time the day's table ask waits (see Game 1 fixes); never offered at dawn.
 - Red herring: any good seat, may be the Fortune Teller.
 
 ## The api and backend (slice 3)
@@ -33,3 +33,11 @@
 - backend.js: no Date.now (gamecheck forbids clocks in src/game): the scripted Storyteller is a setTimeout(grace) reset by each new decision and each Storyteller call. Seen-tracking for the soft wake: brief, wake, and ctx.api.events mark seen.
 - An api game driven by createScripted makes exactly the sim's engine answers (apicheck holds this for seeds 1-5, 7).
 - Seed 3 deals Odette the Spy: her told carries the whole grimoire, so leak checks on her allow roles named in her told.
+
+## Game 1 fixes (#30, #29, #37)
+- Day clock: `clockStarted(game)` = phase day, step 'nominations', no winner. say/pass refuse before it (night, a dawn being resolved, dusk) and a refused act records nothing (act() pushes to game.actions only after impl returns).
+- The engine goes from dawn straight to step 'nominations'; no dawn day-actions loop any more. A standing day action is a hook `dayAction: {available, options, question, *act}`; the day's table ask carries `pending.dayActions` [{by, ability, options, question}], answered `{by, ability, target}` (validate checks it), resolved at once, then the table ask comes again (new pending id).
+- api: `dayActionFor`, `dayAction(seat, target|null)` (null keeps it, a no-op); refused during a vote or a Storyteller ruling, dead, spent, no ability. pendingFor shows it as `{kind: 'choose', standing: true, options: [null, ...]}` only once the seat has taken its say-or-pass this round (or nominations are open and it has no nomination left), so it never hides the seat's turn (the mock mind answered "nobody" forever otherwise). mustAct ignores standing; answer() routes a standing choose to dayAction.
+- `canAct(game, seat)`: mustAct, or (clock running) a standing action, its round turn, or a nomination/pass on nominating. `nextTurnText` returns a phrase starting "until ..." (the player header wraps it "nothing to do until ...").
+- backend pace: soft only if unseen AND (winner, Storyteller, a seat never shown the game, or canAct); the heartbeat's why adds "nothing to do until ...".
+- Scripted Slayer: weighs the shot once a day (memo in createScripted) after the day's first vote, or before the scripted table ends the day. Seed 2's transcript moved; 1 and 3 did not. Seed 10 shoots (apicheck covers it).

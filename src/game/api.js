@@ -13,6 +13,12 @@
 // calls endDay or every living seat has nominated or passed on nominating. A table vote is cast one seat at a time into
 // game.ballot and handed to the engine when every voter has voted (or the Storyteller closes the vote).
 //
+// A day's clock starts when the engine reaches the day's table decision (step 'nominations'); before that (night, or a
+// dawn still being resolved) say and pass are refused, and a refused call never counts as a seat's turn (#30). A standing
+// day action (the Slayer's shot, pending.dayActions) is the seat's to call when it likes: pendingFor shows it as a choose
+// with standing: true when nothing else waits on the seat, it never makes mustAct true, and dayAction() spends it (#37).
+// canAct(game, seat) says whether a seat has anything to do now; nextTurnText(game, seat) says when it next will (#29).
+//
 // Everything the api keeps lives in the state (game.clock, game.ballot, game.notes, game.actions), and every call that
 // changes the game is recorded in game.actions, so restore(plainCopy) rebuilds the same live game.
 import {answer as engineAnswer, validate, isLive} from './engine.js';
@@ -59,6 +65,24 @@ function sync(game) {
   else game.ballot = null;
 }
 
+// Whether today's clock runs: it is day and the engine has reached the day's table decision (not night, not a dawn).
+export const clockStarted = game => game.phase === 'day' && game.step === 'nominations' && !game.winner;
+
+// The standing day action this seat may call now ({by, ability, options, question}), or null: only while the day's
+// table decision waits (not during a vote or a Storyteller ruling).
+export function dayActionFor(game, seat) {
+  sync(game);
+  if (seat === ST || !isSeat(game, seat) || !clockStarted(game)) return null;
+  const p = game.pending;
+  if (!p || p.kind !== 'nomination') return null;
+  const d = (p.dayActions || []).find(x => x.by === seat);
+  return d ? copy(d) : null;
+}
+const standingText = (game, seat) => {
+  const d = dayActionFor(game, seat);
+  return d ? ` Your ${roleName(game, d.ability)} ability is unspent: you may use it at any moment today.` : '';
+};
+
 // What a seat may do now, for the end of every refusal.
 export function legalNow(game, seat) {
   sync(game);
@@ -70,14 +94,15 @@ export function legalNow(game, seat) {
     return 'Nothing waits on you now; you may narrate.';
   }
   const p = pendingFor(game, seat);
-  if (p && (p.kind !== 'vote' || p.mine === null)) return p.kind === 'vote' ? `A vote is open on ${nameOf(game, p.nominee)}: vote yes or no.`
+  if (p && !p.standing && (p.kind !== 'vote' || p.mine === null)) return p.kind === 'vote' ? `A vote is open on ${nameOf(game, p.nominee)}: vote yes or no.`
     : p.kind === 'nomination' ? 'Nominations are open: nominate a player or pass.' : `A choice waits on you: ${p.question}`;
   if (game.phase === 'night') return `It is night ${game.night}: nothing is asked of you now; wait for the day.`;
   if (game.phase === 'setup') return 'The Storyteller is setting up the game; wait.';
+  if (game.phase === 'day' && !clockStarted(game)) return game.step === 'dusk' ? `Day ${game.day} is ending: wait for the night.` : `Day ${game.day} is breaking: the talk has not begun yet; wait for it.`;
   if (game.phase === 'day') {
-    const c = game.clock;
-    if (!c.nominationsOpen) return `It is day ${game.day}, round ${c.round} of ${c.roundsBeforeNominations}: ${c.spoke.includes(seat) ? 'you have had your turn this round; you may whisper or wait' : 'you may say a line, whisper or pass'}.`;
-    return `It is day ${game.day} and nominations are open: you may say, whisper${game.seats[seat].alive ? ', nominate' : ''}, vote when a vote is open, or pass.`;
+    const c = game.clock, more = standingText(game, seat);
+    if (!c.nominationsOpen) return `It is day ${game.day}, round ${c.round} of ${c.roundsBeforeNominations}: ${c.spoke.includes(seat) ? 'you have had your turn this round; you may whisper or wait' : 'you may say a line, whisper or pass'}.${more}`;
+    return `It is day ${game.day} and nominations are open: you may say, whisper${game.seats[seat].alive ? ', nominate' : ''}, vote when a vote is open, or pass.${more}`;
   }
   return 'Nothing is asked of you now.';
 }
@@ -209,13 +234,42 @@ export function pendingFor(game, seat) {
     const targets = p.options.filter(o => o && o.by === seat).map(o => o.target);
     return {kind: 'nomination', targets, question: 'Nominations are open: nominate a player for execution, or pass.'};
   }
+  // the standing shot shows once the seat has taken its say-or-pass of the round, so it never hides the turn itself
+  const d = game.clock.nominationsOpen || game.clock.spoke.includes(seat) ? dayActionFor(game, seat) : null;
+  if (d) return {kind: 'choose', role: d.ability, standing: true, question: `${nameOf(game, seat)} (${roleName(game, d.ability)}): ${d.question}`, options: [null, ...d.options]};
   return null;
 }
 
 // Whether the seat must act now (a pending it has not answered): what wakes a runner at once.
 export function mustAct(game, seat) {
   const p = pendingFor(game, seat);
-  return !!p && (p.kind !== 'vote' || p.mine === null);
+  return !!p && !p.standing && (p.kind !== 'vote' || p.mine === null);
+}
+
+// Whether the seat has anything to do now (what a soft wake is for): a decision (mustAct), its say-or-pass in this round,
+// a nomination or a pass on nominating, or a standing day action. A seat that has had its turn waits for the next round.
+export function canAct(game, seat) {
+  player(game, seat); sync(game);
+  if (game.winner) return false;
+  if (mustAct(game, seat)) return true;
+  if (!clockStarted(game)) return false;
+  if (dayActionFor(game, seat)) return true;
+  const c = game.clock, s = game.seats[seat];
+  if (!c.nominationsOpen) return !c.spoke.includes(seat);
+  return s.alive && game.pending?.kind === 'nomination' && !game.today.nominators.includes(seat) && !c.passedNominating.includes(seat);
+}
+
+// When a seat that cannot act now next will, as a phrase for its header ("until round 2"; the header reads "nothing to do until
+// round 2"); null when it can act.
+export function nextTurnText(game, seat) {
+  if (canAct(game, seat)) return null;
+  if (game.winner) return 'the game is over';
+  if (game.phase === 'night' || game.phase === 'setup') return `until day ${game.day + 1}${game.phase === 'night' ? ', unless the Storyteller wakes you' : ''}`;
+  if (!clockStarted(game)) return `until the talk of day ${game.day} begins`;
+  const c = game.clock;
+  if (!c.nominationsOpen) return c.round >= c.roundsBeforeNominations ? 'until nominations open' : `until round ${c.round + 1}`;
+  if (game.pending?.kind === 'vote') return 'until the vote ends';
+  return 'until the day ends (you may still speak or whisper)';
 }
 
 export function events(game, seat, since = 0) {
@@ -246,6 +300,8 @@ function line(game, seat, text) {
   return t;
 }
 const dayOnly = (game, seat, what) => {if (game.phase !== 'day') refuse(game, seat, `You can ${what} only in the day.`)};
+// Talk and passes wait for the day's clock: a call made from a night header at the moment of dawn is refused, never counted.
+const clockOnly = (game, seat) => {if (!clockStarted(game)) refuse(game, seat, game.step === 'dusk' ? 'The day is over; nothing you do now counts.' : 'The day has not begun yet; nothing you do now counts as your turn.')};
 
 // One seat's turn of the round is taken (a line or a pass): the round ends when every living seat has had one.
 function turnTaken(game, seat) {
@@ -271,7 +327,7 @@ function maybeEndDay(game) {
 }
 
 export const say = act('say', (game, seat, text) => {
-  player(game, seat); dayOnly(game, seat, 'speak to the table');
+  player(game, seat); dayOnly(game, seat, 'speak to the table'); clockOnly(game, seat);
   const t = line(game, seat, text), c = game.clock;
   const mine = game.log.filter(e => e.type === 'say' && e.seat === seat).slice(-LIMITS.repeatWindow);
   if (mine.some(e => norm(e.text) === norm(t))) refuse(game, seat, REPEAT_MESSAGE);
@@ -292,7 +348,7 @@ export const whisper = act('whisper', (game, seat, to, text) => {
 });
 
 export const pass = act('pass', (game, seat) => {
-  const s = player(game, seat); dayOnly(game, seat, 'pass');
+  const s = player(game, seat); dayOnly(game, seat, 'pass'); clockOnly(game, seat);
   const c = game.clock;
   if (!c.nominationsOpen) {
     if (c.spoke.includes(seat)) refuse(game, seat, `You have had your turn in round ${c.round};`);
@@ -323,6 +379,24 @@ export const nominate = act('nominate', (game, seat, tg) => {
   toEngine(game, opt);
   maybeEndDay(game);
   return {nominated: tg};
+});
+
+// A standing day action (the Slayer's shot): a seat index, or null to keep it for later. Resolves at once, in public.
+export const dayAction = act('dayAction', (game, seat, value) => {
+  const s = player(game, seat), p = game.pending;
+  if (!HOOKS[s.believed]?.dayAction) refuse(game, seat, 'You have no ability to use by day.');
+  if (game.phase !== 'day' || !clockStarted(game)) refuse(game, seat, 'Your ability is used by day, once the talk has begun.');
+  if (!s.alive) refuse(game, seat, 'The dead have no ability to use.');
+  if (p && p.kind === 'vote') refuse(game, seat, `A vote is open on ${nameOf(game, p.nominee)}; use your ability when it ends.`);
+  if (!p || p.kind !== 'nomination') refuse(game, seat, 'The Storyteller is resolving something; try again shortly.');
+  const mine = dayActionFor(game, seat);
+  if (!mine) refuse(game, seat, 'Your ability is spent.');
+  if (value === null || value === undefined) return {kept: true};
+  const t = typeof value === 'object' ? value.target : value;
+  if (!mine.options.includes(t)) refuse(game, seat, `Pick one of: ${mine.options.map(i => `${i} ${nameOf(game, i)}`).join(', ')}, or null to keep it.`);
+  toEngine(game, {by: seat, ability: mine.ability, target: t});
+  maybeEndDay(game);
+  return {used: mine.ability, target: t};
 });
 
 function castVote(game, seat, yes) {
@@ -367,6 +441,7 @@ export const answer = act('answer', (game, seat, value, reason) => {
   }
   const s = player(game, seat);
   if (p && p.kind === 'vote' && p.seats.includes(seat)) return castVote(game, seat, value);
+  if (pendingFor(game, seat)?.standing) return IMPLS.dayAction(game, seat, value);
   if (p && p.kind === 'nomination' && game.phase === 'day' && game.clock.nominationsOpen && s.alive) {
     if (value === null || value === undefined) return IMPLS.pass(game, seat);
     const tg = typeof value === 'object' ? value.target : value;
@@ -457,9 +532,9 @@ export const endDay = act('endDay', (game, reason) => {
 });
 
 // ---- what a seat's tool handler gets ----
-export const PLAYER_FUNCTIONS = ['view', 'pendingFor', 'answer', 'say', 'whisper', 'pass', 'nominate', 'vote', 'events', 'note', 'notes', 'legalNow', 'mustAct'];
+export const PLAYER_FUNCTIONS = ['view', 'pendingFor', 'answer', 'say', 'whisper', 'pass', 'nominate', 'vote', 'events', 'note', 'notes', 'legalNow', 'mustAct', 'canAct', 'nextTurnText', 'dayActionFor', 'dayAction'];
 export const STORYTELLER_FUNCTIONS = ['grimoire', 'nightOrder', 'narrate', 'openNominations', 'closeVote', 'endDay', 'rulings'];
-const ALL = {view, pendingFor, answer, say, whisper, pass, nominate, vote, events, note, notes, legalNow, mustAct, grimoire, nightOrder, narrate, openNominations, closeVote, endDay, rulings, toldText};
+const ALL = {view, pendingFor, answer, say, whisper, pass, nominate, vote, events, note, notes, legalNow, mustAct, canAct, nextTurnText, dayActionFor, dayAction, grimoire, nightOrder, narrate, openNominations, closeVote, endDay, rulings, toldText};
 
 // The api bound to one seat: a player's handler may name only its own seat and has no Storyteller function; the
 // Storyteller may read any seat's view and pending but never acts for a player or reads its notes or whispers.
