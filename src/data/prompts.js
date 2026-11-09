@@ -11,7 +11,7 @@ export const PLAYER_TOOL_LINES = [
   'note (a private note to yourself), where (who is where, and your two whisper neighbours).',
   'Move (free, by day until nominations open): go (to a room), invite (take a player from the Square into a room with you), leave (back to the Square).',
   'Act (each one is your turn): speak (one line where you are), whisper (to a neighbour at the Square), nominate, vote (yes or no), ' +
-  'night_choice (when your role is asked to pick), slay (the Slayer\'s shot, at any moment by day, or hold it), pass.',
+  'night_choice (when your role is asked to pick), slay (the Slayer\'s shot, at any moment by day, or hold it), think (your thought as the night ends), pass.',
 ].join('\n');
 // One manner per seat, keyed to the seat names in docs/ROLES.md: how the character talks, never which side it is on. Gives
 // seven models running the same prompt something to differ on (game 1: six seats said "dodged the role question").
@@ -68,6 +68,9 @@ export const PLAYER_SYSTEM = [
   'when the header names someone to take to a room, that is a good moment. ' +
   'At the Square you may whisper only to your neighbours at the table, the player on either side of you; to talk with anyone else in private, take them to a room.',
   'Your notes are your memory: write what you were told apart from what you guess, and when the header marks a note stale, write a fresh one.',
+  'As each night ends you are asked for a thought, with think. It is for yourself alone: nobody at the table hears it, so think honestly. ' +
+  'Say what you did or learned tonight, what it means, and whom you will press or protect tomorrow; when you are evil, plan the day\'s cover and your vote. ' +
+  'One to three sentences, in the first person, addressed to nobody. It is kept in your notes.',
   'Your tools:\n{tools}',
 ].join('\n\n');
 

@@ -11,7 +11,8 @@ import {join, dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {PLAYER_TOOLS, TOOL_NAMES, ATTEMPT_INVITE} from '../src/data/player-tools.js';
 import {PLAYER_TOOL_LINES, systemFor} from '../src/data/prompts.js';
-import {playerHeader, whatsNew, useApi, claimsInLine, cleanEvent, FIRST_DAWN} from '../src/seats/player.js';
+import {playerHeader, whatsNew, useApi, claimsInLine, cleanEvent, FIRST_DAWN, forcedAsk, THOUGHT_ASK} from '../src/seats/player.js';
+import {nextCall} from './mock-mind.mjs';
 import * as api from '../src/game/api.js';
 import {newGame, createScripted, playScripted} from '../src/game/index.js';
 
@@ -55,6 +56,12 @@ function fakeGame(state) {
     ev({type: 'phase', night: 2, text: 'Night falls.'});
     g.pending[0] = {id: 9, kind: 'choose', seat: 0, role: 'fortune-teller', options: [0, 1, 2, 3, 4, 5, 6], count: 2,
       question: 'Odette (Fortune Teller): pick two players: is either the demon?', truth: 'SECRET-TRUTH-Corwin-is-the-demon', why: 'SECRET-REASON-why', redHerring: 'SECRET-TOKEN-red-herring'};
+  }
+  if (state === 'thoughts') { // the night's thoughts (#111): every living seat is asked at once, before dawn
+    Object.assign(g, {phase: 'night', night: 2});
+    ev({type: 'phase', night: 2, text: 'Night falls.'});
+    for (const i of [0, 1, 2, 3, 4, 5, 6]) g.pending[i] = {kind: 'thoughts', question: 'The night is ending. In a sentence or two, what are you thinking?', mine: null,
+      tonight: i === 0 ? 'You woke as the Fortune Teller. You chose Bram and Corwin. One of them is the demon.' : 'You slept.'};
   }
   if (state === 'nominations') {
     g.clock = {round: 3, roundsBeforeNominations: 3, nominationsOpen: true};
@@ -158,6 +165,17 @@ const fakeApi = {
     g.events.push({id: g.events.length, type: 'whisper', from: seat, to, text, day: g.day, audience: [seat, to]});
   },
   pass(g) {g.calls.push('pass')},
+  // the night's thought (#111): a careless game logs it where every seat's events can reach it; the player side must drop it
+  think(g, seat, text) {
+    g.calls.push('think');
+    const p = g.pending[seat];
+    need(p && p.kind === 'thoughts', 'Nobody is asked for a thought now.');
+    need(p.mine === null, 'You have given your thought for tonight already.');
+    const t = String(text ?? '').trim().slice(0, 400);
+    g.pending[seat] = {...p, mine: t};
+    if (t) g.events.push({id: g.events.length, type: 'thought', seat, night: g.night, text: t, audience: 'watcher'});
+    return {thought: t, waitingOn: Object.values(g.pending).filter(x => x.kind === 'thoughts' && x.mine === null).length};
+  },
   nominate(g, seat, target) {
     g.calls.push('nominate');
     need(g.clock.nominationsOpen, 'Nominations are not open yet.');
@@ -205,9 +223,9 @@ section('the table');
   const TYPES = ['string', 'integer', 'number', 'array', 'object'];
   ok(JSON.stringify(TOOL_NAMES) === JSON.stringify(PLAYER_TOOLS.map(t => t.name)), 'TOOL_NAMES is the table in order');
   ok(new Set(TOOL_NAMES).size === TOOL_NAMES.length, 'tool names are unique');
-  const want = ['look', 'my_role', 'read_talk', 'my_whispers', 'my_notes', 'what_is_asked', 'who_voted', 'note', 'where', 'claims', 'go', 'invite', 'leave', 'speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'pass'];
+  const want = ['look', 'my_role', 'read_talk', 'my_whispers', 'my_notes', 'what_is_asked', 'who_voted', 'note', 'where', 'claims', 'go', 'invite', 'leave', 'speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'think', 'pass'];
   for (const n of want) ok(TOOL_NAMES.includes(n), `the table has ${n}`);
-  const acts = ['speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'pass'];
+  const acts = ['speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'think', 'pass'];
   for (const t of PLAYER_TOOLS) {
     ok(typeof t.act === 'boolean' && t.act === acts.includes(t.name), `${t.name}: act is ${acts.includes(t.name)}`);
     ok(typeof t.handler === 'function', `${t.name}: has a handler`);
@@ -227,11 +245,11 @@ section('the table');
 }
 
 // ---- every tool in every state ----
-const STATES = ['night', 'day', 'vote', 'dead-ghost', 'dead-spent', 'nominations', 'ended'];
+const STATES = ['night', 'thoughts', 'day', 'vote', 'dead-ghost', 'dead-spent', 'nominations', 'ended'];
 const SAMPLE = {
   look: {}, my_role: {}, read_talk: {}, my_whispers: {}, my_notes: {}, what_is_asked: {}, who_voted: {}, note: {text: 'Bram claims Chef.'},
   speak: {text: 'I have a reading for tonight.'}, whisper: {to: 'Bram', text: 'I believe you.'}, nominate: {target: 'Corwin'},
-  vote: {yes: 'yes'}, night_choice: {pick: ['Bram', 'Corwin']}, slay: {target: 'Corwin'}, pass: {}, where: {}, go: {room: 'parlour'}, invite: {player: 'Bram', room: 'nook'}, leave: {},
+  vote: {yes: 'yes'}, night_choice: {pick: ['Bram', 'Corwin']}, slay: {target: 'Corwin'}, think: {text: 'Bram and Corwin read clean; I will press Fitch tomorrow.'}, pass: {}, where: {}, go: {room: 'parlour'}, invite: {player: 'Bram', room: 'nook'}, leave: {},
 };
 section('every tool in every state: no secret in any answer');
 for (const st of STATES) {
@@ -253,7 +271,8 @@ for (const st of STATES) {
   ok(h.length < HEADER_CAP, `${st}: the header is under ${HEADER_CAP} characters (${h.length})`);
   ok(/^You are Odette, the Fortune Teller \(townsfolk, good\)/.test(h), `${st}: the header's first line says who I am`);
   ok(/Useful now: \w+/.test(h), `${st}: the header names the useful tools`);
-  const waits = {night: /\*\*WAITING ON YOU: As the Fortune Teller: pick two players.*Bram/, vote: /\*\*WAITING ON YOU: Vote on Thea's nomination of Fitch/,
+  const waits = {night: /\*\*WAITING ON YOU: As the Fortune Teller: pick two players.*Bram/,
+    thoughts: /\*\*WAITING ON YOU: The night is ending\. In a sentence or two, what are you thinking\? Tonight: You woke as the Fortune Teller\. You chose Bram and Corwin\. One of them is the demon\.\*\*/, vote: /\*\*WAITING ON YOU: Vote on Thea's nomination of Fitch/,
     'dead-ghost': /\*\*WAITING ON YOU: Vote.*ghost vote/, 'dead-spent': /\*\*WAITING ON YOU: Vote/, nominations: /\*\*WAITING ON YOU: Nominations are open/};
   if (waits[st]) ok(waits[st].test(h), `${st}: the header names the decision in bold: ${h}`);
   else ok(!/WAITING ON YOU/.test(h), `${st}: nothing waits, nothing is said to: ${h}`);
@@ -544,9 +563,55 @@ section("the Slayer's standing shot: an honest header line, slay, night_choice's
 }
 
 // ---- one game through the real api ----
+section("the night's thought (#111): think answers the scene, keeps a note, and reaches no other seat");
+{
+  const PLANT = 'PLANT-THOUGHT-zq111p';
+  const g = fakeGame('thoughts');
+  const h0 = playerHeader(g, 0, fakeApi), use0 = (h0.match(/Useful now: ([^.]+)\./) || [])[1];
+  ok(use0 === 'think, my_role, my_notes, read_talk', `at the scene the useful tools are think, my_role, my_notes, read_talk (${use0})`);
+  ok(h0.length < HEADER_CAP, `the header at the scene is under ${HEADER_CAP} (${h0.length})`);
+  const wa = run(g, 'what_is_asked');
+  ok(wa.asked === 'thoughts' && wa.tool === 'think' && /Tonight: You woke as the Fortune Teller/.test(wa.text), `what_is_asked names the thought and its tool: ${JSON.stringify(wa)}`);
+  const fa = forcedAsk(g, 0, fakeApi);
+  ok(fa && fa.tool === 'think' && fa.ask.startsWith(THOUGHT_ASK) && /Tonight: You woke as the Fortune Teller/.test(fa.ask) && JSON.stringify(Object.keys(fa.schema.properties)) === '["text"]',
+    `the forced answer for a slow seat is a one-line think: ${JSON.stringify(fa)}`);
+  // Corwin thinks the plant; Odette and the rest must never meet it, though the careless fake logs it for every seat's events
+  const r3 = run(g, 'think', {text: `Corwin: I poisoned nobody; ${PLANT}.`}, 3);
+  ok(r3.ok && r3.thought === `I poisoned nobody; ${PLANT}.`, `think answers the scene, without the thinker's name in front: ${JSON.stringify(r3)}`);
+  ok((g.notes[3] || []).some(n => n.text === `Night 2, my thought: I poisoned nobody; ${PLANT}.`), `the thought is kept in the thinker's notes as a night note: ${JSON.stringify(g.notes[3])}`);
+  ok(run(g, 'my_notes', {}, 3).notes.some(n => n.includes(PLANT)), "the thinker's my_notes shows it (its memory of the thought)");
+  const again = run(g, 'think', {text: 'Second thoughts.'}, 3);
+  ok(!again.ok && /already/.test(again.error), `a second thought the same night is refused: ${again.error}`);
+  const h3 = playerHeader(g, 3, fakeApi);
+  ok(!/WAITING ON YOU/.test(h3) && !/Useful now: think/.test(h3) && !h3.includes(PLANT), `after the answer nothing waits and the header does not repeat it: ${h3}`);
+  ok(forcedAsk(g, 3, fakeApi) === null, 'after the answer there is no forced answer to make');
+  ok(!run(g, 'read_talk', {since: 0}, 3).entries.some(e => JSON.stringify(e).includes(PLANT)), "the thought is not in the thinker's own read_talk (the watcher's alone)");
+  for (let i = 0; i < 7; i++) {
+    if (i === 3) continue;
+    const seen = [playerHeader(g, i, fakeApi), ...PLAYER_TOOLS.filter(t => !t.act).map(t => JSON.stringify(run(g, t.name, {since: 0, player: 'Corwin'}, i)))].join(' | ');
+    ok(!seen.includes(PLANT), `${NAMES[i]}: no thought of Corwin's in any read, header or notes`);
+  }
+  const empty = run(g, 'think', {text: ''}, 1);
+  ok(empty.ok && empty.thought === '' && !(g.notes[1] || []).length, `an empty thought answers the scene and writes no note: ${JSON.stringify(empty)}`);
+  const long = run(g, 'think', {text: 'x'.repeat(500)}, 2);
+  ok(long.ok && long.thought.length === 400 && (g.notes[2] || [])[0]?.text.length === 'Night 2, my thought: '.length + 400, 'a long thought is cut by the game, and the note keeps what was kept');
+  const day = run(fakeGame('day'), 'think', {text: 'A day thought.'});
+  ok(!day.ok && /end of the night/.test(day.error) && /Open to you now/.test(day.error), `by day think is refused, plainly: ${day.error}`);
+  const night = run(fakeGame('night'), 'think', {text: 'Too soon.'});
+  ok(!night.ok && /comes as the night ends/.test(night.error) && /night_choice/.test(night.error), `at night before the scene think is refused and names the choice: ${night.error}`);
+  const gv = fakeGame('vote');
+  ok(forcedAsk(gv, 0, fakeApi)?.tool === 'vote' && forcedAsk(fakeGame('day'), 0, fakeApi) === null, 'the forced answer of a vote is a vote; nothing is forced by day with nothing waiting');
+  const sys = systemFor('player', 'Thea'), para = sys.split('\n\n').find(x => x.includes('with think')) || '';
+  ok(/nobody at the table hears it/.test(para) && /first person/.test(para) && /evil, plan the day's cover and your vote/.test(para) && /kept in your notes/.test(para), `the prompt: a thought for yourself, honest, first person, evil plans its cover: ${para}`);
+  const desc = tool('think').desc;
+  ok(!/watcher|owner|audience|listen/i.test(para + desc), 'neither the prompt nor the tool tells a seat it is overheard');
+  const mm = nextCall('player', [{tool: 'look', result: {you: {name: 'Odette'}, alive: NAMES}}, {tool: 'what_is_asked', result: wa}]);
+  ok(mm.tool === 'think' && /Odette/.test(mm.args.text), `the mock mind answers the scene with a think: ${JSON.stringify(mm)}`);
+}
+
 section('integration: a real game through the real api, every seat with its own bound api');
 {
-  const STR = 'ST-REASON-SECRET', WHISPER = 'WHISPER-SECRET-for-one-ear-only';
+  const STR = 'ST-REASON-SECRET', WHISPER = 'WHISPER-SECRET-for-one-ear-only', THOUGHT = 'THOUGHT-SECRET-zq111i';
   const game = newGame({seed: 7, rounds: 1});
   const answerer = createScripted(7);
   const seats = game.seats.map(s => ({index: s.index, name: s.name}));
@@ -554,12 +619,23 @@ section('integration: a real game through the real api, every seat with its own 
   const out = seats.map(() => []); // everything each seat was shown
   const call = (i, name, args = {}) => {const r = tool(name).handler(args, ctxs[i]); out[i].push(JSON.stringify(r)); return r};
   const header = i => {const h = playerHeader(game, i); out[i].push(h); return h};
-  const done = {say: 0, repeat: 0, whisper: 0, pass: 0, nominate: 0, vote: 0, choice: 0, headers: 0, bad: []};
+  const done = {say: 0, repeat: 0, whisper: 0, pass: 0, nominate: 0, vote: 0, choice: 0, think: 0, headers: 0, bad: []};
   for (let step = 0; step < 2000 && !game.winner && game.day < 3; step++) {
     const p = game.pending;
     if (!p) break;
     if (p.seat === 'storyteller') {api.answer(game, 'storyteller', answerer(game), STR); continue}
-    if (p.kind === 'thoughts') {for (const i of p.seats) api.think(game, i, ''); continue} // the night's thoughts (#111): the think tool is the player-builder's
+    if (p.kind === 'thoughts') { // the night's thoughts (#111): every living seat answers through think; the first seat of night 1 plants a secret
+      for (const i of p.seats) {
+        const h = header(i); done.headers++;
+        if (!/\*\*WAITING ON YOU: The night is ending\. .* Tonight: \S/.test(h)) done.bad.push(`no thought asked: ${h}`);
+        const plant = game.night === 1 && i === p.seats[0];
+        const r = call(i, 'think', {text: plant ? `I keep this to myself: ${THOUGHT}.` : `Night ${game.night}: I watch who talks first tomorrow.`});
+        if (r.ok) done.think++; else done.bad.push(`think ${i}: ${r.error}`);
+        if (plant) done.thinker = i;
+        if (game.pending !== p) break;
+      }
+      continue;
+    }
     if (p.kind === 'choose') {
       const i = p.seat, h = header(i); done.headers++;
       if (!/WAITING ON YOU/.test(h)) done.bad.push(`no waiting line for a choice: ${h}`);
@@ -631,6 +707,18 @@ section('integration: a real game through the real api, every seat with its own 
     ok(!out[s.index].some(x => x.includes(WHISPER)), `${s.name} never sees the whisper between two others`);
   }
   for (const s of seats) ok(!out[s.index].some(x => x.includes(STR)), `${s.name} never sees a Storyteller reason`);
+  // the night's thoughts (#111): each living seat thought every night through its tool; the planted one reached the thinker's notes only
+  ok(done.think >= 7 && done.thinker != null && game.log.some(e => e.type === 'thought' && e.audience === 'watcher' && e.text.includes(THOUGHT)), `every seat thought through think, logged for the watcher (${done.think} thoughts)`);
+  ok(call(done.thinker, 'my_notes').notes.some(n => n.startsWith('Night 1, my thought: ') && n.includes(THOUGHT)), 'the thinker keeps its thought in its notes');
+  for (const s of seats) {
+    call(s.index, 'read_talk', {since: 0}); call(s.index, 'look'); call(s.index, 'my_role'); header(s.index);
+    if (s.index === done.thinker) {
+      ok(!call(s.index, 'read_talk', {since: 0}).entries.some(e => JSON.stringify(e).includes(THOUGHT)) && !header(s.index).includes(THOUGHT), "the thinker's own read_talk and header never carry its thought");
+      continue;
+    }
+    call(s.index, 'my_notes');
+    ok(!out[s.index].some(x => x.includes(THOUGHT)), `${s.name} never sees another seat's thought`);
+  }
   for (const s of seats) {
     const h = header(s.index);
     ok(h.length < HEADER_CAP && h.startsWith(`You are ${s.name}, the `), `${s.name}'s header in the real game is under ${HEADER_CAP} (${h.length})`);
@@ -1000,6 +1088,15 @@ section("game 4 fixes: no dodge on day 1 (#87), the Poisoner's targets (#88), th
     `the Poisoner's line: live and spent abilities, not the demon: ${h}`);
   ok(!/Corwin/.test(h.split('\n').find(l => l.startsWith('Poison:')) || 'Corwin'), 'the demon is never offered as a target');
   ok(h.length <= HEADER_CAP, `the Poisoner's night header stays under ${HEADER_CAP} (${h.length})`);
+  // the same Poisoner as the night ends (#111): the thought waits, with what she did tonight; the poison line has gone
+  const pick = g.pending[6];
+  g.pending[6] = {kind: 'thoughts', question: 'The night is ending. In a sentence or two, what are you thinking?', mine: null, tonight: 'You woke as the Poisoner. You chose Thea.'};
+  const ht = playerHeader(g, 6, poisoner);
+  ok(/\*\*WAITING ON YOU: The night is ending\. In a sentence or two, what are you thinking\? Tonight: You woke as the Poisoner\. You chose Thea\.\*\*/.test(ht) && !/^Poison:/m.test(ht) && ht.length <= HEADER_CAP,
+    `the Poisoner's header at the thoughts scene, claims and all, stays under ${HEADER_CAP} (${ht.length}): ${ht}`);
+  console.log(`    | the Poisoner at the thoughts scene, five claims heard (${ht.length}):`);
+  console.log(ht.split('\n').map(l => '    | ' + l).join('\n'));
+  g.pending[6] = pick;
   ok(!/^Poison:/m.test(playerHeader(g, 0, fakeApi)), 'a good seat never sees the poison line');
   g.night = 1; ok(!/^Poison:/m.test(playerHeader(g, 6, poisoner)), 'night 1: nobody has claimed yet, no poison line');
   const sys = systemFor('player', 'Yusuf');
@@ -1034,8 +1131,9 @@ section("game 4 fixes: no dodge on day 1 (#87), the Poisoner's targets (#88), th
   const game = newGame({seed: 31});
   const role = id => game.seats.findIndex(s => s.role === id);
   const POIS = role('poisoner'), IMP = role('imp');
-  const seen = {poison: [], max: 0, at: ''};
+  const seen = {poison: [], max: 0, at: '', scene: []};
   playScripted(game, 31, {onDecision: () => {
+    if (game.pending?.kind === 'thoughts' && game.seats[POIS].alive) {const h = playerHeader(game, POIS); seen.scene.push({night: game.night, len: h.length, h})}
     for (const s of game.seats) {
       tool('read_talk').handler({}, {game, seat: {index: s.index, name: s.name}, api: api.forSeat(s.index), log: () => {}});
       const h = playerHeader(game, s.index);
@@ -1046,6 +1144,11 @@ section("game 4 fixes: no dodge on day 1 (#87), the Poisoner's targets (#88), th
   }});
   ok(POIS >= 0 && IMP >= 0, 'seed 31 deals a Poisoner and an Imp');
   ok(seen.poison.length >= 1 && seen.poison.every(l => !l.includes(game.seats[IMP].name)), `the Poisoner's nights carry the poison line, never the demon: ${JSON.stringify(seen.poison)}`);
+  const sc2 = seen.scene.filter(x => x.night >= 2), longest = sc2.reduce((m, x) => x.len > m.len ? x : m, {len: 0});
+  ok(sc2.length >= 1 && sc2.every(x => /\*\*WAITING ON YOU: The night is ending\..* Tonight: You woke as the Poisoner\. You chose /.test(x.h) && x.len <= HEADER_CAP),
+    `the Poisoner's header at the thoughts scene says what she did and stays under ${HEADER_CAP}: ${sc2.map(x => `night ${x.night} ${x.len}`).join(', ')}`);
+  console.log(`    | the Poisoner at the thoughts scene, night ${longest.night} (${longest.len}):`);
+  console.log(String(longest.h || '').split('\n').map(l => '    | ' + l).join('\n'));
   ok(seen.max <= HEADER_CAP, `seed 31 played out, each seat reading before its header: the longest header is ${seen.max} (cap ${HEADER_CAP})${seen.max > HEADER_CAP ? ': ' + seen.at : ''}`);
 }
 
