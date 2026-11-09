@@ -42,12 +42,20 @@ const SPOKEN = new Set(['narration', 'dawn', 'nomination', 'vote', 'execution', 
 export const SCRIPTED_REASON = 'scripted default: no Storyteller answered in time';
 const ST = api.ST;
 
+// A UTC time stamp yyyymmddThhmmssZ from ms since 1970, by arithmetic (the engine folder constructs no Date): civil from days.
+export function utcStamp(ms) {
+  const p = n => String(n).padStart(2, '0'), d = Math.floor(ms / 864e5), s = Math.floor((ms - d * 864e5) / 1000);
+  const z = d + 719468, era = Math.floor(z / 146097), doe = z - era * 146097, yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100)), mp = Math.floor((5 * doy + 2) / 153), dd = doy - Math.floor((153 * mp + 2) / 5) + 1, mm = mp < 10 ? mp + 3 : mp - 9;
+  return `${yoe + era * 400 + (mm <= 2 ? 1 : 0)}${p(mm)}${p(dd)}T${p(Math.floor(s / 3600))}${p(Math.floor(s % 3600 / 60))}${p(s % 60)}Z`;
+}
+
 export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = SCRIPTED_GRACE_MS, players = PLAYER_TOOLS,
   storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}, now = () => 0, stagger = 0} = {}) {
   let game = newGame({seed, ...(seats ? {seats} : {}), ...(rounds != null ? {rounds} : {})});
   // The game id (#66): the seed and the deal time from the clock given to us; a repeat within one second gets ".N".
   let deals = 0, gameId = null;
-  const dealId = s => {deals++; const t = Number(now()) || 0, stamp = new Date(t).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'), id = `${s}-${stamp}`;
+  const dealId = s => {deals++; const t = Number(now()) || 0, stamp = utcStamp(t), id = `${s}-${stamp}`;
     return gameId && gameId.split('.')[0] === id ? `${id}.${deals}` : id};
   gameId = dealId(seed);
   // The nomination stagger (#69): {at: when the nomination decision opened, order: seat keys in seat order from (day - 1) mod n};
@@ -84,7 +92,12 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
   // end_day once everyone has nominated or passed. -> {tool, why} or null. Without the seat's storytellerDue: a pending decision only.
   const stApi = api.forSeat(ST);
   const stDue = () => {if (typeof stSeat.storytellerDue !== 'function') return null; try {return stSeat.storytellerDue(game, stApi) || null} catch {return null}};
-  const mustAct = key => key === ST ? !!api.pendingFor(game, ST) || !!stDue() : api.mustAct(game, key);
+  // A due act that is not a decision (a narration owed, end_day) wakes the Storyteller now once; the same due again only by the
+  // heartbeat, so a Storyteller that lets it pass is not woken in a loop.
+  let stDueSaid = null;
+  const dueKey = d => d ? d.tool + ': ' + d.why : null;
+  const stDueNew = () => {const k = dueKey(stDue()); return k && k !== stDueSaid ? k : null};
+  const mustAct = key => key === ST ? !!api.pendingFor(game, ST) || !!stDueNew() : api.mustAct(game, key);
   const stWhy = () => {const d = stDue(); return d ? `${d.tool}: ${d.why}` : game.pending ? `a ${game.pending.kind} decision waits on you` : 'something is due'};
   // A soft wake for the Storyteller only on new public events it did not make itself (its own narrations and rulings do not count).
   const stFresh = () => api.events(game, ST, seen[ST] ?? -1).some(e => e.type !== 'narration' && e.type !== 'ruling');
@@ -205,7 +218,7 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     const check = () => {
       if (game.winner) return {ok: false, gone: true, error: `The game is over: ${game.winner.text}.`};
       if (staggerLeft(key) > 0) return null; // nominations: not this seat's moment yet
-      if (mustAct(key)) return {ok: true, wake: 'now', why: key === ST ? stWhy() : api.legalNow(game, key), clock: clockText()};
+      if (mustAct(key)) {if (key === ST && !api.pendingFor(game, ST)) stDueSaid = stDueNew(); return {ok: true, wake: 'now', why: key === ST ? stWhy() : api.legalNow(game, key), clock: clockText()}}
       // soft only for a seat that can act on what it has not seen (#29): one that had its turn this round waits for the next;
       // a seat never shown the game yet (a new runner) gets its first turn to read its role
       if (unseen(key) && soft && (seen[key] === undefined || (key === ST ? stFresh() : api.canAct(game, key)))) return {ok: true, wake: 'soft', why: 'something happened at the table', clock: clockText()};
@@ -281,7 +294,7 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
       answerer = scripted ? createScripted(nextSeed) : null;
       for (const k of Object.keys(seen)) delete seen[k];
       clips.clear(); asked.clear(); heard = null; for (const k of Object.keys(holdSince)) delete holdSince[k];
-      pendingId = null; pushed = -1; lastBallot = 'null'; stag = null; gameId = dealId(nextSeed); changed();
+      pendingId = null; pushed = -1; lastBallot = 'null'; stag = null; stDueSaid = null; gameId = dealId(nextSeed); changed();
       log(`[game] a new game: seed ${nextSeed}, game ${gameId}`);
       return {gameId, seed: game.config.seed, rounds: game.config.rounds};
     },

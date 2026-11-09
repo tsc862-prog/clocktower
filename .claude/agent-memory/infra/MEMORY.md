@@ -38,3 +38,15 @@
 - backend.js: setVoice({clip(name,text)}) hook; on each push, new spoken events (say incl. rooms, narration/dawn/nomination/vote/execution/no-execution/slayer-shot/virgin/win, day death; never whispers) ask for a clip, then socket {type:'clip', id:<event id>, clip:{id,ms}}; watch events carry `clip`. ms is generation time, not duration.
 - POST /play/heard {last, voice} (page origin only) -> backend.heard -> {last, at, voice}; pace holds soft/heartbeat wakes ({wake:null, holdMs<=1500}) when fresh (<90 s), voice true, >1 spoken line ahead; cap 30 s per seat; never 'now'. /tts/status adds clipsOnSay, heard. Check: npm run voicetimingcheck (fake clock via gameBackend({now})).
 - req() in relaycheck returns the parsed body plus status/headers (no .json()).
+
+## Game id and fresh sessions (issue #66, #69 PR, see below)
+- backend.gameId `<seed>-<yyyymmddThhmmssZ>` (UTC from the clock given to gameBackend; ".N" when two deals share a second; no clock -> 19700101T000000Z). utcStamp() is arithmetic: gamecheck forbids `new Date`/`Date.now` under src/game.
+- gameId in info(), /play/health, the watch body, POST /play/game/new's answer, and every non-brief pace answer (relay-mcp withPace). A relay restart always deals a new id (the game is not persisted).
+- agent-sessions loadSession/loadStorytellerSession({gameId}): another id -> file archived to logs/agents/old, fresh session, note "new game <id>: fresh session"; runner settings (provider/model) kept. claude-runner and seat-runner roll to a fresh session when a pace answer's gameId differs from sess.gameId (a runner left running across a new deal).
+- active.json carries gameId (top level and per runner); resume() logs when it resumes onto a new deal.
+- fake-agent-sdk keeps sessions under AGENT_LOGS/fake-sdk/<sid>.json so a resumed session's ctx grows on (runnercheck "one session per dealt game").
+
+## Pace changes (#69, #74)
+- After the win every pace answers {ok:false, gone:true} at once (no soft wake to "see the end"); runners stop "(the game is over)".
+- Nomination stagger: gameBackend({stagger}) ms; relay NOMINATION_STAGGER_MS (default 5000, 0-60000); quietEnv sets 500. Seats that may nominate wake in seat order from (day-1) mod n; a seat that nominates/passes moves the next up; waiting seats get wake null (no heartbeat/soft). Votes wake everyone at once.
+- Storyteller: mustAct = pending decision or storytellerDue (src/seats/storyteller.js, imported as a namespace so a missing export is harmless). A non-decision due (narrate, end_day) wakes now ONCE per distinct due (stDueSaid), else the scripted ST looped 11k turns in mockgamecheck. Soft ST wakes only on new events other than its own narration/ruling. 'now' is never held for the voice.

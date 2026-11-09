@@ -165,9 +165,29 @@ async function nominationPace() {
   } finally {be.close()}
 }
 
+// #74 with #69: an act due from the Storyteller (here the unnarrated dawn) wakes it now, never held for the voice, even while the
+// page lags behind the spoken lines (a player's soft wake is held in the same moment).
+async function storytellerDueWake() {
+  console.log('a due Storyteller act wakes it now');
+  const {gameBackend} = await import('../src/game/backend.js');
+  const tools = [{name: 'speak', act: true, desc: 'speak', args: {}, handler: (a, ctx) => ({ok: true, ...ctx.api.say(ctx.game, ctx.seat.index, a.text)})}];
+  const be = gameBackend({seed: 3, players: tools, storyteller: [], scripted: true, grace: 5, now: () => 1e12});
+  try {
+    be.setVoice({clip: async () => ({id: 'c', ms: 1})});
+    const t0 = Date.now(); while (be.game.phase !== 'day' && Date.now() - t0 < 8000) await be.call(1, 'pace', {realMs: 200, wake: 'all'});
+    await be.call(2, 'speak', {text: 'Bram, at first light.'}); await be.call(3, 'speak', {text: 'Ines, at first light.'});
+    be.heard({last: -1, voice: true}); // the page has played nothing yet: several spoken lines behind
+    const t1 = Date.now(), st = await be.pace('storyteller', {realMs: 20, wake: 'all'}), stMs = Date.now() - t1;
+    ok(be.game.phase === 'day' && st.wake === 'now' && /narrate/.test(st.why) && stMs < 1000, `an unnarrated dawn wakes the Storyteller now while the page lags (${st.wake}: ${st.why}, ${stMs} ms)`);
+    const p = await be.call(4, 'pace', {realMs: 20, wake: 'all'});
+    ok(p.wake === null && p.holdMs > 0, `in the same moment a player's soft wake is held for the voice (${p.why})`);
+  } finally {be.close()}
+}
+
 async function main() {
   console.log('\nClocktower watch check: the routes the page reads\n');
   await nominationPace();
+  await storytellerDueWake();
   await watcher();
   await lastTurn();
   console.log(fails ? `\n${fails} watch check(s) failed` : '\nwatch check: all ok');

@@ -11,7 +11,7 @@
 //   - a session roll before the price line (SESSION_ROLL_TOKENS small here);
 //   - a gone Storyteller pauses the game; the owner's resume starts the scripted Storyteller, which answers from then on;
 //   - the behavior log has one line per turn, every line with its header;
-//   - the game reaches a winner.
+//   - the game reaches a winner; every runner then stops by itself ("the game is over") and no turn begins after it (#69).
 // Waits go through scripts/ci-clock.mjs (CI_FAST).
 import {readFileSync, existsSync, readdirSync, cpSync, rmSync, mkdirSync} from 'node:fs';
 import {join, dirname} from 'node:path';
@@ -80,6 +80,12 @@ async function main() {
     console.log('the game');
     const over = await until(async () => {const h = await req(base, '/play/health'); return /over/.test(h.phase || '') ? h : null}, ms(240000, 150000), 500);
     ok(!!over, `the game reaches its end (${over ? over.phase : (await req(base, '/play/health')).phase})`);
+    // #69: after the win every runner is told the game is over at its next pace and stops by itself; no turn starts after it
+    const tWin = Date.now(), live = ((await view()).runners || []).filter(r => !['stopped', 'crashed'].includes(r.state)).map(r => r.key);
+    const selfStop = await until(async () => {const rs = (await view()).runners || []; return live.every(k => {const r = rs.find(x => x.key === k); return r && ['stopped', 'crashed'].includes(r.state)}) ? rs : null}, ms(30000, 15000));
+    const notOver = live.filter(k => {const r = (selfStop || []).find(x => x.key === k); return !r || r.endWhy !== 'the game is over'});
+    const overEnds = (selfStop || []).filter(r => r.endWhy === 'the game is over').map(r => r.key);
+    ok(!!selfStop && !notOver.length && overEnds.length >= 5, `every runner playing at the win stops by itself, "the game is over" (${overEnds.join(', ')}${notOver.length ? '; not: ' + notOver.join(', ') : ''})`);
     const v = await view();
     await req(base, '/play/runner/stop-all', {method: 'POST', origin: PAGE, body: {why: 'the check is done'}});
     const look = await req(base, '/play/call', {method: 'POST', body: {player: 1, runner: 'mockgamecheck', tool: 'look', args: {}}});
@@ -106,6 +112,8 @@ async function main() {
     const turns = jsonl(join(env.BEHAVIOR_DIR, 'clocktower', 'turns.jsonl')), counted = v.runners.reduce((n, r) => n + r.turns, 0);
     const allTurnLines = Object.values(turnLines).reduce((n, t) => n + t.filter(l => !/\] failed \| run \$/.test(l)).length, 0); // the local loop writes no behavior line for a turn that failed outright
     ok(turns.length > 0 && turns.length === allTurnLines, `the behavior log has one line per turn (${turns.length} lines, ${allTurnLines} turn lines in the runner logs, ${counted} counted by the supervisor)`);
+    const late = turns.filter(t => Date.parse(t.ts) - (t.seconds || 0) * 1000 > tWin + 3000); // a turn that began after the win (3 s for the win's own poll)
+    ok(!late.length, `no turn begins after the game is over${late.length ? ': ' + late.map(t => t.seat + (t.player ? ' #' + t.player : '') + ' ' + t.ts).join(', ') : ''}`);
     const empty = turns.filter(t => !(t.brief && typeof t.brief.text === 'string' && t.brief.text.trim()));
     ok(!empty.length, `every turn played from a non-empty header${empty.length ? ': ' + empty.length + ' without' : ''}`);
     const ev = jsonl(join(logs, 'events.jsonl'));
