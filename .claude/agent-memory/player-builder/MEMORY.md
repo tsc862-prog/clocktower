@@ -72,3 +72,6 @@ Useful now: vote, who_voted, read_talk.
 ## Game 4 fixes (PR #97: #87, #88, #89, #92)
 - [Game 4 fixes](game4-fixes.md): day-1 "dodge" knowledge (LEARNS, nothingYet, readsOf), Poisoner line, Record line + nominator/nominee wording, claims by ability and by role; never name the Imp in the prompt (channelcheck).
 - Header order now: who, clock, alive, [stakes], news, [Moves by day, today only], [place], [invite|rooms], [Record], [Claims], [stale notes], [WAITING], [wait], [shot], [Poison], [nudge], Useful.
+
+## Game 5 fixes (#104)
+- [Evil cover](evil-cover.md): Cover line by day for evil seats (bluff / grimoire / guess), secret claims kept out of the claims line, prompt paragraph; header order now ... [Claims], [Cover], [stale notes] ...
