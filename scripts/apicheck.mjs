@@ -206,6 +206,39 @@ section('a plain copy restores');
   ok(throws(() => api.say(JSON.parse(JSON.stringify(g)), 1, 'hi'), /plain copy/), 'acting on a plain copy is refused with the way out');
 }
 
+section('game 1 (#30): a pass from a night header never burns a day turn');
+// Seed 7 as game 1 dealt it: Odette the Washerwoman, Bram the Imp, Ines the Ravenkeeper, Thea the Slayer. The pacer woke
+// seats in night 1 and at dawn; their headers said "Night 1"; Bram's pass was refused at night, but Odette's and Ines's
+// landed while the dawn still held (the Slayer's shot was asked there) and counted as their round-1 turn.
+{
+  const g7 = newGame({seed: 7});
+  settle(g7, {}, gm => gm.phase === 'night' && gm.pending?.seat === ST);
+  ok(g7.phase === 'night' && g7.night === 1, 'seed 7 stands in night 1');
+  const acts = g7.actions.length, clock = JSON.stringify(g7.clock);
+  ok(throws(() => api.pass(g7, 1), /only in the day/), 'Bram passes from a night header: refused');
+  ok(throws(() => api.pass(g7, 0), /only in the day/) && throws(() => api.pass(g7, 2), /only in the day/), 'so are Odette\'s and Ines\'s passes at night');
+  ok(throws(() => api.say(g7, 0, 'Morning?'), /only in the day/), 'and a line at night');
+  ok(g7.actions.length === acts && JSON.stringify(g7.clock) === clock && !g7.log.some(e => e.type === 'pass'), 'a refused pass records nothing, moves no clock and marks no turn');
+  ok(!api.canAct(g7, 0) && /until day 1/.test(api.nextTurnText(g7, 0)), `at night a seat with no night choice cannot act: "${api.nextTurnText(g7, 0)}"`);
+  settle(g7);
+  ok(g7.phase === 'day' && g7.day === 1 && g7.pending.kind === 'nomination', 'dawn of day 1 goes straight to the talk');
+  ok(!api.mustAct(g7, 4) && api.dayActionFor(g7, 4)?.ability === 'slayer' && api.pendingFor(g7, 4) === null, 'nothing blocks the dawn: the Slayer\'s shot stands open to Thea, nobody waits on it');
+  // The moment of dawn before the day's clock has started (the engine still resolving the dawn, as it was in game 1
+  // while the Slayer's dawn choice waited): the same passes are refused and count for nothing.
+  const step = g7.step; g7.step = 'dawn';
+  ok(!api.canAct(g7, 0) && /breaking/.test(api.legalNow(g7, 0)), `at the moment of dawn no seat can act: "${api.legalNow(g7, 0)}"`);
+  ok(throws(() => api.pass(g7, 0), /not begun/) && throws(() => api.pass(g7, 2), /not begun/) && throws(() => api.say(g7, 2, 'It is day 1.'), /not begun/), 'Odette\'s and Ines\'s passes at the moment of dawn are refused');
+  ok(g7.clock.spoke.length === 0 && g7.clock.round === 1 && !g7.log.some(e => e.type === 'pass'), 'and the refused passes mark no turn');
+  g7.step = step;
+  const v = api.view(g7, 0);
+  ok(v.clock.round === 1 && v.clock.toSpeak.length === 7, 'day 1, round 1: every seat still has its turn');
+  api.say(g7, 0, 'I have a first-night read; I will share it when it matters.');
+  api.say(g7, 2, 'Nobody died in the night. Thea, Odette, what did you notice?');
+  ok(g7.log.filter(e => e.type === 'say' && e.day === 1 && [0, 2].includes(e.seat)).length === 2, 'Odette and Ines each have a real choice in round 1, and speak');
+  ok(throws(() => api.pass(g7, 0), /had your turn/) && g7.clock.round === 1 && g7.clock.spoke.length === 2, 'a refused pass after a line moves nothing either');
+  ok(!api.canAct(g7, 0) && api.nextTurnText(g7, 0) === 'until round 2' && api.canAct(g7, 1), 'a seat that has had its turn cannot act until round 2; one that has not, can');
+}
+
 section('scripted games through the api alone match the sim');
 // Players answer only through say, pass, nominate, vote and answer; the Storyteller only through answer with a reason.
 function apiGame(seed) {
@@ -222,13 +255,14 @@ function apiGame(seed) {
     if (p.kind === 'nomination') {
       const v = sc(gm);
       if (v === null) {for (const s of gm.seats) if (gm.phase === 'day' && s.alive) api.pass(gm, s.index); continue}
+      if (v.ability) {(api.pendingFor(gm, v.by)?.standing ? api.answer : api.dayAction)(gm, v.by, v.target); continue}
       api.nominate(gm, v.by, v.target); continue;
     }
     throw new Error(`unexpected ${p.kind}`);
   }
   return gm;
 }
-for (const seed of [1, 2, 3, 4, 5, 7]) {
+for (const seed of [1, 2, 3, 4, 5, 7, 10]) {
   const a = apiGame(seed), b = apiGame(seed), sim = simulate(seed).state;
   ok(a.winner && a.winner.text === sim.winner.text, `seed ${seed}: the api game ends as the sim does (${a.winner && a.winner.text})`);
   ok(JSON.stringify(a.answers) === JSON.stringify(sim.answers), `seed ${seed}: the same ${sim.answers.length} engine decisions as the sim`);
@@ -274,6 +308,15 @@ section('the backend');
   ok(said.ok, 'a player speaks through its tool');
   const soft = await be.call(1, 'pace', {realMs: 30, wake: 'all'});
   ok(soft.wake === 'soft', "another seat's line wakes Odette soft");
+  // #29: a seat that has had its turn this round is not woken soft for the others' lines; the next round wakes it.
+  ok((await be.call(1, 'speak', {text: 'Odette, round one.'})).ok, 'Odette takes her round-1 turn');
+  await be.call(1, 'pace', {realMs: 0, wake: 'all'});
+  await be.call(3, 'speak', {text: 'Ines, round one.'});
+  const spent = await be.call(1, 'pace', {realMs: 30, wake: 'all'});
+  ok(spent.wake === 'heartbeat' && /until round 2/.test(spent.why), `Odette, having spoken, is not woken soft for Ines's line (${spent.wake}: ${spent.why})`);
+  ok(!api.canAct(be.game, 0) && api.canAct(be.game, 3), 'canAct: Odette cannot act this round, Corwin can');
+  const corwin = await be.call(4, 'pace', {realMs: 30, wake: 'all'});
+  ok(corwin.wake === 'soft', 'Corwin, still holding his turn, is woken soft for the same line');
   for (let i = 1; i <= 7; i++) await be.call(i, 'speak', {text: `Round one from seat ${i}.`});
   for (const r of [2, 3]) for (let i = 1; i <= 7; i++) await be.call(i, 'speak', {text: `Round ${r} from seat ${i}.`});
   const now = await be.call(1, 'pace', {realMs: 30, wake: 'now'});

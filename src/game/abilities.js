@@ -6,7 +6,9 @@
 //        firstNight(state, i)       its turn in the first night's order
 //        otherNight(state, i)       its turn in the other nights' order
 //        wakeIf(state, i)           whether it wakes at its turn (default: alive)
-//        dayAction(state, i)        once at the start of each day, while alive (a public act)
+//        dayAction: {available(state, i), options(state, i), question, act(state, i, target)}
+//                                   a standing public act the seat may call at any moment of the day (never at dawn,
+//                                   never blocking): offered on the day's table decision (pending.dayActions)
 //        onNominated(state, i, by)  when this seat is nominated; may return {endDay: true}
 //        voteCounts(state, i, votes)  whether this seat's yes counts in this vote
 //        onExecuted(state, i)       when this seat is executed
@@ -153,17 +155,21 @@ export const HOOKS = {
     },
   },
   slayer: {
-    *dayAction(state, i) {
-      if (hasToken(state, i, 'no-ability', t => t.role === 'slayer')) return;
-      const v = yield choose(state, i, 'slayer', [null, ...aliveSeats(state)], 'shoot a player now (they die if they are the demon), or hold (null)');
-      if (v === null) return;
-      addToken(state, i, {token: 'no-ability', role: 'slayer', by: i, keep: true});
-      log(state, 'slayer-shot', {seat: i, target: v});
-      if (malfunctioning(state, i)) {log(state, 'no-effect', {seat: i, role: 'slayer'}); return}
-      const reg = yield* perceive(state, [v], r => teamOf(state, r) === 'demon', 'to the Slayer');
-      if (teamOf(state, reg[v]) !== 'demon') {log(state, 'no-death', {seat: v, why: 'not the demon'}); return}
-      yield* die(state, v, 'slayer', i);
-      checkWin(state);
+    // A standing day action: the living Slayer with the shot unspent may call it at any moment of the day (game 1, #37:
+    // a shot offered only at dawn, before any talk, was held every time). Not offered at dawn and never blocking.
+    dayAction: {
+      available: (state, i) => state.seats[i].alive && !hasToken(state, i, 'no-ability', t => t.role === 'slayer'),
+      options: state => aliveSeats(state),
+      question: 'your shot is unspent: you may shoot a player at any moment today (they die if they are the demon), or keep it (null)',
+      *act(state, i, v) {
+        addToken(state, i, {token: 'no-ability', role: 'slayer', by: i, keep: true});
+        log(state, 'slayer-shot', {seat: i, target: v});
+        if (malfunctioning(state, i)) {log(state, 'no-effect', {seat: i, role: 'slayer'}); return}
+        const reg = yield* perceive(state, [v], r => teamOf(state, r) === 'demon', 'to the Slayer');
+        if (teamOf(state, reg[v]) !== 'demon') {log(state, 'no-death', {seat: v, why: 'not the demon'}); return}
+        yield* die(state, v, 'slayer', i);
+        checkWin(state);
+      },
     },
   },
   soldier: {safeFromDemon: (state, i) => !malfunctioning(state, i)},
