@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "portraits": {
+    "Bram": {
+      "file": "Bram.png",
+      "model": "black-forest-labs/FLUX.1-schnell",
+      "provider": "fal-ai",
+      "licence": "Apache-2.0",
+      "promptHash": "35d7ba9f5a904c50",
+      "seed": 2113340304,
+      "size": 512,
+      "sha256": "40d698bd3c934c1307f033e694ac6ca9b1c475ceec5f376b22cbb8dade849262",
+      "date": "2026-11-09T01:12:15.490Z"
+    },
+    "Corwin": {
+      "file": "Corwin.png",
+      "model": "black-forest-labs/FLUX.1-schnell",
+      "provider": "fal-ai",
+      "licence": "Apache-2.0",
+      "promptHash": "f6801b8630c72595",
+      "seed": 957849081,
+      "size": 512,
+      "sha256": "152e320dd1cdfe45af589b0d04d157b11a218aeeba8eb40fac8392d5c057e30d",
+      "date": "2026-11-09T01:12:21.489Z"
+    },
+    "Fitch": {
+      "file": "Fitch.png",
+      "model": "black-forest-labs/FLUX.1-schnell",
+      "provider": "fal-ai",
+      "licence": "Apache-2.0",
+      "promptHash": "05caaffd6df8d440",
+      "seed": 1272050306,
+      "size": 512,
+      "sha256": "f2dd70dd667dc6d22450e9f42421c1941bda7fc0a2a3eddd2f59f500c031e647",
+      "date": "2026-11-09T01:12:26.110Z"
+    },
+    "Ines": {
+      "file": "Ines.png",
+      "model": "black-forest-labs/FLUX.1-schnell",
+      "provider": "fal-ai",
+      "licence": "Apache-2.0",
+      "promptHash": "5e3a63b6bcd977ff",
+      "seed": 1139737140,
+      "size": 512,
+      "sha256": "beb38fb4ebb198f319331f3cd4d4c52f6079cb8d169adf120c9fcf7a7daaf1cc",
+      "date": "2026-11-09T01:12:18.497Z"
+    },
+    "Odette": {
+      "file": "Odette.png",
+      "model": "black-forest-labs/FLUX.1-schnell",
+      "provider": "fal-ai",
+      "licence": "Apache-2.0",
+      "promptHash": "6c0907fd7c760424",
+      "seed": 1103763610,
+      "size": 512,
+      "sha256": "f7f59a1b9a78df8041eb62a6eb0d6fc16a9e9361c8b9b4566f2354dffa0c5402",
+      "date": "2026-11-09T01:12:13.041Z"
+    },
+    "Storyteller": {
+      "file": "Storyteller.png",
+      "model": "black-forest-labs/FLUX.1-schnell",
+      "provider": "fal-ai",
+      "licence": "Apache-2.0",
+      "promptHash": "e2ce4a56410dab47",
+      "seed": 1413940806,
+      "size": 512,
+      "sha256": "793aa81a6c09d7e1e4640585b270989b0176867ef781cfe04aa2da63ce65c08b",
+      "date": "2026-11-09T01:12:30.679Z"
+    },
+    "Thea": {
+      "file": "Thea.png",
+      "model": "black-forest-labs/FLUX.1-schnell",
+      "provider": "fal-ai",
+      "licence": "Apache-2.0",
+      "promptHash": "0b7fbd9dd8196992",
+      "seed": 2109260385,
+      "size": 512,
+      "sha256": "2b87d333dedd1741d7a261c0a37a24256192b7b80134e43005f6219973ac62c8",
+      "date": "2026-11-09T01:12:23.850Z"
+    },
+    "Yusuf": {
+      "file": "Yusuf.png",
+      "model": "black-forest-labs/FLUX.1-schnell",
+      "provider": "fal-ai",
+      "licence": "Apache-2.0",
+      "promptHash": "55ca7fa1fe969b54",
+      "seed": 1563349465,
+      "size": 512,
+      "sha256": "fba5fe43fdc5260504b7abb75f4034d64c93941734d3439d8651515a8c80172f",
+      "date": "2026-11-09T01:12:28.320Z"
+    }
+  }
+}
