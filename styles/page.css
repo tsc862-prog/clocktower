@@ -423,7 +423,7 @@ body[data-view="people"] .drawer-close { display: block; position: absolute; top
   #stage .card { left: var(--x, 50%); top: var(--y, 50%); }
   #stage .card .name { font-size: var(--ring-name, 1.45rem); }
   #stage .table::before { left: calc(var(--mid-x, 25%) + var(--mid-w, 50%) / 2); top: calc(var(--mid-y, 30%) + var(--mid-h, 40%) / 2);
-    width: calc(var(--mid-w, 50%) * 1.12); height: calc(var(--mid-h, 40%) * 1.05); }
+    width: calc(var(--mid-w, 50%) * 1.02); height: calc(var(--mid-h, 40%) * 1.3); }
   #stage .table-centre { left: var(--mid-x, 29%); top: var(--mid-y, 30%); width: var(--mid-w, 42%); height: var(--mid-h, 40%); transform: none; container-type: size;
     display: flex; flex-direction: column; justify-content: safe center; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #4a3727 transparent; }
   #stage .table-centre .vote-what { font-size: clamp(1rem, min(9cqh, 4.6cqw), 1.7rem); }
