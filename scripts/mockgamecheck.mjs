@@ -128,6 +128,12 @@ async function main() {
     // the report (#98): one finished game, told apart by the id every log line carries, numbers that agree with the logs
     const rep = splitGames(loadData(env.BEHAVIOR_DIR, env.AGENT_LOGS)).map(measure);
     ok(rep.length === 1 && !!rep[0].id && turns.every(t => t.gameId === rep[0].id), `the behavior report finds one game and every turn line carries its id (${rep.map(r => r.id).join(', ')})`);
+    // #100: the relay logs the game's own public events to game.jsonl, once each, and the report's winner and counts come from them
+    const gl = jsonl(join(env.BEHAVIOR_DIR, 'clocktower', 'game.jsonl')).filter(e => e.src === 'event'), winLine = gl.find(e => e.type === 'win');
+    ok(!!winLine && winLine.team === look.winner && winLine.gameId === (rep[0] || {}).id && !!winLine.ts && Number.isFinite(winLine.id), `game.jsonl has the win line (${winLine ? winLine.team + ', event ' + winLine.id : 'none'}) with the game id and a timestamp`);
+    const evIds = gl.map(e => e.id);
+    ok(new Set(evIds).size === evIds.length && ['night', 'dawn', 'say', 'nomination', 'vote-result'].every(k => gl.some(e => e.type === k)), `every event is logged once (${gl.length} events: ${[...new Set(gl.map(e => e.type))].join(', ')})`);
+    ok(!!rep[0] && rep[0].fromLog === true && rep[0].winner === winLine.team && /game log/.test(renderTable(rep)), 'the report reads the winner and the counts from the game log');
     const M = rep[0] || {};
     ok(M.winner === look.winner && M.turns && M.turns.all === turns.length && M.leaks && M.leaks.textLeaks + M.leaks.roleHits === 0 && M.talk && M.talk.lines > 0,
       `and its numbers agree: winner ${M.winner}, ${M.turns && M.turns.all} turns, ${M.talk && M.talk.lines} lines, ${M.leaks ? M.leaks.textLeaks + M.leaks.roleHits : '?'} leaks, ${M.refused && M.refused.total} refused calls`);

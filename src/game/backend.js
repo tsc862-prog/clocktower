@@ -52,7 +52,7 @@ export function utcStamp(ms) {
 }
 
 export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = SCRIPTED_GRACE_MS, players = PLAYER_TOOLS,
-  storyteller = STORYTELLER_TOOLS, note = () => {}, log = () => {}, now = () => 0, stagger = 0} = {}) {
+  storyteller = STORYTELLER_TOOLS, note = () => {}, onEvent = () => {}, log = () => {}, now = () => 0, stagger = 0} = {}) {
   let game = newGame({seed, ...(seats ? {seats} : {}), ...(rounds != null ? {rounds} : {})});
   // The game id (#66): the seed and the deal time from the clock given to us; a repeat within one second gets ".N".
   let deals = 0, gameId = null;
@@ -109,10 +109,39 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     return a;
   })());
 
+  // The watcher's events after `from`: the Storyteller's view plus the whispers and room talk it never hears.
+  function watchEvents(from) {
+    const copy = v => v == null ? v : JSON.parse(JSON.stringify(v));
+    const told = api.events(game, ST, from), whispers = game.log.filter(e => (e.type === 'whisper' || e.type === 'say' && e.room != null) && e.id > from).map(({n, ...e}) => copy(e));
+    return [...told, ...whispers].sort((a, b) => a.id - b.id);
+  }
+  // The game's public events for the behavior log (#100), once each: every log entry after the watermark, as it happens (changed() runs
+  // after every act), seats as names. Only the types the table sees (not what the Storyteller was told or ruled); the grimoire is left out.
+  const LOGGED = new Set(['night', 'dawn', 'phase', 'say', 'pass', 'whisper', 'move', 'nomination', 'vote', 'vote-closed', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'death', 'win']);
+  let emitted = -1;
+  function emitEvents() {
+    let evs; try {evs = watchEvents(emitted)} catch {return}
+    if (!evs.length) return;
+    emitted = evs.at(-1).id;
+    const nm = i => game.seats[i] ? game.seats[i].name : i, nms = a => Array.isArray(a) ? a.map(nm) : a;
+    const rooms = new Map(api.where(game, ST).rooms.map(r => [r.id, r.name]));
+    for (const e of evs) {
+      if (!LOGGED.has(e.type)) continue;
+      const r = {src: 'event', id: e.id, type: e.type === 'vote' ? 'vote-result' : e.type, phase: e.phase, day: e.day, night: e.night};
+      for (const k of ['what', 'round', 'text', 'team', 'reason', 'cause', 'how', 'tally', 'needed', 'need']) if (e[k] != null) r[k] = e[k];
+      if (e.room != null) {r.room = e.room; if (rooms.has(e.room)) r.roomName = rooms.get(e.room)}
+      for (const k of ['seat', 'by', 'from', 'to', 'target', 'nominator']) if (typeof e[k] === 'number') r[k === 'seat' && ['say', 'pass', 'death', 'execution'].includes(e.type) ? 'who' : k] = nm(e[k]);
+      for (const k of ['seats', 'yes', 'missing', 'deaths']) if (Array.isArray(e[k])) r[k] = nms(e[k]);
+      if (e.block) r.block = {seat: e.block.seat == null ? null : nm(e.block.seat), votes: e.block.votes};
+      try {onEvent(r)} catch {}
+    }
+  }
+
   function changed() {
     const p = game.pending, id = p ? p.id : null, fresh = id !== pendingId;
     pendingId = id;
     if (!nominating()) stag = null; else if (!stag) stag = newStag(); // the stagger starts when the nomination decision opens (again)
+    emitEvents();
     for (const w of [...waiters]) w();
     if (fresh) arm();
     schedulePush();
@@ -125,13 +154,12 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     const last = game.log.length ? game.log.at(-1).id : -1, from = Number.isFinite(Number(since)) && Number(since) <= last ? Number(since) : -1;
     const copy = v => v == null ? v : JSON.parse(JSON.stringify(v)), g = api.grimoire(game), c = game.clock;
     // the Storyteller hears neither whispers nor room talk; the watcher hears both
-    const told = api.events(game, ST, from), whispers = game.log.filter(e => (e.type === 'whisper' || e.type === 'say' && e.room != null) && e.id > from).map(({n, ...e}) => copy(e));
     const w = api.where(game, ST), places = {square: w.square, rooms: w.rooms, open: w.open};
     const withClip = e => clips.has(e.id) ? {...e, clip: clips.get(e.id)} : e;
     return {ok: true, gameId, seed: game.config.seed, rounds: game.config.rounds, phase: g.phase, night: game.night, day: game.day,
       clock: {day: c.day, round: c.round, roundsBeforeNominations: c.roundsBeforeNominations, nominationsOpen: c.nominationsOpen, spoke: [...c.spoke], passedNominating: [...c.passedNominating]},
       pending: copy(game.pending), ballot: copy(game.ballot), grimoire: g, nightOrder: api.nightOrder(game), rulings: api.rulings(game),
-      winner: copy(game.winner), last, canNewGame: true, places, events: [...told, ...whispers].sort((a, b) => a.id - b.id).map(withClip)};
+      winner: copy(game.winner), last, canNewGame: true, places, events: watchEvents(from).map(withClip)};
   }
   // The live push to the page's sockets: what changed since the last push, batched per PUSH_MS tick (a vote's ballots arrive as they
   // land). {type: 'watch', seed, last, events, clock, pending, ballot, phase, day, night, winner, places}: the same fields and shapes as the
@@ -295,7 +323,7 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
       answerer = scripted ? createScripted(nextSeed) : null;
       for (const k of Object.keys(seen)) delete seen[k];
       clips.clear(); asked.clear(); heard = null; for (const k of Object.keys(holdSince)) delete holdSince[k];
-      pendingId = null; pushed = -1; lastBallot = 'null'; stag = null; stDueSaid = null; gameId = dealId(nextSeed); changed();
+      pendingId = null; pushed = -1; emitted = -1; lastBallot = 'null'; stag = null; stDueSaid = null; gameId = dealId(nextSeed); changed();
       log(`[game] a new game: seed ${nextSeed}, game ${gameId}`);
       return {gameId, seed: game.config.seed, rounds: game.config.rounds};
     },

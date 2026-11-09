@@ -78,6 +78,20 @@ try {
   ok(m1.claims.true === 1 && m1.claims.lies === 0, `a claim in speech checked against the seat's role (${m1.claims.true} true, ${m1.claims.lies} lies)`);
   ok(m1.storyteller.noAct === 1 && m1.storyteller.noCall === 0, 'a Storyteller turn that only looked is not an acting call');
 
+  console.log('the game log (#100)');
+  const evs = tx => tx.flatMap(e => {const m = {say: () => ({type: 'say', who: e.from, text: e.text, ...(e.in ? {roomName: e.in, room: 1} : {})}), pass: () => ({type: 'pass', who: e.from}), move: () => ({type: 'move', seats: e.seats, room: e.to === 'the Square' ? null : 1, roomName: e.to === 'the Square' ? undefined : e.to, text: 'moves'}),
+    whisper: () => ({type: 'whisper', from: e.from, to: e.to, text: e.text}), nomination: () => ({type: 'nomination', by: e.by, target: e.target}), 'vote-result': () => ({type: 'vote-result', by: e.by, target: e.target, yes: e.yes, tally: e.tally, needed: e.needed}), execution: () => ({type: 'execution', who: e.who}), win: () => ({type: 'win', team: e.team, text: e.text})}[e.type];
+    return m ? [{ts: new Date(T1 + 20e3 + e.id * 100).toISOString(), game: 'clocktower', gameId: '3-20261101T120001Z', src: 'event', id: e.id, day: e.day, night: e.night, phase: 'day', ...m()}] : []});
+  const gameB = b.tx.concat([{id: 11, type: 'pass', day: 1, from: 'Cy'}, {id: 12, type: 'say', day: 2, from: 'Cy', text: 'Cy: a later line'}]), gl = evs(gameB);
+  const withLog = splitGames({...data, gevents: [...gl, ...gl, {ts: new Date(T1).toISOString(), gameId: '3-20261101T120001Z', type: 'digest'}].filter(e => e.src === 'event' || true)});
+  const mLog = measure(withLog.find(g => g.id === '3-20261101T120001Z'));
+  ok(mLog.fromLog && mLog.winner === 'good' && /Imp/.test(mLog.winnerHow), `the winner comes from the win event (${mLog.winner}: ${mLog.winnerHow})`);
+  ok(mLog.talk.lines === 4 && mLog.talk.rooms === 1 && mLog.talk.whispers === 1 && mLog.talk.moves === 2 && mLog.talk.passes === 1 && mLog.talk.byDay[2].lines === 1 && mLog.talk.byDay[1].passes === 1, `lines, passes and days counted from the events, a doubled event once (${mLog.talk.lines} lines, ${mLog.talk.passes} pass)`);
+  ok(mLog.gameLog && mLog.gameLog.days === 2 && mLog.gameLog.nominations === 1 && mLog.gameLog.votes === 1 && mLog.gameLog.executions === 1, `nominations, votes and executions counted: ${JSON.stringify(mLog.gameLog)}`);
+  const noWin = measure(splitGames({...data, gevents: gl.filter(e => e.type !== 'win')}).find(g => g.id === '3-20261101T120001Z'));
+  ok(noWin.fromLog && noWin.winner === 'good', 'a game log without the win line falls back to the old reading for the winner');
+  ok(renderTable([m1]) === renderTable([measure(splitGames({...data, gevents: []}).find(g => g.id === '3-20261101T120001Z'))]) && !/game log/.test(renderTable([m1])), 'a game with no game log reads as before: its table does not change');
+
   console.log('leaks');
   ok(m1.leaks.textLeaks === 0 && m1.leaks.roleHits === 0, `a clean game: no leak (${m1.leaks.scanned} results and headers searched)`);
   ok(m2.leaks.textLeaks === 1 && m2.leaks.text[0].seat === 'Cy', `a planted room line in a seat that was not in the room is found (${m2.leaks.textLeaks}: ${m2.leaks.text[0] && m2.leaks.text[0].seat})`);

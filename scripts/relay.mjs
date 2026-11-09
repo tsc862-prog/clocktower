@@ -161,7 +161,7 @@ export function startRelay({env = loadEnv(), argv = process.argv, port = Number(
   const {server} = createRelay({providers, model, origin, limits, tts, seats: () => play ? play.backend.info() : {}});
   const flag = k => {const i = argv.indexOf(k); return i >= 0 && argv[i + 1] != null && !String(argv[i + 1]).startsWith('--') ? argv[i + 1] : null};
   const backend = argv.includes('--game') ? gameBackend({seed: Number(flag('--seed') ?? 1), ...(flag('--rounds') != null ? {rounds: Number(flag('--rounds'))} : {}),
-    scripted: argv.includes('--scripted'), log, now: () => Date.now(), stagger: nominationStagger(env), note: rec => {if (behavior) behavior.ingest('game', rec)}}) : null;
+    scripted: argv.includes('--scripted'), log, now: () => Date.now(), stagger: nominationStagger(env), note: rec => {if (behavior) behavior.ingest('game', rec)}, onEvent: rec => {if (behavior) behavior.ingest('event', rec)}}) : null;
   if (backend) log(`[relay] serving a game: seed ${Number(flag('--seed') ?? 1)}${argv.includes('--scripted') ? ', scripted Storyteller fallback' : ''}, game ${backend.gameId}`);
   play = attachPlay(server, {backend, origin, verbose, behavior, log});
   if (backend && tts) {backend.setVoice({clip: (name, text) => tts.clip(name, text)}); tts.extra = () => ({heard: backend.heardMark()})}
