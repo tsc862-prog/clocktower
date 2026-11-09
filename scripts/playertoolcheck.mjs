@@ -11,7 +11,7 @@ import {join, dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {PLAYER_TOOLS, TOOL_NAMES, ATTEMPT_INVITE} from '../src/data/player-tools.js';
 import {PLAYER_TOOL_LINES, systemFor} from '../src/data/prompts.js';
-import {playerHeader, whatsNew, useApi, claimsInLine} from '../src/seats/player.js';
+import {playerHeader, whatsNew, useApi, claimsInLine, cleanEvent, FIRST_DAWN} from '../src/seats/player.js';
 import * as api from '../src/game/api.js';
 import {newGame, createScripted, playScripted} from '../src/game/index.js';
 
@@ -309,6 +309,15 @@ section('game 1 fixes: no doubled names, a voice per seat, a useful first day, t
   ok(/First day: say something about yourself or ask a player a question/.test(playerHeader(fakeGame('day'), 0, fakeApi)), 'the day-1 header nudges a seat to speak');
   ok(/nominate someone anyway/.test(playerHeader(fakeGame('nominations'), 0, fakeApi)), 'the header with nominations open and none made says to nominate anyway');
   ok(!/First day|nominate someone anyway/.test(playerHeader(fakeGame('night'), 0, fakeApi)), 'no nudge at night');
+
+  // #110: the demon never kills on the first night, so a quiet first night is no clue; from night 2 a quiet night is news
+  ok(/never kills on the first night/.test(sys) && /says nothing about anyone/.test(sys) && /From night 2 on, a night with no death is news/.test(sys) && /Monk guarded/.test(sys) && /Soldier/.test(sys),
+    'the prompt says the first night is quiet by the rules and a quiet night after it is news');
+  ok(/A quiet night 1 is the rule, no clue./.test(playerHeader(fakeGame('day'), 0, fakeApi)), 'the day-1 nudge says a quiet first night is no clue');
+  const dawn1 = cleanEvent({day: 1}, 0, {id: 1, type: 'dawn', day: 1, deaths: [], text: 'Day 1 breaks. Nobody died in the night.'});
+  ok(dawn1.text === FIRST_DAWN && /demon does not kill then/.test(dawn1.text), `day 1's empty dawn reads as the rule: ${dawn1.text}`);
+  const dawn2 = cleanEvent({day: 2}, 0, {id: 2, type: 'dawn', day: 2, deaths: [], text: 'Day 2 breaks. Nobody died in the night.'});
+  ok(dawn2.text === 'Day 2 breaks. Nobody died in the night.', 'a quiet dawn from day 2 keeps the engine text');
 
   // #38: the stakes line at four alive or fewer, by day only
   const withAlive = (st, n) => {const x = fakeGame(st); x.seats.forEach((s, i) => {s.alive = i < n}); return x};
