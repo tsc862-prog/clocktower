@@ -9,7 +9,8 @@
 //                                An ApiError becomes {ok: false, error: message}.
 //   pace(id, {brief})            {ok, brief: header} from src/seats/player.js / storyteller.js.
 //   pace(id, {realMs, wake})     waits up to realMs for: 'now' (a decision waits on the seat), 'soft' (events it has not
-//                                been shown; only with wake 'all'), else 'heartbeat' (wake 'all') or wake null. Once the
+//                                been shown, and only for a seat that can act now: api.canAct; only with wake 'all'), else
+//                                'heartbeat' (wake 'all'; why names when the seat next acts: api.nextTurnText) or wake null. Once the
 //                                game is over and the seat has seen the end: {ok: false, gone: true}.
 //   scripted: true               a Storyteller decision nobody answers within `grace` ms (counted from the decision or the
 //                                Storyteller's last call) is answered by the scripted default, with that as its reason.
@@ -98,7 +99,8 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     const soft = !args.wake || args.wake === 'all';
     const check = () => {
       if (mustAct(key)) return {ok: true, wake: 'now', why: key === ST ? `a ${game.pending.kind} decision waits on you` : api.legalNow(game, key), clock: clockText()};
-      if (unseen(key) && (soft || game.winner)) return {ok: true, wake: 'soft', why: 'something happened at the table', clock: clockText()};
+      // soft only for a seat that can act on what it has not seen (#29): one that had its turn this round waits for the next
+      if (unseen(key) && (game.winner || soft && (key === ST || api.canAct(game, key)))) return {ok: true, wake: 'soft', why: 'something happened at the table', clock: clockText()};
       if (game.winner) return {ok: false, gone: true, error: `The game is over: ${game.winner.text}.`};
       return null;
     };
@@ -112,7 +114,8 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
       waiters.add(w);
     });
     if (r) return mark(r);
-    return soft ? mark({ok: true, wake: 'heartbeat', why: 'a quiet beat', clock: clockText()}) : {ok: true, wake: null, why: 'nothing new', clock: clockText()};
+    const quiet = key === ST ? 'a quiet beat' : `a quiet beat${(t => t ? ': ' + t : '')(api.nextTurnText(game, key))}`;
+    return soft ? mark({ok: true, wake: 'heartbeat', why: quiet, clock: clockText()}) : {ok: true, wake: null, why: 'nothing new', clock: clockText()};
   }
 
   const sendAll = o => {const s = JSON.stringify(o); for (const ws of socks) if (ws.readyState === 1) ws.send(s)};

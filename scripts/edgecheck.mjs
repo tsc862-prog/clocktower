@@ -1,8 +1,9 @@
 // npm run edgecheck: every rule with an edge case, each on a fixed deal with the decisions that matter scripted and
 // everything else answered quietly (true information, no registering trick, no nominations, every vote no).
 // Exit 1 on any failure.
-import {newGame, answer, replay, playOut, grimoire} from '../src/game/index.js';
+import {newGame, answer, replay, playOut, grimoire, validate} from '../src/game/index.js';
 import {isPoisoned} from '../src/game/grimoire.js';
+import * as api from '../src/game/api.js';
 
 let fails = 0, passes = 0;
 const ok = (cond, msg) => {if (cond) passes++; else {fails++; console.log(`  FAIL ${msg}`)}};
@@ -55,7 +56,11 @@ const execOn = (day, by, target) => [
   {kind: 'nomination', day, once: true, value: {by, target}},
   {kind: 'vote', day, when: p => p.nominee === target, answer: allYes, once: true},
 ];
-const throws = f => {try {f(); return false} catch {return true}};
+const throws = (f, re) => {try {f(); return false} catch (e) {return !re || re.test(e.message)}};
+// The Slayer's standing shot, answered on the day's table decision; and the moment after it resolved.
+const shot = (day, by, target) => ({kind: 'nomination', day, once: true, value: {by, ability: 'slayer', target}});
+const validateShot = (s, by, target) => validate(s.pending, {by, ability: 'slayer', target});
+const afterShot = s => s.log.some(e => e.type === 'slayer-shot') && (s.pending?.kind === 'nomination' || s.phase !== 'day');
 
 // ---------------------------------------------------------------------------------------------------------------
 section('poisoned and drunk information');
@@ -148,9 +153,9 @@ section('the Recluse registering');
   ok(told(s, 'ravenkeeper')[0]?.info === 'baron', 'the Ravenkeeper may learn the Recluse as the Baron');
   // the Slayer
   const r3 = ['slayer', 'imp', 'baron', 'recluse', 'chef', 'empath', 'soldier'];
-  let t = play(r3, [{kind: 'choose', role: 'slayer', value: 3}, {kind: 'register', why: 'Slayer', value: 'imp'}], {until: atDay(1)});
+  let t = play(r3, [shot(1, 0, 3), {kind: 'register', why: 'Slayer', value: 'imp'}], {until: afterShot});
   ok(!t.seats[3].alive && !t.winner && t.log.some(e => e.type === 'death' && e.cause === 'slayer' && e.seat === 3), 'the Slayer\'s shot kills a Recluse registering as the demon, and the game goes on');
-  t = play(r3, [{kind: 'choose', role: 'slayer', value: 3}], {until: atDay(1)});
+  t = play(r3, [shot(1, 0, 3)], {until: afterShot});
   ok(t.seats[3].alive, 'the Slayer\'s shot misses a Recluse registering as itself');
 }
 
@@ -255,16 +260,50 @@ section('the Virgin');
 
 section('the Slayer');
 {
+  // The shot is a standing day action (#37): never offered at dawn, never blocking, callable at any moment of the day.
   const roles = ['slayer', 'imp', 'baron', 'chef', 'empath', 'soldier', 'monk'];
-  let s = play(roles, [{kind: 'choose', role: 'slayer', value: 1}], {until: s => s.winner});
+  let s = play(roles, [], {until: atDay(1)});
+  ok(s.pending.kind === 'nomination' && !s.log.some(e => e.type === 'wake' && e.phase === 'day'), 'no choice is asked of the Slayer at dawn: the day goes straight to its talk');
+  ok(s.pending.dayActions.length === 1 && s.pending.dayActions[0].by === 0 && s.pending.dayActions[0].ability === 'slayer' && eq(s.pending.dayActions[0].options, [0, 1, 2, 3, 4, 5, 6]), 'the day\'s table decision offers the Slayer\'s shot');
+  ok(!api.mustAct(s, 0) && api.pendingFor(s, 0)?.standing === true && api.pendingFor(s, 0).options[0] === null && api.canAct(s, 0), 'the shot never makes the Slayer\'s seat wait: a standing choice it may answer or not');
+  s = play(roles, [shot(1, 0, 1)], {until: s => s.winner});
   ok(s.winner?.team === 'good' && s.winner.reason === 'demon-dead' && s.winner.day === 1, 'the Slayer kills the Imp and good wins');
-  const shots = [];
-  s = play(roles, [{kind: 'choose', role: 'slayer', answer: p => {shots.push(p); return shots.length === 1 ? 2 : 1}}, {kind: 'choose', role: 'imp', answer: p => [3, 4, 6].find(x => p.options.includes(x))}], {until: atDay(3)});
-  ok(s.seats[2].alive && shots.length === 1 && s.seats[1].alive, 'the Slayer\'s shot at a minion does nothing, and the Slayer shoots once only');
-  s = play(['drunk', 'imp', 'baron', 'chef', 'empath', 'soldier', 'monk'], [{kind: 'believed-role', value: 'slayer'}, {kind: 'choose', role: 'slayer', value: 1}], {until: atNight(2)});
-  ok(s.seats[1].alive && !s.winner, 'the Drunk Slayer\'s shot does nothing');
-  s = play(['slayer', 'imp', 'scarlet-woman', 'chef', 'empath', 'soldier', 'monk'], [{kind: 'choose', role: 'slayer', value: 1}], {until: s => s.winner || atNight(2)(s)});
+  s = play(roles, [shot(1, 0, 2), {kind: 'choose', role: 'imp', answer: p => [3, 4, 6].find(x => p.options.includes(x))}], {until: atDay(2)});
+  ok(s.seats[2].alive && s.seats[1].alive && s.log.filter(e => e.type === 'slayer-shot').length === 1, 'the Slayer\'s shot at a minion does nothing');
+  ok(s.day === 2 && s.seats[0].alive && !s.pending.dayActions.length && api.pendingFor(s, 0) === null, 'and the Slayer shoots once only: no shot on day 2');
+  ok(throws(() => validateShot(s, 0, 1), /no slayer day action/), 'the engine refuses a spent Slayer\'s shot');
+  s = play(['drunk', 'imp', 'baron', 'chef', 'empath', 'soldier', 'monk'], [{kind: 'believed-role', value: 'slayer'}, shot(1, 0, 1)], {until: atNight(2)});
+  ok(s.seats[1].alive && !s.winner && s.log.some(e => e.type === 'slayer-shot' && e.seat === 0) && s.log.some(e => e.type === 'no-effect' && e.seat === 0), 'the Drunk Slayer may shoot, in public, and the shot does nothing');
+  s = play(['slayer', 'imp', 'scarlet-woman', 'chef', 'empath', 'soldier', 'monk'], [shot(1, 0, 1)], {until: s => s.winner || atNight(2)(s)});
   ok(!s.winner && s.seats[2].role === 'imp', 'the Slayer killing the Imp with five or more alive hands the demon to the Scarlet Woman');
+
+  // through the api: mid-day after talk
+  let g = play(roles, [], {until: atDay(1)});
+  for (const x of g.seats) api.say(g, x.index, `${x.name} speaks first.`);
+  ok(g.clock.round === 2 && api.canAct(g, 0), 'after a round of talk the Slayer still holds the shot');
+  ok(eq(api.answer(g, 0, null), {kept: true}) && api.dayActionFor(g, 0), 'answering "nobody" keeps the shot for later');
+  ok(throws(() => api.dayAction(g, 0, 9), /Pick one of/), 'a shot at no seat is refused');
+  ok(throws(() => api.dayAction(g, 3, 1), /no ability to use by day/), 'a seat with no day ability cannot shoot');
+  const r = api.answer(g, 0, 1);
+  ok(r.used === 'slayer' && g.winner?.team === 'good' && api.events(g, 4).some(e => e.type === 'slayer-shot' && e.seat === 0 && e.target === 1), 'the Slayer shoots mid-day, through the same answer as a night choice, and the whole table sees it at once');
+
+  // during nominations: the shot resolves and the nominations go on
+  g = play(roles, [], {until: atDay(1)});
+  api.openNominations(g);
+  api.nominate(g, 3, 4);
+  ok(throws(() => api.dayAction(g, 0, 2), /vote is open/), 'no shot while a vote is open: it waits for the vote to end');
+  for (const i of g.pending.seats) api.vote(g, i, false);
+  ok(api.pendingFor(g, 0)?.kind === 'nomination', 'nominations go on: the Slayer may still nominate');
+  ok(api.dayAction(g, 0, 2).used === 'slayer' && g.seats[2].alive && g.phase === 'day', 'the Slayer shoots during the nominations: a miss, and the day goes on');
+  ok(g.pending.kind === 'nomination' && eq(g.today.nominators, [3]) && !g.pending.dayActions.length && api.pendingFor(g, 0)?.kind === 'nomination', 'the nominations keep their book, and the spent shot is gone');
+  ok(throws(() => api.dayAction(g, 0, 1), /spent/), 'a spent Slayer\'s second shot is refused');
+
+  // a dead Slayer has no shot
+  g = play(roles, [{kind: 'choose', role: 'monk', value: 3}, {kind: 'choose', role: 'imp', value: 0}], {until: atDay(2)});
+  ok(!g.seats[0].alive && !g.pending.dayActions.length && api.dayActionFor(g, 0) === null && !api.pendingFor(g, 0), 'a dead Slayer is offered no shot');
+  ok(throws(() => api.dayAction(g, 0, 1), /dead/), 'and a dead Slayer\'s shot is refused');
+  const back = replay(JSON.parse(JSON.stringify((() => {const h = play(roles, [], {until: atDay(1)}); api.dayAction(h, 0, 2); return h})())));
+  ok(back.log.some(e => e.type === 'slayer-shot' && e.target === 2) && !back.pending.dayActions.length, 'a game with a shot replays from its plain copy');
 }
 
 section('the Ravenkeeper and the Undertaker');

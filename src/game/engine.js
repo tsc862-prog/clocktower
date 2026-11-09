@@ -52,6 +52,13 @@ export function validate(p, value) {
     }
     return out;
   }
+  if (p.kind === 'nomination' && value && typeof value === 'object' && value.ability != null) {
+    const d = (p.dayActions || []).find(x => x.by === value.by && x.ability === value.ability);
+    if (!d) throw new Error(`nomination: no ${value.ability} day action for seat ${value.by} now`);
+    const t = d.options.find(o => optionKey(o) === optionKey(value.target));
+    if (t === undefined) throw new Error(`${value.ability}: ${optionKey(value.target)} is not an option`);
+    return {by: d.by, ability: d.ability, target: t};
+  }
   const keys = new Map(p.options.map(o => [optionKey(norm(o)), o]));
   const pick = v => {
     const k = optionKey(norm(v));
@@ -133,20 +140,21 @@ function* day(state) {
   if (checkWin(state)) return;
   const t = state.today = {day: state.day, nominators: [], nominees: [], votes: [], block: null, executed: null};
 
-  state.step = 'day-actions';
-  for (const i of alive(state).filter(s => HOOKS[s.believed]?.dayAction).map(s => s.index)) {
-    if (!state.seats[i].alive) continue;
-    yield* HOOKS[state.seats[i].believed].dayAction(state, i);
-    if (state.winner) return;
-  }
-
+  // The day's table decision waits here from dawn to dusk (the talk, then the nominations). A standing day action (the
+  // Slayer's shot) is offered on it as pending.dayActions and answered as {by, ability, target}: it resolves at once and
+  // the table decision is asked again. Nothing is offered or asked at dawn itself.
   state.step = 'nominations';
   while (true) {
     const options = nominationOptions(state);
     if (!options.length) break;
-    const nom = yield ask(state, {kind: 'nomination', seat: 'table', options: [...options, null],
+    const nom = yield ask(state, {kind: 'nomination', seat: 'table', options: [...options, null], dayActions: dayActions(state),
       question: 'Who nominates whom? Each living player nominates at most once a day; each player is nominated at most once a day. null ends the nominations.'});
     if (nom === null) break;
+    if (nom.ability) {
+      yield* HOOKS[nom.ability].dayAction.act(state, nom.by, nom.target);
+      if (state.winner) return;
+      continue;
+    }
     const {by, target} = nom;
     t.nominators.push(by); t.nominees.push(target);
     log(state, 'nomination', {by, target});
@@ -173,6 +181,16 @@ function* day(state) {
     if (state.winner) return;
   }
   checkWin(state);
+}
+
+// The standing day actions open now: [{by, ability, options, question}], one per living seat whose role has one unspent.
+export function dayActions(state) {
+  const out = [];
+  for (const s of alive(state)) {
+    const d = HOOKS[s.believed]?.dayAction;
+    if (d && d.available(state, s.index)) out.push({by: s.index, ability: s.believed, options: d.options(state, s.index), question: d.question});
+  }
+  return out;
 }
 
 function nominationOptions(state) {
