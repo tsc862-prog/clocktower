@@ -83,7 +83,10 @@ async function main() {
     ok(!!over, `the game reaches its end (${over ? over.phase : (await req(base, '/play/health')).phase})`);
     // #69: after the win every runner is told the game is over at its next pace and stops by itself; no turn starts after it
     const tWin = Date.now(), live = ((await view()).runners || []).filter(r => !['stopped', 'crashed'].includes(r.state)).map(r => r.key);
-    const selfStop = await until(async () => {const rs = (await view()).runners || []; return live.every(k => {const r = rs.find(x => x.key === k); return r && ['stopped', 'crashed'].includes(r.state)}) ? rs : null}, ms(30000, 15000));
+    // the supervisor learns of a stop a moment after the runner says it: poll until every one shows stopped with its reason (up to 10 s once all have stopped)
+    const stopped = rs => live.every(k => {const r = rs.find(x => x.key === k); return r && ['stopped', 'crashed'].includes(r.state)});
+    let selfStop = await until(async () => {const rs = (await view()).runners || []; return stopped(rs) ? rs : null}, ms(30000, 15000));
+    if (selfStop) selfStop = await until(async () => {const rs = (await view()).runners || []; return live.every(k => (rs.find(x => x.key === k) || {}).endWhy === 'the game is over') ? rs : null}, ms(10000, 10000)) || (await view()).runners;
     const notOver = live.filter(k => {const r = (selfStop || []).find(x => x.key === k); return !r || r.endWhy !== 'the game is over'});
     const overEnds = (selfStop || []).filter(r => r.endWhy === 'the game is over').map(r => r.key);
     ok(!!selfStop && !notOver.length && overEnds.length >= 5, `every runner playing at the win stops by itself, "the game is over" (${overEnds.join(', ')}${notOver.length ? '; not: ' + notOver.join(', ') : ''})`);

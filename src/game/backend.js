@@ -124,7 +124,7 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     if (!evs.length) return;
     emitted = evs.at(-1).id;
     const nm = i => game.seats[i] ? game.seats[i].name : i, nms = a => Array.isArray(a) ? a.map(nm) : a;
-    const rooms = new Map(api.where(game, ST).rooms.map(r => [r.id, r.name]));
+    let rooms; try {rooms = new Map(api.where(game, ST).rooms.map(r => [r.id, r.name]))} catch {rooms = new Map()}
     for (const e of evs) {
       if (!LOGGED.has(e.type)) continue;
       const r = {src: 'event', id: e.id, type: e.type === 'vote' ? 'vote-result' : e.type, phase: e.phase, day: e.day, night: e.night};
@@ -141,7 +141,7 @@ export function gameBackend({seed = 1, seats, rounds, scripted = false, grace = 
     const p = game.pending, id = p ? p.id : null, fresh = id !== pendingId;
     pendingId = id;
     if (!nominating()) stag = null; else if (!stag) stag = newStag(); // the stagger starts when the nomination decision opens (again)
-    emitEvents();
+    try {emitEvents()} catch {} // never throws into an act or the pace answer
     for (const w of [...waiters]) w();
     if (fresh) arm();
     schedulePush();
