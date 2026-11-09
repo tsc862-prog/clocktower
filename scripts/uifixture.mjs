@@ -110,6 +110,7 @@ export function record(seed = FIXTURE_SEED, rounds = 2) {
       });
       continue;
     }
+    if (p.kind === 'thoughts') {for (const i of p.seats) api.think(game, i, ''); continue} // the night's thoughts (#111): none in the fixture
     throw new Error(`the recorder has no move for ${p.kind} (${p.seat})`);
   }
   frames.end = watchView(game);

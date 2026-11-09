@@ -51,3 +51,11 @@
 - Rooms close (one `move` with closed: true) in openNoms and endDay.
 - The sim plays through the api (`src/game/talk.js` playScripted); talk has its own RNG (seed ^ 0x7a1c7a1c) so no decision moves; apicheck still compares apiGame (no rooms) to the sim's answers. Adding talk randomness never moves winners; changing scripted.js does.
 - channelcheck's B is A's neighbour now (the old B could be anyone).
+
+## First-night words and the thoughts scene (#108, #110, #111; PRs #113 and the night-thoughts PR)
+- Dawn text lives in api.js `dawnText`: night 1 quiet = "The first night passes without a death, as it always does." (the Imp never kills night 1); later quiet nights "Nobody died in the night." DEMON_COVER / MINION_COVER appended to demon-info (only with a minion) and minion-info.
+- Thoughts: engine step 'thoughts' after the night order (skipped if a winner mid-night), before dawn, every night; pending {kind:'thoughts', seat:'table', seats: living, question}. validate never throws: {seat: text} trimmed and cut to THOUGHT_MAX 400, empties dropped. Logs {type:'thought', seat, text, audience:'watcher'} in seat order (night = that night, day = previous day).
+- Audience 'watcher': api.events(ST) filters it out (seats never canSee it); backend watchEvents adds audience 'watcher' entries; behavior log LOGGED has 'thought' (who = name); SEAT_SPOKEN ['say','thought'] in spoken.js voices it as the seat.
+- api: game.thinking {id, texts} like ballot; think/answer per seat; pendingFor {kind, question, mine, tonight}; ONCE_EACH ['vote','thoughts'] for mustAct/legalNow; nightOrder reads all done during the scene.
+- Decision: backend answers the scene empty at once when the player tool table has no `think` tool (seatsThink), so live games and runner checks never stall before the player-builder's tool; adding `think` to PLAYER_TOOLS flips it live with no other change. Every test driver that walks pendings needs a thoughts branch (api.think(...,'')).
+- Scripted thoughts answer {} (no RNG draw): sim transcripts unchanged byte for byte; cannedThoughts(state) is the test answerer.
