@@ -63,3 +63,8 @@ Useful now: vote, who_voted, read_talk.
 - Header cap 900 got tight: news line now ends "(read_talk)", rooms line "Rooms until nominations open:", nudges give way to the stakes line. The next line needs another cut.
 - Patch note lines: rulescheck fails any "- " line over 280 chars.
 - channelcheck (infra's) requires every player tool in its hostile `variants`: a new tool means a one-line out-of-area edit there.
+
+## One of each character (#81, PR #84)
+- Player prompt (in the "Check before you repeat" paragraph): "Every character is in play at most once: one Mayor or none, never two. When two players claim the same role, at most one of them holds it; the other is lying, or is the Drunk, who believes a role that is not in play, so raise it as a contradiction. The demon's bluffs are characters not in play." Storyteller prompt got one sentence after "Pick from them".
+- Poison does not explain a role clash (it garbles information, not identity); the Drunk's believed role is never in play either, so a clash is a liar (or Drunk + liar).
+- Header claims line ends "Same role twice: Mayor: Odette and Corwin (at most one is). claims shows the lines." (aloud claims only, players in seat order); clashesOf(ledger) in player.js; claims tool field sameRole (whispers to me included).
