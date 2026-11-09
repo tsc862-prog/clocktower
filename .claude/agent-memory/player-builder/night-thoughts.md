@@ -15,3 +15,4 @@ The engine (#119) asks every living seat at once before dawn: pending {kind: 'th
 
 **Why:** the owner wants to hear each seat's thought at night (game 5); the thought is the watcher's alone.
 **How to apply:** a new private-by-design store (like notes) needs channelcheck's thinker exemption kept narrow: only its own my_notes.
+- The backend waits on the seats' thoughts whenever PLAYER_TOOLS has `think`; any seatless scripted backend in a check (voicetimingcheck's listening test) must pass `players` without think or it never reaches day 1. Check such tests when adding a tool that answers a table pending.
