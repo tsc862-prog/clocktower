@@ -9,8 +9,8 @@
 //   decisions.jsonl single decisions: src 'game' = a player's settled Mind entry (outcome applied, late,
 //                    rejected, offline, superseded, overruled; sent by the game), src 'relay' = one /decide
 //                    call as the relay saw it (status, latency, error; writing kinds too)
-//   game.jsonl a game-side digest every game hour (src/sim/behavior.js), from the page through the
-//                    play bridge or from the headless game directly
+//   game.jsonl the game's own public events as they happen (src 'event': id, type, day, night, names; #100, from the backend's onEvent),
+//                    and the game-side notes (tool notes, digests) through the play bridge
 //   wishes.jsonl wish notes the Storyteller and the players leave for the builders (type 'wish', and 'attempt' lines for the
 //                    free actions the Storyteller ruled on); sent by the game with the game digest, never read by an agent or a tool
 //   anomalies.jsonl detectors, as they fire: here (turns, relay calls) and in the game (src/sim/behavior.js)
@@ -85,6 +85,7 @@ export function behaviorLog({root = behaviorRoot(), game = 'clocktower', gameId 
   const fails = []; // relay failure times
   const calls = new Map(); // seat -> [times] for floods
   const decides = [];
+  const evSeen = new Set(); // gameId:eventId already written (a game event is logged once)
   const models = new Map(); // ollama model -> {at, who}
   const counts = {turn: 0, decision: 0, game: 0, anomaly: 0, wish: 0, dropped: 0};
   const dirOf = () => join(root, cur);
@@ -172,6 +173,12 @@ export function behaviorLog({root = behaviorRoot(), game = 'clocktower', gameId 
     if (kind === 'game') {
       const r = {...rec}; if (Array.isArray(r.members) && links) r.members = r.members.map(m => ({...m, link: links[m.id] || 'none', ...(runners && runners[m.id] ? {runner: runners[m.id]} : {})}));
       const ctx = {}; for (const [k, v] of seats) if (Number.isFinite(v.ctx)) ctx[k] = v.ctx; if (Object.keys(ctx).length) r.ctx = ctx; // each seat's last prompt size
+      write('game', r); return true}
+    // #100: one public game event (the backend's onEvent), written once: the id is the event's place in the game's log
+    if (kind === 'event') {
+      if (typeof rec.type !== 'string' || !Number.isFinite(rec.id)) return false;
+      const gid0 = gid().gameId || '', key = gid0 + ':' + rec.id; if (evSeen.has(key)) return false; evSeen.add(key);
+      const r = {...rec, src: 'event'}; if (typeof r.text === 'string') r.text = cut(r.text, 1200);
       write('game', r); return true}
     if (kind === 'wish' && (rec.type === 'wish' || rec.type === 'attempt')) { // #663: the text is the agent's own, English-only and capped by the game; the writer scrubs keys
       const r = {...rec}; for (const k of ['tool', 'what', 'why', 'moment', 'summary', 'place', 'name', 'skill']) if (typeof r[k] === 'string') r[k] = cut(r[k], k === 'what' ? 300 : 200);

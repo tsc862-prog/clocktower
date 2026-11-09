@@ -33,13 +33,13 @@ const esc = s => JSON.stringify(s).slice(1, -1); // a text as it sits inside a J
 // ---- cutting the lines into games ----
 // data: {turns, anomalies, play, events, ids}: parsed lines (any order); ids: [{id, at}] from the runner logs.
 // Returns [{id, start, end, finished, turns, anomalies, play, events}] oldest first.
-export function splitGames({turns = [], anomalies = [], play = [], events = [], ids = []}) {
+export function splitGames({turns = [], anomalies = [], play = [], events = [], ids = [], gevents = []}) {
   const cuts = events.filter(e => e.event === 'start' && e.key === 'storyteller').map(e => t(e.at)).filter(Number.isFinite).sort((a, b) => a - b);
   cuts.unshift(-Infinity); // lines before the first start (or all of them, with no events) are run 0
   const runOf = ts => {let i = 0; for (let k = 0; k < cuts.length; k++) if (ts >= cuts[k]) i = k; return i};
-  const runs = cuts.map(() => ({turns: [], anomalies: [], play: [], events: [], ids: new Map()}));
+  const runs = cuts.map(() => ({turns: [], anomalies: [], play: [], events: [], gevents: [], ids: new Map()}));
   const put = (kind, line, ts) => {if (!Number.isFinite(ts)) return; const r = runs[runOf(ts)]; r[kind].push(line); if (line.gameId) r.ids.set(line.gameId, (r.ids.get(line.gameId) || 0) + 1)};
-  turns.forEach(l => put('turns', l, t(l.ts))); anomalies.forEach(l => put('anomalies', l, t(l.ts))); play.forEach(l => put('play', l, t(l.ts))); events.forEach(l => put('events', l, t(l.at)));
+  turns.forEach(l => put('turns', l, t(l.ts))); anomalies.forEach(l => put('anomalies', l, t(l.ts))); play.forEach(l => put('play', l, t(l.ts))); events.forEach(l => put('events', l, t(l.at))); gevents.forEach(l => put('gevents', l, t(l.ts)));
   // a game is the lines of one id; a run's lines with no id take the run's own id (the one most of its lines carry, else the id the
   // runner logs name within 90 s of the run's start), else the run stands as a game of its own
   const games = new Map();
@@ -48,9 +48,9 @@ export function splitGames({turns = [], anomalies = [], play = [], events = [], 
     const first = Math.min(...[...r.turns, ...r.play].map(l => t(l.ts)).filter(Number.isFinite)), at = Number.isFinite(cuts[i]) ? cuts[i] : first;
     const near = ids.map(x => ({...x, d: Math.abs(x.at - at)})).filter(x => x.d < 90e3).sort((a, b) => a.d - b.d)[0];
     const own = [...r.ids].sort((a, b) => b[1] - a[1])[0], runId = own ? own[0] : near ? near.id : null, runKey = runId || 'run' + i;
-    for (const kind of ['turns', 'anomalies', 'play', 'events']) for (const l of r[kind]) {
+    for (const kind of ['turns', 'anomalies', 'play', 'events', 'gevents']) for (const l of r[kind]) {
       const key = l.gameId || runKey; let g = games.get(key);
-      if (!g) games.set(key, g = {id: /^run\d+$/.test(key) ? null : key, runStart: Number.isFinite(cuts[i]) ? new Date(cuts[i]).toISOString() : null, turns: [], anomalies: [], play: [], events: []});
+      if (!g) games.set(key, g = {id: /^run\d+$/.test(key) ? null : key, runStart: Number.isFinite(cuts[i]) ? new Date(cuts[i]).toISOString() : null, turns: [], anomalies: [], play: [], events: [], gevents: []});
       g[kind].push(l);
     }
   });
@@ -69,6 +69,27 @@ export function transcript(play) {
   const m = new Map();
   for (const e of play) if (e.tool === 'read_talk' && e.result && Array.isArray(e.result.entries)) for (const x of e.result.entries) if (!m.has(x.id)) m.set(x.id, x);
   return [...m.values()].sort((a, b) => a.id - b.id);
+}
+
+// #100: the talk and the day's happenings as the relay logged them (game.jsonl, src 'event'), in the shape read_talk gives. Once each (by id).
+export function transcriptFromEvents(gevents) {
+  const seen = new Set(), out = [];
+  for (const e of [...gevents].sort((a, b) => a.id - b.id)) {
+    if (e.src !== 'event' || seen.has(e.id)) continue; seen.add(e.id);
+    const base = {id: e.id, day: e.day, night: e.night};
+    switch (e.type) {
+      case 'say': out.push({...base, type: 'say', from: e.who, text: e.text, ...(e.roomName ? {in: e.roomName} : e.room != null ? {in: String(e.room)} : {})}); break;
+      case 'pass': out.push({...base, type: 'pass', from: e.who}); break;
+      case 'whisper': out.push({...base, type: 'whisper', from: e.from, to: e.to, text: e.text}); break;
+      case 'move': out.push({...base, type: 'move', seats: e.seats || [], to: e.room == null ? 'the Square' : e.roomName || String(e.room), text: e.text}); break;
+      case 'nomination': out.push({...base, type: 'nomination', by: e.by, target: e.target}); break;
+      case 'vote-result': out.push({...base, type: 'vote-result', by: e.by, target: e.target, yes: e.yes || [], tally: e.tally, needed: e.needed ?? e.need}); break;
+      case 'execution': out.push({...base, type: 'execution', who: e.who}); break;
+      case 'win': out.push({...base, type: 'win', team: e.team, text: e.text}); break;
+      case 'death': if (e.cause !== 'execution') out.push({...base, type: 'death', who: e.who, cause: e.cause}); break;
+    }
+  }
+  return out;
 }
 
 // Who is where when a room line is said: rooms fill and empty by the move entries.
@@ -114,10 +135,11 @@ const roleRe = role => new RegExp('\\b' + role.replace(/ /g, '\\s+') + '\\b', 'i
 
 // ---- one game's measures ----
 export function measure(g) {
+  const fromLog = Array.isArray(g.gevents) && g.gevents.some(e => e.src === 'event' && ['say', 'win', 'night', 'nomination'].includes(e.type));
   const T = g.turns, PT = T.filter(x => x.seat !== 'storyteller'), ST = T.filter(x => x.seat === 'storyteller');
-  const hasPlay = g.play.length > 0, tx = transcript(g.play), {roles, ids, demons} = deal(T);
+  const hasPlay = g.play.length > 0, tx = fromLog ? transcriptFromEvents(g.gevents) : transcript(g.play), {roles, ids, demons} = deal(T);
   const times = [...T, ...g.play].map(x => t(x.ts)).filter(Number.isFinite);
-  const m = {id: g.id, seed: g.id && /^\d+-/.test(g.id) ? Number(g.id.split('-')[0]) : null, start: g.start, end: g.end, endedBy: g.endedBy, hasPlay};
+  const m = {id: g.id, seed: g.id && /^\d+-/.test(g.id) ? Number(g.id.split('-')[0]) : null, start: g.start, end: g.end, endedBy: g.endedBy, hasPlay, fromLog};
   // winner and how
   const winEntry = tx.find(x => x.type === 'win'), over = [];
   const scan = s => {const r = /The game is over:? (good|evil) wins?([^."]*)/i.exec(s || ''); if (r) over.push({team: r[1].toLowerCase(), how: r[2].trim()})};
@@ -164,15 +186,16 @@ export function measure(g) {
   const byDay = {}; const dayRow = d => byDay[d] || (byDay[d] = {lines: 0, passes: 0});
   for (const x of lines) dayRow(x.day).lines++;
   // a pass is counted from the calls that went through (the last one may never have been read by anyone); its day is the day of that seat's next header
-  const passCalls = g.play.filter(e => e.tool === 'pass' && e.result && e.result.ok && e.player != null);
+  const passCalls = fromLog ? [] : g.play.filter(e => e.tool === 'pass' && e.result && e.result.ok && e.player != null);
   // its day: the seat's n-th pass call is its n-th pass entry in the talk; one nobody read yet falls on the last day heard
   if (passCalls.length) for (const [id, name] of ids) {
     const calls = passCalls.filter(e => e.player === id).sort((a, b) => t(a.ts) - t(b.ts)), mine = passes.filter(x => x.from === name);
     calls.forEach((e, i) => dayRow(mine[i] ? mine[i].day : tx[tx.length - 1].day).passes++);
   } else for (const x of passes) dayRow(x.day).passes++;
+  if (fromLog) m.gameLog = {days: Math.max(0, ...tx.map(x => x.day || 0)), nominations: tx.filter(x => x.type === 'nomination').length, votes: tx.filter(x => x.type === 'vote-result').length, executions: tx.filter(x => x.type === 'execution').length, deaths: tx.filter(x => x.type === 'death').length + tx.filter(x => x.type === 'execution').length};
   m.talk = {lines: lines.length, table: table.length, rooms: rooms.length, passes: passCalls.length || passes.length, byDay,
     whispers: tx.filter(x => x.type === 'whisper').length, moves: tx.filter(x => x.type === 'move').length,
-    invites: hasPlay ? g.play.filter(e => e.tool === 'invite' && e.result && e.result.ok).length : null};
+    fromLog: fromLog || undefined, invites: hasPlay ? g.play.filter(e => e.tool === 'invite' && e.result && e.result.ok).length : null};
   // claims: a seat naming its own role outright, and a seat's claim changing (the claims tool lists more than one role for a player)
   const claim = [];
   for (const x of lines) {
@@ -257,14 +280,14 @@ export function rows(ms) {
   row('Seed', m => m.seed ?? '-');
   row('Deal', m => m.deal.length ? m.deal.map(d => `${d.name} ${d.role}`).join(', ') : '-');
   row('Winner', m => m.winner ? (m.winnerHow && m.winnerHow.toLowerCase().startsWith(m.winner) ? m.winnerHow : `${cap(m.winner)}: ${m.winnerHow || '-'}`) : m.finished ? 'ended, winner not in the logs' : 'not finished (' + (m.endedBy || 'no end event') + ')');
-  row('Length / turns', m => `${min(m.seconds)} / ${m.turns.all} (${m.turns.players} player, ${m.turns.storyteller} Storyteller)`);
+  row('Length / turns', m => `${min(m.seconds)} / ${m.turns.all} (${m.turns.players} player, ${m.turns.storyteller} Storyteller)` + (m.gameLog ? `; ${m.gameLog.days} days, ${m.gameLog.nominations} nominations, ${m.gameLog.votes} votes, ${m.gameLog.executions} executions, ${m.gameLog.deaths} deaths (game log)` : ''));
   row('Cost total', m => `${usd(m.cost)} (players ${usd(m.costPlayers)}, Storyteller ${usd(m.costStoryteller)}${m.costSupervisor != null ? '; supervisor ' + usd(m.costSupervisor) : ''})`);
   row('Cost per seat', m => m.costBySeat.map(s => `${s.seat} ${usd(s.cost)} (${s.turns})`).join('; '));
   row('Cost per player turn / mean ctx', m => `${usd(m.costPerPlayerTurn)} / ${k(m.ctxMean)}`);
   row('First-turn ctx per seat', m => `${k(m.firstCtx.min)} to ${k(m.firstCtx.max)} (Storyteller ${k(m.firstCtx.storyteller)})`);
   row('Session rolls', m => `${m.sessionRolls} (ctx peak ${k(m.ctxMax)})`);
   row('Leaks', m => m.leaks ? `${m.leaks.textLeaks + m.leaks.roleHits}${m.leaks.textLeaks + m.leaks.roleHits ? ` candidates (${m.leaks.textLeaks} private text, ${m.leaks.roleHits} role name)` : ''} (${m.leaks.scanned} headers and results searched)` : NA);
-  row('Lines / passes', m => m.talk ? (m.talkFromCalls ? '(from the calls, nobody read the talk) ' : '') + `${m.talk.lines} lines (${m.talk.table} at the table, ${m.talk.rooms} in rooms) / ${m.talk.passes} passes; ${Object.entries(m.talk.byDay).map(([d, v]) => `day ${d} ${v.lines} and ${v.passes}`).join(', ')}` : NA);
+  row('Lines / passes', m => m.talk ? (m.talkFromCalls ? '(from the calls, nobody read the talk) ' : m.talk.fromLog ? '(game log) ' : '') + `${m.talk.lines} lines (${m.talk.table} at the table, ${m.talk.rooms} in rooms) / ${m.talk.passes} passes; ${Object.entries(m.talk.byDay).map(([d, v]) => `day ${d} ${v.lines} and ${v.passes}`).join(', ')}` : NA);
   row('Refused calls', m => `${m.refused.total} of ${m.refused.playerTurns} player turns: ${list(m.refused.byKind)}`);
   row('Whispers / room moves', m => m.talk ? `${m.talk.whispers} / ${m.talk.moves} moves${m.talk.invites != null ? ', ' + m.talk.invites + ' successful invites' : ''}` : NA);
   row('Contradictions of own words', m => `not flagged by any runner (${m.anomalies.contradiction || 0} flagged); claim changes in the claims tool: ${m.claimChanges ? m.claimChanges.length : NA}`);
@@ -307,9 +330,9 @@ const jsonl = f => existsSync(f) ? readFileSync(f, 'utf8').split(/\r?\n/).filter
 const idTime = id => {const m = /-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(id); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : null};
 // behaviorRoot: logs/behavior (a folder per game name, as the logger writes them); logs: the folder with play.jsonl and runners/.
 export function loadData(behaviorRoot, logs) {
-  const turns = [], anomalies = [];
+  const turns = [], anomalies = [], gevents = [];
   const dirs = existsSync(behaviorRoot) ? readdirSync(behaviorRoot).filter(d => {try {return statSync(join(behaviorRoot, d)).isDirectory()} catch {return false}}) : [];
-  for (const d of dirs) for (const [name, into] of [['turns.jsonl', turns], ['anomalies.jsonl', anomalies]]) {
+  for (const d of dirs) for (const [name, into] of [['turns.jsonl', turns], ['anomalies.jsonl', anomalies], ['game.jsonl', gevents]]) {
     for (let i = 3; i >= 1; i--) into.push(...jsonl(join(behaviorRoot, d, name + '.' + i)));
     into.push(...jsonl(join(behaviorRoot, d, name)));
   }
@@ -319,6 +342,6 @@ export function loadData(behaviorRoot, logs) {
       const at = idTime(mm[1]); if (at != null && !ids.some(x => x.id === mm[1])) ids.push({id: mm[1], at});
     }
   }
-  return {turns, anomalies, play: jsonl(join(logs, 'play.jsonl')), events: jsonl(join(rdir, 'events.jsonl')), ids};
+  return {turns, anomalies, gevents: gevents.filter(e => e.src === 'event'), play: jsonl(join(logs, 'play.jsonl')), events: jsonl(join(rdir, 'events.jsonl')), ids};
 }
 
