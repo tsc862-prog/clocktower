@@ -37,3 +37,13 @@
 - Talk: speaker colour per seat (.who.sc-0..6, --seat-c0..6). Under 600 px: one column, smaller markers, overflow-x: clip (not hidden:
   hidden makes body a scroll container). ?fixture=vote|talk|end opens that recorded moment.
 - True 390 px measurement needs CDP Emulation.setDeviceMetricsOverride (headless Chrome's window has a ~500 px minimum).
+
+## Local art, portraits, voices (PRs #54, #56, #58, 2026-11-08)
+- Owner's token art is WebP in his own E:/clocktower/public/tokens-local/ (never read, copy or commit it). src/ui/art.js probes
+  /tokens-local/<id>.png then .webp once per page load; tokens.js must name no image file (smoke checks it). .gitignore: folder/* + !README.
+- Portrait index (infra #55 accept script): {version:1, portraits:{Odette:{file:'Odette.png',...}, ..., Storyteller}}; files in
+  assets/portraits/. vite.config.js plugin serves /assets/portraits/* in dev and preview (plain 404; Vite's own fallback returns HTML 200).
+- /tts/status (infra #53): {ok, voices:[engine ids], seatVoices:{Name:{voice,speed}}}; src/data/voices.js (lore #52) VOICES same shape.
+  Voice toggle off by default (localStorage clocktower.voice); recorded game never spoken; queue cap 4 waiting, talk dropped first.
+- Bash heredocs here collapse `\` to `\`: write files containing backslashes with the Write tool. CDP screenshots: ws package + Chrome
+  --remote-debugging-port (script pattern: launch, Page.navigate, Runtime.evaluate, Page.captureScreenshot).

@@ -21,11 +21,12 @@ import {clockText, mergeFrame, mergePush, seatNames, PACES, DEFAULT_PACE, runner
 import {esc} from './dom.js';
 import {probeArt, artNote, imageLoad} from './art.js';
 import {loadPortraits} from './portraits.js';
+import {createVoice, voiceBar} from './voice.js';
 
 const PACE_KEY = 'clocktower.pace';
 function storedPace() {try {const v = globalThis.localStorage && localStorage.getItem(PACE_KEY); return PACES[v] ? v : DEFAULT_PACE} catch {return DEFAULT_PACE}}
 
-export function createApp({client, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end', artLoad = imageLoad, pageFetch = undefined}) {
+export function createApp({client, fixture = null, runnersFixture = null, seed = null, refreshMs = 1500, frame = 'end', artLoad = imageLoad, pageFetch = undefined, audio = undefined, voiceFile = undefined}) {
   const $ = id => document.getElementById(id);
   const state = {watch: null, runners: null, links: null, asides: [], health: null, source: fixture ? 'recorded' : 'live', watchMissing: false, frame: null, msg: '', epoch: 0, socket: false, pace: storedPace()};
   const bar = {seed: $('seed'), rounds: $('rounds'), phase: $('phase'), winner: $('winner'), source: $('source'), relay: $('relay-state'), newGame: $('new-game'), frames: $('frames'), msg: $('act-msg'), empty: $('empty'), pace: $('pace'), paceNote: $('pace-note'), art: $('art-note')};
@@ -70,6 +71,12 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
 
   const panels = {square: createSquare($('square')), talk: createTalk($('talk')), grimoire: createGrimoire($('grimoire')), rulings: createRulings($('rulings')), agents: createAgents($('agents'), {act})};
   if (bar.newGame) bar.newGame.addEventListener('click', () => act('newGame'));
+  // the voices: every public line read aloud through the relay's local engine, when the owner turns them on
+  let drawVoice = () => {};
+  const voice = createVoice({client, recorded: !!fixture, onSpeaker: who => panels.square.setSpeaking(who), onChange: st => drawVoice(st),
+    ...(audio !== undefined ? {audio} : {}), ...(voiceFile !== undefined ? {voiceFile} : {})});
+  drawVoice = voiceBar(voice, {box: $('voice'), toggle: $('voice-toggle'), skip: $('voice-skip'), mute: $('voice-mute'), whispers: $('voice-whispers'), note: $('voice-note')});
+  drawVoice();
 
   function renderBar() {
     const w = state.watch;
@@ -105,6 +112,7 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
     const s = {watch: state.watch, runners: state.runners, links: state.links, asides: state.asides, epoch: state.epoch};
     renderBar();
     for (const p of Object.values(panels)) p.render(s);
+    if (state.source === 'live') voice.feed(state.watch, state.epoch);
   }
 
   let watchBusy = null, pushSeq = 0;
@@ -188,5 +196,5 @@ export function createApp({client, fixture = null, runnersFixture = null, seed =
   const art = probeArt({load: artLoad}).then(n => {render(); return n});
   // the seats' portraits (assets/portraits/index.json, read once per page load); the initials until then, or for good without it
   const portraits = loadPortraits(pageFetch ? {fetchImpl: pageFetch} : {}).then(m => {render(); return m});
-  return {art, portraits, state, panels, act, render, pollWatch, tickWatch, pollRunners, pollHealth, onSocket, onSocketOpen, onSocketClose, flushRefresh, showFrame};
+  return {art, portraits, voice, state, panels, act, render, pollWatch, tickWatch, pollRunners, pollHealth, onSocket, onSocketOpen, onSocketClose, flushRefresh, showFrame};
 }

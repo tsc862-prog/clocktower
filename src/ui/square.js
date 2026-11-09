@@ -15,6 +15,7 @@ export function createSquare(root) {
   const ring = root.querySelector('.ring') || root.appendChild(el('div', {class: 'ring'}));
   const centre = root.querySelector('.centre') || ring.appendChild(el('div', {class: 'centre'}));
   const seats = new Map();
+  let speaking = null; // the seat whose voice is playing (src/ui/voice.js), 'storyteller', or null
   function seatHtml(s, v, names) {
     const hand = v ? v.hands[s.seat] : undefined, voter = v && v.open && v.voters.includes(s.seat);
     const marks = [];
@@ -50,7 +51,7 @@ export function createSquare(root) {
       }
       const h = seatHtml(s, v, names);
       if (h !== r.h) {r.node.innerHTML = h; r.h = h}
-      r.node.className = 'seat' + (s.alive ? '' : ' dead') + (v && v.nominee === s.seat ? ' is-nominee' : '') + (v && v.nominator === s.seat ? ' is-nominator' : '');
+      r.node.className = 'seat' + (s.alive ? '' : ' dead') + (v && v.nominee === s.seat ? ' is-nominee' : '') + (v && v.nominator === s.seat ? ' is-nominator' : '') + (speaking === s.seat ? ' speaking' : '');
     });
     for (const [k, r] of seats) if (!list.some(s => s.seat === k)) {r.node.remove(); seats.delete(k)}
     let c;
@@ -64,5 +65,11 @@ export function createSquare(root) {
     else c = `<div class="quiet">${esc(w.winner ? w.winner.text : w.phase === 'night' ? `Night ${w.night}` : w.phase === 'day' ? `Day ${w.day}` : '')}</div>`;
     if (centre._h !== c) {centre.innerHTML = c; centre._h = c}
   }
-  return {render};
+  // light the seat whose clip is playing (the centre for the Storyteller); patched in place, nothing else redrawn
+  function setSpeaking(who) {
+    speaking = who;
+    for (const [k, r] of seats) r.node.classList.toggle('speaking', k === who);
+    centre.classList.toggle('st-speaking', who === 'storyteller');
+  }
+  return {render, setSpeaking, get speaking() {return speaking}};
 }
