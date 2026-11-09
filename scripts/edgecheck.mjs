@@ -1,7 +1,7 @@
 // npm run edgecheck: every rule with an edge case, each on a fixed deal with the decisions that matter scripted and
 // everything else answered quietly (true information, no registering trick, no nominations, every vote no).
 // Exit 1 on any failure.
-import {newGame, answer, replay, playOut, grimoire, validate} from '../src/game/index.js';
+import {newGame, answer, replay, playOut, grimoire, validate, cannedThoughts, THOUGHT_MAX, THOUGHTS_QUESTION} from '../src/game/index.js';
 import {isPoisoned} from '../src/game/grimoire.js';
 import * as api from '../src/game/api.js';
 
@@ -16,6 +16,7 @@ function quiet(state) {
   switch (p.kind) {
     case 'vote': return Object.fromEntries(p.seats.map(s => [s, false]));
     case 'nomination': return null;
+    case 'thoughts': return {};
     case 'demon-bluffs': return p.options.slice(0, p.count);
     case 'info': return (p.truth.length ? p.truth : p.options)[0];
     case 'choose':
@@ -389,6 +390,40 @@ section('the dawn as the table hears it (#110)');
   ok(d[1] === 'Day 2 breaks. Nobody died in the night.', `a later quiet night is news ("${d[1]}")`);
   s = play(roles, [{kind: 'choose', role: 'monk', value: 3}, {kind: 'choose', role: 'imp', value: 1}], {until: atDay(2)});
   ok(dawns(s)[1] === `Day 2 breaks. ${s.seats[1].name} died in the night.`, `a night death is named at dawn ("${dawns(s)[1]}")`);
+}
+
+section('the night thoughts (#111)');
+{
+  const roles = ['empath', 'chef', 'imp', 'soldier', 'monk', 'baron', 'mayor'];
+  const asked = [];
+  // canned thoughts on night 1, none on night 2 (an empty answer), the Imp kills the Chef on night 2
+  const s = play(roles, [
+    {kind: 'thoughts', answer: (p, st) => {asked.push({p, at: st.log.length}); return st.night === 1 ? cannedThoughts(st) : {}}},
+    {kind: 'choose', role: 'monk', value: 3}, {kind: 'choose', role: 'imp', night: 2, value: 1},
+  ], {until: atDay(3)});
+  ok(eq(asked.map(a => a.p.night), [1, 2, 3]), `the scene is asked once a night, the first night included (${asked.map(a => a.p.night)})`);
+  ok(asked.every(a => a.p.seat === 'table' && a.p.question === THOUGHTS_QUESTION), 'the table is asked, with the question');
+  for (const a of asked) {
+    const night = s.log.filter(e => e.night === a.p.night && e.phase === 'night');
+    const lastWake = Math.max(...night.filter(e => e.type === 'wake' || e.type === 'acted' || e.type === 'told' || e.type === 'death').map(e => e.id));
+    const dawn = s.log.find(e => e.type === 'dawn' && e.day === a.p.night);
+    ok(lastWake < a.at && dawn && dawn.id >= a.at, `night ${a.p.night}: asked after the last wake and its deaths (${lastWake} < ${a.at}), before the dawn (${dawn && dawn.id})`);
+  }
+  ok(eq(asked[0].p.seats, [0, 1, 2, 3, 4, 5, 6]) && eq(asked[1].p.seats, [0, 2, 3, 4, 5, 6]), `the dead are not asked (night 2: ${asked[1].p.seats})`);
+  const th = s.log.filter(e => e.type === 'thought');
+  ok(th.length === 7 && th.every(e => e.night === 1 && e.day === 0 && e.audience === 'watcher' && typeof e.text === 'string' && Number.isInteger(e.seat)), `night 1: seven thoughts, each {seat, night, day, text} for the watcher (${th.length})`);
+  ok(eq(th.map(e => e.seat), [0, 1, 2, 3, 4, 5, 6]) && th[0].text === `${s.seats[0].name} thinks it over on night 1.`, 'in seat order, the text as given');
+  ok(!s.log.some(e => e.type === 'thought' && e.night === 2), 'an empty answer logs nothing');
+  for (let i = 0; i < 7; i++) ok(!api.events(s, i, -1).some(e => e.type === 'thought' || /thinks it over/.test(e.text || '')), `${s.seats[i].name}'s events carry no thought, its own included`);
+  ok(!api.events(s, 'storyteller', -1).some(e => e.type === 'thought' || /thinks it over/.test(e.text || '')), "the Storyteller's events carry no thought");
+  // the cap, a bad answer and a partial answer
+  const one = play(roles, [{kind: 'thoughts', night: 1, answer: (p, st) => ({0: '  ' + 'x'.repeat(1000) + '  ', 1: 42, 2: null, 3: '   ', 4: 'A short one.', 9: 'not a seat'})}], {until: atDay(1)});
+  const t1 = one.log.filter(e => e.type === 'thought');
+  ok(eq(t1.map(e => e.seat), [0, 4]) && t1[0].text.length === THOUGHT_MAX && t1[1].text === 'A short one.', `a thought over ${THOUGHT_MAX} characters is cut; a number, null, blank or unasked seat is no thought (${t1.map(e => e.seat + ':' + e.text.length)})`);
+  ok(!throws(() => validate(asked[0].p, 'nonsense')) && eq(validate(asked[0].p, 'nonsense'), {}) && eq(validate(asked[0].p, null), {}), 'a bad answer is never refused: it is no thought');
+  // a replay from a plain copy keeps the thoughts
+  const back = replay(JSON.parse(JSON.stringify(s)));
+  ok(eq(back.log.filter(e => e.type === 'thought'), th), 'a plain copy replays to the same thoughts');
 }
 
 section('decisions, determinism and replay');
