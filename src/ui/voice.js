@@ -14,7 +14,7 @@
 // relay does not; else the engine's default voice. With no engine the toggle says so once and stays off. The recorded game
 // (?fixture) sends nothing to the relay, so it is not spoken.
 // The page follows the ear (#103): while lines wait, src/ui/app.js draws the frame before the first of them; state.behind says so
-// and the note adds "the page keeps pace".
+// and the note adds "the page keeps pace". The line playing joins the picture only when its own clip begins (state.now.started, #109).
 // Keeping time (#50): when the relay makes the clips itself (/tts/status clipsOnSay), a spoken event carries clip: {id, ms} in the
 // watch body, or the socket sends {type: 'clip', id: <event id>, clip} a moment after the push; the page plays GET /tts?id=<clip.id>
 // and asks POST /tts/say itself only when no clip has come within about a second (whispers never have one). The page tells the relay
@@ -203,14 +203,16 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
     });
     return item.clip;
   }
-  function play(src) {
+  // onStart: called once the browser has begun the clip (play()'s promise resolves), not when it is asked for
+  function play(src, onStart = null) {
     return new Promise(res => {
       finish = res;
-      if (!audio) {res(); return}
+      if (!audio) {if (onStart) onStart(); res(); return}
       audio.onended = () => res(); audio.onerror = () => res();
       try {
         audio.src = src;
         const p = audio.play();
+        if (onStart) {if (p && p.then) p.then(() => {if (finish === res) onStart()}, () => {}); else onStart()}
         if (p && p.catch) p.catch(err => {
           if (err && err.name === 'NotAllowedError') {st.blocked = true; st.queue = []; say('The browser held the sound back: click Voice once to let the page speak.')}
           res();
@@ -240,8 +242,9 @@ export function createVoice({client, audio = defaultAudio(), onSpeaker = () => {
       if (st.now !== item) return;
       if (t && t.id) {onSpeaker('storyteller'); changed(); await play(client.ttsClipUrl(t.id)); if (st.now !== item) return}
     }
-    onSpeaker(item.speaker); changed();
-    await play(client.ttsClipUrl(r.id));
+    // the line counts as shown (src/ui/app.js pickShown) and its speaker lights only once its own clip has begun (#109): not while
+    // the clip is fetched, nor while its name tag plays
+    await play(client.ttsClipUrl(r.id), () => {if (st.now !== item) return; item.started = true; onSpeaker(item.speaker); changed()});
     if (st.now !== item) return;
     heardDone(item); st.now = null; onSpeaker(null); changed(); pump(); report();
   }
@@ -273,7 +276,7 @@ export function voiceBar(voice, els) {
     if (names && names.parentNode) names.parentNode.hidden = !st.on;
     if (time) time.hidden = !(st.on && !st.muted && st.reporting && st.engine && st.engine.clipsOnSay);
     if (note) {
-      const n = st.note || (st.on && st.now ? `${st.now.name}${st.queue.length ? `, ${st.queue.length} waiting` : ''}${st.behind ? '; the page keeps pace' : ''}` : '');
+      const n = st.note || (st.on && st.now ? `${st.now.name}${st.queue.length ? `, ${st.queue.length} waiting` : ''}${st.behind && st.queue.length ? '; the page keeps pace' : ''}` : '');
       if (note.textContent !== n) note.textContent = n;
       note.title = st.hint || st.note || (st.behind ? 'The page keeps pace with the voices: it shows what has been said, and catches up with the game as the waiting lines are read.' : '');
       if (box) box.dataset.behind = st.behind ? 'yes' : 'no';

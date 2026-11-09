@@ -25,7 +25,7 @@
 //     whispers on the page's own path; POST /play/heard {last, voice} on each clip end, each skip and the 20 s tick, voice false at once
 //     on mute and off, nothing posted while the voice is off; the "keeping time" mark while the page reports
 //   - following the voices (#103): with lines waiting, a move, a vote's result and the talk wait until they are read; hands land at
-//     once; Mute and Voice off show the live game; the recorded game is unaffected; the pick of the shown frame on a hand-made ring
+//     once; the line playing shows only once its own clip has begun, not while it is made or its name tag plays (#109); Mute and Voice off show the live game; the recorded game is unaffected; the pick of the shown frame on a hand-made ring
 //   - rooms (#28): a line said in a room carries its place, a move is a one-line mark; in the square, a seat away carries its room's
 //     name, the rooms show as discs off the table with their occupants, one line says who is where; all of it goes when the rooms close
 //   - the People view (#77): the default, the Table view one click away and remembered; seven cards in seat order with the role in a
@@ -761,6 +761,43 @@ console.log('voices');
     ga.end(); await settle();
     ok(gp.voice.state.now && gp.voice.state.now.id === M + 2 && !!document.querySelector('#stage .card.flash'), 'the result is read: it flashes as it is heard');
     gp.voice.stop();
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
+
+    // the picture waits for the clip's own sound (#109): not while the clip is made and fetched, nor while its name tag plays
+    localStorage.removeItem(VO.VOICE_KEY);
+    const holdAudio = () => {const a = fakeAudio(); a.held = [];
+      a.play = function () {this.paused = false; this.plays.push(this.src); return new Promise(r => this.held.push(r))};
+      a.start = function () {const h = this.held; this.held = []; for (const r of h) r()}; return a};
+    const hr = voiceRelay(), ha = holdAudio();
+    const hp = livePage(hr, ha);
+    hr.watch = T; await hp.onSocketOpen(); await settle();
+    $('voice-toggle').click(); await settle(); ha.start(); await settle();
+    const hsend = async (events, extra = {}) => {hp.onSocket({type: 'watch', seed: T.seed, last: events.at(-1).id, events, clock: T.clock, pending: T.pending, ballot: T.ballot, phase: T.phase, day: T.day, night: T.night, winner: T.winner, places: hp.state.watch.places, ...extra}); await settle()};
+    await hsend([ev(1, {type: 'move', seats: [0, 1], room: 'nook', text: `${n[0]} and ${n[1]} went to the Snug.`})], {places: away});
+    ok(hp.voice.state.now && hp.voice.state.now.id === L + 1 && hp.voice.state.queue.length === 0 && !hp.voice.state.now.started, 'a move behind nothing: its clip is asked for and not yet begun');
+    ok(stage().dataset.rooms === '' && !document.querySelector('#stage .card.away') && !talkHas(L + 1), "the clip not yet begun: everyone stays at the Square, the talk waits");
+    ha.start(); await settle();
+    ok(hp.voice.state.now.started && stage().dataset.rooms === 'out' && talkHas(L + 1), "the move's own clip begins: the stage breaks out as it is heard");
+    ha.end(); await settle();
+    // a vote's result behind nothing
+    const flashed = () => !!document.querySelector('#stage .card.flash');
+    await hsend([{...result, id: L + 2, day: T.day}], {ballot: null, pending: null, places: hp.state.watch.places});
+    ok(hp.voice.state.now && hp.voice.state.now.id === L + 2 && !hp.voice.state.now.started && !flashed() && !talkHas(L + 2), "a vote's result behind nothing: no flash while its clip is made");
+    ha.start(); await settle();
+    ok(flashed() && talkHas(L + 2), 'the result flashes as its own clip begins');
+    ha.end(); await settle();
+    // the name tag first: the seat's caption comes with the line's own clip, not the tag's
+    $('voice-names').checked = true; $('voice-names').dispatch('change');
+    await hsend([ev(3, {type: 'say', seat: 4, text: 'Hear me out.'})], {places: hp.state.watch.places});
+    const cap = () => {const c = document.querySelector('#stage .card[data-seat="4"]'); return c && c.querySelector('.cap-text') ? c.querySelector('.cap-text').textContent : ''};
+    ha.start(); await settle(); // the tag begins
+    ok(hp.voice.state.now.id === L + 3 && !hp.voice.state.now.started && hr.says.some(x => x.text === n[4] + '.') && cap() !== 'Hear me out.' && !talkHas(L + 3), 'while the name tag plays the line is not yet shown');
+    ha.end(); await settle(); // the tag ends, the line's clip is asked to play
+    ok(!hp.voice.state.now.started && cap() !== 'Hear me out.', 'the line asked to play but not begun: still not shown');
+    ha.start(); await settle();
+    ok(hp.voice.state.now.started && cap() === 'Hear me out.' && document.querySelector('#stage .card[data-seat="4"]').classList.contains('voicing') && talkHas(L + 3), "the line's own clip begins: its caption and its speaker light");
+    ha.end(); await settle();
+    hp.voice.stop();
     localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
 
     // the recorded game is drawn as recorded

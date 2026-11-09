@@ -285,7 +285,8 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
   function voiceNow() {
     const vs = voiceState();
     const on = !!(vs && vs.on && !vs.muted && !recorded);
-    return {on, playing: on && !!vs.now, voiced: on ? (vs.now ? vs.now.id : lastVoiced) : null};
+    const begun = !!(vs && vs.now && vs.now.started); // the line's own clip has begun (#109): not while its name tag plays
+    return {on, playing: on && begun, voiced: on ? (begun ? vs.now.id : lastVoiced) : null};
   }
 
   function captionHtml(line, names, rooms) {
@@ -411,7 +412,7 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
   // the voice (src/ui/voice.js) began or ended a clip: the line it plays takes the stage
   function setSpeaking(who) {
     const vs = voiceState();
-    if (who != null && vs && vs.now) lastVoiced = vs.now.id;
+    if (who != null && vs && vs.now && vs.now.started) lastVoiced = vs.now.id;
     draw();
   }
   return {render, setSpeaking, refresh: draw, cards, get line() {return last && last.watch ? stageLine(last.watch, voiceNow()) : null}};
