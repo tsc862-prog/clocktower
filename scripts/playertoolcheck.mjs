@@ -20,7 +20,7 @@ let fails = 0, passes = 0;
 const ok = (cond, msg) => {if (cond) passes++; else {fails++; console.log(`  FAIL ${msg}`)}};
 const section = name => console.log(`- ${name}`);
 const SECRET = /SECRET/;
-const HEADER_CAP = 700;
+const HEADER_CAP = 900; // 700 before rooms (#28): the place line and the rooms line add about 180
 
 // ---- the fake api ----
 const NAMES = ['Odette', 'Bram', 'Ines', 'Corwin', 'Thea', 'Fitch', 'Yusuf'];
@@ -31,7 +31,7 @@ const say = (by, text, day = 1) => ({type: 'say', seat: by, text, day, audience:
 function fakeGame(state) {
   const g = {state, phase: 'day', day: 1, night: 1, clock: {round: 2, roundsBeforeNominations: 3, nominationsOpen: false},
     seats: NAMES.map((name, index) => ({index, name, alive: true, ghostVote: true, role: index === 3 ? 'SECRET-ROLE-imp' : 'SECRET-ROLE-other'})),
-    events: [], notes: {}, lines: {}, pending: {}, nominated: [], winner: null, calls: []};
+    events: [], notes: {}, lines: {}, pending: {}, nominated: [], winner: null, calls: [], places: NAMES.map(() => null)};
   const ev = e => g.events.push({id: g.events.length, ...e});
   ev({type: 'phase', night: 1, text: 'Night falls.'});
   ev({type: 'told', seat: 0, night: 1, text: 'You are the Fortune Teller.'});
@@ -45,6 +45,11 @@ function fakeGame(state) {
   ev({type: 'whisper', from: 2, to: 3, text: 'SECRET-WHISPER: I am the Poisoner, protect me', day: 1, audience: [2, 3]});
   ev({type: 'whisper-seen', from: 2, to: 3, day: 1, audience: 'all', text: 'SECRET-WHISPER leaked into the mark'});
   ev({type: 'whisper', from: 5, to: 0, text: 'Odette, I trust you. I am the Monk.', day: 1, audience: [5, 0]});
+  if (state === 'day') { // Ines and Corwin talk in the nook: the move is public, the line is theirs (a careless game hands it to everyone)
+    g.places[2] = g.places[3] = 'nook';
+    ev({type: 'move', seats: [2, 3], room: 'nook', from: null, by: 2, day: 1, audience: 'all', text: 'Ines and Corwin went to the nook.', why: 'SECRET-REASON-move'});
+    ev({type: 'say', seat: 2, room: 'nook', text: 'SECRET-ROOM-LINE: you poison Thea tonight', day: 1, audience: [2, 3]});
+  }
   if (state === 'night') {
     Object.assign(g, {phase: 'night', night: 2});
     ev({type: 'phase', night: 2, text: 'Night falls.'});
@@ -72,6 +77,18 @@ function fakeGame(state) {
 }
 
 const need = (cond, text) => {if (!cond) throw new ApiError(text)};
+// the fake's places (#28): the rooms of src/data/rooms.js, open by day until nominations open
+const FAKE_ROOMS = [{id: 'nook', name: 'the nook', size: 2}, {id: 'parlour', name: 'the parlour', size: 3}, {id: 'backroom', name: 'the back room', size: 4}];
+const occupantsOf = (g, room) => g.seats.filter(s => g.places[s.index] === room).map(s => s.index);
+const fakeRooms = g => FAKE_ROOMS.map(r => ({...r, seats: occupantsOf(g, r.id), free: r.size - occupantsOf(g, r.id).length}));
+const roomsOpenOf = g => g.phase === 'day' && !g.clock.nominationsOpen && !g.winner;
+const roomKey = x => String(x ?? '').trim().toLowerCase().replace(/^the\s+/, '');
+const findFakeRoom = name => FAKE_ROOMS.find(r => r.id === roomKey(name) || roomKey(r.name) === roomKey(name)) || null;
+const neighboursOf = (g, seat) => {
+  const n = g.seats.length, out = [];
+  for (const step of [-1, 1]) for (let k = 1; k < n; k++) {const j = (seat + step * k + n) % n; if (j !== seat && g.seats[j].alive) {out.push(j); break}}
+  return [...new Set(out)];
+};
 const isDay = g => need(g.phase === 'day', 'It is night: nobody talks at night. Wait for the day.');
 const fakeApi = {
   view(g, seat) {
@@ -80,7 +97,10 @@ const fakeApi = {
     return {name: s.name, index: seat, role: {id: 'fortune-teller', name: 'Fortune Teller', team: 'townsfolk', ability: 'Each night, pick two players: you learn whether either is the demon.'},
       alive: s.alive, ghostVote: s.ghostVote, phase: g.phase, night: g.night, day: g.day, clock: {...g.clock},
       told: [{night: 1, what: 'role', text: 'You are the Fortune Teller.', why: 'SECRET-REASON-told'}],
-      seats: g.seats.map(x => ({index: x.index, name: x.name, alive: x.alive, role: x.role, tokens: ['SECRET-TOKEN-x']})),
+      seats: g.seats.map(x => ({index: x.index, name: x.name, alive: x.alive, role: x.role, tokens: ['SECRET-TOKEN-x'], room: g.places[x.index]})),
+      place: {room: g.places[seat], name: FAKE_ROOMS.find(r => r.id === g.places[seat])?.name ?? 'the Square', with: g.seats.filter(x => x.index !== seat && g.places[x.index] === g.places[seat]).map(x => x.index),
+        neighbours: neighboursOf(g, seat), canWhisper: g.places[seat] != null ? [] : neighboursOf(g, seat).filter(j => g.places[j] == null), secret: 'SECRET-PLACE'},
+      rooms: fakeRooms(g), roomsOpen: roomsOpenOf(g),
       today: {nominations: g.state === 'vote' ? [{by: 4, target: 5, yes: 1, needed: 4, result: null, why: 'SECRET-REASON-nom'}] : [], executed: null},
       dead: g.seats.filter(x => !x.alive).map(x => x.name), winner: g.winner, grimoire: 'SECRET-GRIMOIRE', bluffs: ['SECRET-BLUFF']};
   },
@@ -93,10 +113,48 @@ const fakeApi = {
     const mine = g.lines[seat] || (g.lines[seat] = []);
     need(!mine.slice(-3).includes(text), 'You said that already; say something new or pass.');
     mine.push(text);
-    g.events.push({id: g.events.length, type: 'say', seat, text, day: g.day, audience: 'all'});
+    const room = g.places[seat];
+    g.events.push({id: g.events.length, type: 'say', seat, text, day: g.day, ...(room == null ? {audience: 'all'} : {room, audience: occupantsOf(g, room)})});
+  },
+  // places (#28), as src/game/api.js has them
+  where(g, seat) {
+    g.calls.push('where');
+    const v = fakeApi.view(g, seat);
+    return {place: v.place.room, placeName: v.place.name, with: v.place.with, square: occupantsOf(g, null), rooms: fakeRooms(g), open: roomsOpenOf(g),
+      neighbours: v.place.neighbours, canWhisper: v.place.canWhisper, secret: 'SECRET-WHERE'};
+  },
+  go(g, seat, room) {
+    g.calls.push('go'); isDay(g); need(roomsOpenOf(g), 'The rooms are closed: nominations are open and everyone is at the Square.');
+    const r = findFakeRoom(room); need(r, `There is no room ${JSON.stringify(room)}: the rooms are nook, parlour, backroom.`);
+    need(g.places[seat] !== r.id, `You are in ${r.name} already.`);
+    need(occupantsOf(g, r.id).length < r.size, `${r.name} is full.`);
+    const from = g.places[seat]; g.places[seat] = r.id;
+    g.events.push({id: g.events.length, type: 'move', seats: [seat], room: r.id, from, by: seat, day: g.day, audience: 'all', text: `${NAMES[seat]} went to ${r.name}.`});
+    return {place: r.id, with: occupantsOf(g, r.id).filter(i => i !== seat)};
+  },
+  invite(g, seat, other, room) {
+    g.calls.push('invite'); isDay(g); need(roomsOpenOf(g), 'The rooms are closed: nominations are open and everyone is at the Square.');
+    const from = g.places[seat];
+    need(room != null || from != null, 'Name a room: nook, parlour, backroom.');
+    const r = room == null ? FAKE_ROOMS.find(x => x.id === from) : findFakeRoom(room); need(r, `There is no room ${JSON.stringify(room)}.`);
+    need(g.places[other] == null, `${NAMES[other]} is in another place; you may invite only someone at the Square.`);
+    need(occupantsOf(g, r.id).length + (from === r.id ? 1 : 2) <= r.size, `${r.name} is full.`);
+    g.places[seat] = r.id; g.places[other] = r.id;
+    g.events.push({id: g.events.length, type: 'move', seats: from === r.id ? [other] : [seat, other], room: r.id, from, by: seat, day: g.day, audience: 'all',
+      text: from === r.id ? `${NAMES[seat]} called ${NAMES[other]} into ${r.name}.` : `${NAMES[seat]} and ${NAMES[other]} went to ${r.name}.`});
+    return {place: r.id, with: occupantsOf(g, r.id).filter(i => i !== seat)};
+  },
+  leave(g, seat) {
+    g.calls.push('leave'); isDay(g);
+    const from = g.places[seat]; need(from != null, 'You are at the Square already.');
+    g.places[seat] = null;
+    g.events.push({id: g.events.length, type: 'move', seats: [seat], room: null, from, by: seat, day: g.day, audience: 'all', text: `${NAMES[seat]} came back to the Square.`});
+    return {place: null};
   },
   whisper(g, seat, to, text) {
     g.calls.push('whisper'); isDay(g);
+    need(g.places[seat] == null, 'There are no whispers in a room.');
+    need(neighboursOf(g, seat).includes(to), `At the Square you may whisper only to your nearest living neighbours: ${neighboursOf(g, seat).map(i => NAMES[i]).join(' and ')}.`);
     g.events.push({id: g.events.length, type: 'whisper', from: seat, to, text, day: g.day, audience: [seat, to]});
   },
   pass(g) {g.calls.push('pass')},
@@ -147,7 +205,7 @@ section('the table');
   const TYPES = ['string', 'integer', 'number', 'array', 'object'];
   ok(JSON.stringify(TOOL_NAMES) === JSON.stringify(PLAYER_TOOLS.map(t => t.name)), 'TOOL_NAMES is the table in order');
   ok(new Set(TOOL_NAMES).size === TOOL_NAMES.length, 'tool names are unique');
-  const want = ['look', 'my_role', 'read_talk', 'my_whispers', 'my_notes', 'what_is_asked', 'who_voted', 'note', 'speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'pass'];
+  const want = ['look', 'my_role', 'read_talk', 'my_whispers', 'my_notes', 'what_is_asked', 'who_voted', 'note', 'where', 'go', 'invite', 'leave', 'speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'pass'];
   for (const n of want) ok(TOOL_NAMES.includes(n), `the table has ${n}`);
   const acts = ['speak', 'whisper', 'nominate', 'vote', 'night_choice', 'slay', 'pass'];
   for (const t of PLAYER_TOOLS) {
@@ -172,8 +230,8 @@ section('the table');
 const STATES = ['night', 'day', 'vote', 'dead-ghost', 'dead-spent', 'nominations', 'ended'];
 const SAMPLE = {
   look: {}, my_role: {}, read_talk: {}, my_whispers: {}, my_notes: {}, what_is_asked: {}, who_voted: {}, note: {text: 'Bram claims Chef.'},
-  speak: {text: 'I have a reading for tonight.'}, whisper: {to: 'Fitch', text: 'I believe you.'}, nominate: {target: 'Corwin'},
-  vote: {yes: 'yes'}, night_choice: {pick: ['Bram', 'Corwin']}, slay: {target: 'Corwin'}, pass: {},
+  speak: {text: 'I have a reading for tonight.'}, whisper: {to: 'Bram', text: 'I believe you.'}, nominate: {target: 'Corwin'},
+  vote: {yes: 'yes'}, night_choice: {pick: ['Bram', 'Corwin']}, slay: {target: 'Corwin'}, pass: {}, where: {}, go: {room: 'parlour'}, invite: {player: 'Bram', room: 'nook'}, leave: {},
 };
 section('every tool in every state: no secret in any answer');
 for (const st of STATES) {
@@ -231,7 +289,7 @@ section('game 1 fixes: no doubled names, a voice per seat, a useful first day, t
   ok(r.ok && r.said.startsWith('Odette here'), 'a name inside the line is kept');
   r = run(g, 'speak', {text: 'Odette: '});
   ok(!r.ok && /without your name/.test(r.error), `a line that was only the name is refused: ${r.error}`);
-  r = run(g, 'whisper', {to: 'Fitch', text: 'Odette: keep this between us.'});
+  r = run(g, 'whisper', {to: 'Bram', text: 'Odette: keep this between us.'});
   ok(r.ok && r.said === 'keep this between us.', 'whisper drops the own name too');
   ok(/without your name in front/.test(tool('speak').args.text.desc), 'the speak tool says not to sign the line');
   ok(/own name in front|your own name/.test(systemFor('player', 'Odette')), 'the system prompt says not to sign the line');
@@ -331,8 +389,8 @@ section('the acts, and refusals that name what is legal');
   ok(r.ok, 'speak by day');
   r = run(g, 'speak', {text: 'I will read Bram and Corwin tonight.'});
   ok(!r.ok && /You said that already; say something new or pass\./.test(r.error), `the no-repeating rule comes through: ${r.error}`);
-  r = run(g, 'whisper', {to: 'fit', text: 'Are you really the Monk?'});
-  ok(r.ok && r.to === 'Fitch', 'whisper finds a player by the start of the name');
+  r = run(g, 'whisper', {to: 'yus', text: 'Are you really the Monk?'});
+  ok(r.ok && r.to === 'Yusuf', 'whisper finds a player by the start of the name');
   r = run(g, 'whisper', {to: 'Zed', text: 'hi'});
   ok(!r.ok && /Odette, Bram, Ines/.test(r.error), `whisper to nobody names the players: ${r.error}`);
   r = run(g, 'nominate', {target: 'Corwin'});
@@ -575,6 +633,129 @@ section('integration: a real game through the real api, every seat with its own 
   console.log(`    | a real game, seed 7, to day ${game.day}: ${JSON.stringify({...done, bad: undefined})}; ${seats[0].name}'s header now:`);
   console.log(header(0).split('\n').map(l => '    | ' + l).join('\n'));
 }
+
+// ---- rooms (#28): where, go, invite, leave; speak says where the line went; whispers only between neighbours ----
+section('rooms on the fake: where, go, invite, leave, the header, read_talk, whisper between neighbours');
+{
+  const useOf = h => ((h.match(/Useful now: ([^.]+)\./) || [])[1] || '').split(', ');
+  // the day state: Ines and Corwin are in the nook, a line said there; Odette at the Square
+  let g = fakeGame('day');
+  let h = playerHeader(g, 0, fakeApi);
+  ok(/You are at the Square; whisper only to your neighbours Yusuf and Bram\. Away: Ines and Corwin in the nook\./.test(h), `the header names my place, my neighbours and who is away: ${h}`);
+  ok(/Rooms, closing when nominations open: nook full, parlour 3 free, back room 4 free\./.test(h), 'the header names the rooms, what is free, and that they close at nominations');
+  ok(/Moves: Ines and Corwin went to the nook\./.test(h), 'the header names who went off together since my last look');
+  ok(useOf(h).includes('invite') && !useOf(h).includes('leave'), `at the Square with the rooms open, invite is useful: ${useOf(h)}`);
+  let r = run(g, 'read_talk');
+  ok(r.entries.some(e => e.type === 'move' && e.to === 'the nook' && JSON.stringify(e.seats) === '["Ines","Corwin"]' && e.by === 'Ines' && e.text === 'Ines and Corwin went to the nook.'), 'read_talk shows the move, with names and the room\'s name');
+  ok(!JSON.stringify(r).includes('ROOM-LINE'), 'read_talk drops a room line said where I was not (its audience leaves me out)');
+  ok(!/Moves:/.test(playerHeader(g, 0, fakeApi)), 'after read_talk the moves are not news');
+  r = run(g, 'where');
+  ok(r.ok && r.place === 'the Square' && r.with.length === 6 - 2 && JSON.stringify(r.neighbours) === '["Yusuf","Bram"]' && JSON.stringify(r.canWhisper) === '["Yusuf","Bram"]' && r.open === true,
+    `where: my place, who is with me, my neighbours: ${JSON.stringify(r)}`);
+  ok(JSON.stringify(r.rooms.find(x => x.id === 'nook')) === '{"id":"nook","name":"the nook","size":2,"free":0,"who":["Ines","Corwin"]}' && !r.square.includes('Ines'), 'where: each room with its seats and free places');
+  clean(r, 'where');
+  // whispers: only neighbours, only at the Square
+  r = run(g, 'whisper', {to: 'Thea', text: 'Meet me later.'});
+  ok(!r.ok && /only at the Square, and only to your neighbours at the table: Yusuf and Bram/.test(r.error) && /invite them to a room/.test(r.error), `a whisper to a non-neighbour is refused with the two names: ${r.error}`);
+  ok(!g.events.some(e => e.type === 'whisper' && e.text === 'Meet me later.'), 'and nothing was whispered');
+  // go, speak in the room, invite, leave
+  r = run(g, 'go', {});
+  ok(!r.ok && /go needs a room: nook \(the nook, for 2, full\), parlour/.test(r.error), `go with no room lists them: ${r.error}`);
+  r = run(g, 'go', {room: 'the cellar'});
+  ok(!r.ok && /There is no room/.test(r.error), `go to an unknown room is refused by the game: ${r.error}`);
+  r = run(g, 'go', {room: 'nook'});
+  ok(!r.ok && /full/.test(r.error), 'go to a full room is refused');
+  r = run(g, 'go', {room: 'Parlour'});
+  ok(r.ok && r.place === 'the parlour' && r.with.length === 0 && /Nobody else is here yet/.test(r.note) && /table saw you go/.test(r.note), `go: ${JSON.stringify(r)}`);
+  h = playerHeader(g, 0, fakeApi);
+  ok(/You are alone in the parlour: nobody hears you here; invite someone or leave\./.test(h) && useOf(h).includes('leave') && !useOf(h).includes('whisper'), `alone in a room the header says so, offers leave and no whisper: ${h}`);
+  r = run(g, 'speak', {text: 'Is anyone there?'});
+  ok(r.ok && r.heard === 'in the parlour, heard by nobody: you are alone there', `speak alone in a room says nobody heard: ${r.heard}`);
+  r = run(g, 'invite', {player: 'Thea'});
+  ok(r.ok && r.place === 'the parlour' && JSON.stringify(r.with) === '["Thea"]' && /Thea came with you/.test(r.note), `invite into my room: ${JSON.stringify(r)}`);
+  r = run(g, 'invite', {player: 'Ines'});
+  ok(!r.ok && /another place/.test(r.error), 'inviting a seat in another room is refused');
+  r = run(g, 'speak', {text: 'Thea, I read Bram and Fitch last night.'});
+  ok(r.ok && r.heard === 'in the parlour, heard by Thea', `speak in a room says who heard it: ${r.heard}`);
+  r = run(g, 'whisper', {to: 'Bram', text: 'x'});
+  ok(!r.ok && /no whispers in a room/.test(r.error) && /Yusuf and Bram/.test(r.error), `a whisper from a room is refused: ${r.error}`);
+  const tt = run(g, 'read_talk', {}, 4);
+  ok(tt.entries.some(e => e.type === 'say' && e.in === 'the parlour' && /read Bram and Fitch/.test(e.text)), 'Thea\'s read_talk shows the room line, marked with its place');
+  ok(!JSON.stringify(run(g, 'read_talk', {since: 0}, 1)).includes('read Bram and Fitch'), 'Bram, outside, never reads the room line');
+  ok(/Odette and Thea in the parlour/.test(playerHeader(g, 1, fakeApi)), "Bram's header says Odette and Thea are in the parlour");
+  ok(/You are in the parlour with Thea: only you 2 hear what is said here/.test(playerHeader(g, 0, fakeApi)), 'my header names my room and who is with me');
+  let wa = run(g, 'what_is_asked');
+  ok(/You are in the parlour with Thea/.test(wa.place) && /rooms close when nominations open/.test(wa.place), `what_is_asked names my place and that the rooms close: ${wa.place}`);
+  r = run(g, 'leave');
+  ok(r.ok && r.place === 'the Square' && /whole table hears you again/.test(r.note), `leave: ${JSON.stringify(r)}`);
+  r = run(g, 'leave');
+  ok(!r.ok && /at the Square already/.test(r.error), 'leave at the Square is refused');
+  r = run(g, 'invite', {player: 'Fitch'});
+  ok(!r.ok && /Name a room to take Fitch to: nook/.test(r.error), `invite from the Square with no room asks for one: ${r.error}`);
+  r = run(g, 'invite', {player: 'Fitch', room: 'back room'});
+  ok(r.ok && r.place === 'the back room' && r.with.includes('Fitch'), 'invite from the Square to a named room takes us both');
+  // the rooms close when nominations open: no room tools, no rooms line
+  g = fakeGame('nominations');
+  h = playerHeader(g, 0, fakeApi);
+  ok(/You are at the Square; whisper only to your neighbours Yusuf and Bram\./.test(h) && !/Rooms,/.test(h) && !useOf(h).includes('invite'), `with nominations open: my place, no rooms: ${h}`);
+  r = run(g, 'go', {room: 'nook'});
+  ok(!r.ok && /rooms are closed/.test(r.error), `go with nominations open is refused: ${r.error}`);
+  ok(!/You are at the Square|Rooms,/.test(playerHeader(fakeGame('night'), 0, fakeApi)), 'at night the header names no place');
+  ok(/at night/.test(run(fakeGame('night'), 'where').text), 'where at night says nobody moves');
+}
+
+section('rooms in a real game: a line in a room stays in the room, the moves are public, whispers only to neighbours, rooms close at nominations');
+{
+  const LINE = 'ROOM-SECRET-only-the-parlour-hears-this';
+  const game = newGame({seed: 7, rounds: 1}), sc = createScripted(7);
+  const out = game.seats.map(() => []);
+  const ctx = i => ({game, seat: {index: i, name: game.seats[i].name}, api: api.forSeat(i), log: () => {}});
+  const call = (i, name, args = {}) => {const r = tool(name).handler(args, ctx(i)); out[i].push(JSON.stringify(r)); return r};
+  const header = i => {const h = playerHeader(game, i); out[i].push(h); return h};
+  for (let n = 0; n < 500 && !(game.phase === 'day' && api.roomsOpen(game)); n++) {
+    const p = game.pending;
+    if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game));
+  }
+  const nm = i => game.seats[i].name, [O, T, I] = [0, 4, 2];
+  ok(api.roomsOpen(game) && game.seats.every(s => s.alive), `seed 7, day 1: the talk has begun and the rooms are open (${game.seats.map(s => s.name).join(', ')})`);
+  const nbI = api.where(game, I).neighbours.map(nm);
+  let r = call(O, 'where');
+  ok(r.ok && r.place === 'the Square' && r.open && r.rooms.length === 3 && r.neighbours.length === 2, `where at the start of the day: ${JSON.stringify(r)}`);
+  r = call(O, 'go', {room: 'parlour'});
+  ok(r.ok && r.place === 'the parlour', `${nm(O)} goes to the parlour: ${JSON.stringify(r)}`);
+  r = call(O, 'invite', {player: nm(T)});
+  ok(r.ok && JSON.stringify(r.with) === JSON.stringify([nm(T)]), `${nm(O)} invites ${nm(T)} into the parlour: ${JSON.stringify(r)}`);
+  r = call(O, 'speak', {text: LINE});
+  ok(r.ok && r.heard === `in the parlour, heard by ${nm(T)}`, `${nm(O)} speaks in the parlour: ${r.heard}`);
+  r = call(O, 'whisper', {to: nm(T), text: 'x'});
+  ok(!r.ok && /no whispers in a room/i.test(r.error), `a whisper from the room is refused: ${r.error}`);
+  const tT = call(T, 'read_talk');
+  ok(tT.entries.some(e => e.type === 'say' && e.text === LINE && e.in === 'the parlour'), `${nm(T)} hears the line, marked in the parlour`);
+  const hI = header(I);
+  ok(/Moves: .*went to the parlour.*into the parlour/.test(hI) && new RegExp(`Away: ${nm(O)} and ${nm(T)} in the parlour`).test(hI), `${nm(I)}'s header names the moves and who is away: ${hI}`);
+  ok(hI.length < HEADER_CAP, `${nm(I)}'s header is under ${HEADER_CAP} (${hI.length})`);
+  const tI = call(I, 'read_talk', {since: 0});
+  ok(tI.entries.filter(e => e.type === 'move').length === 2 && !JSON.stringify(tI).includes(LINE), `${nm(I)}'s read_talk shows the two moves and not the line`);
+  ok(/You are in the parlour with/.test(call(T, 'what_is_asked').place || ''), `${nm(T)}'s what_is_asked names the room`);
+  // a whisper to a non-neighbour, named with the two neighbours
+  const far = game.seats.map(s => s.index).find(j => j !== I && !api.where(game, I).neighbours.includes(j) && api.where(game, j).place == null);
+  r = call(I, 'whisper', {to: nm(far), text: 'A word, please.'});
+  ok(!r.ok && r.error.includes(andNames(nbI)) && /Square/.test(r.error), `${nm(I)} whispering to ${nm(far)} is refused with ${andNames(nbI)}: ${r.error}`);
+  r = call(T, 'leave');
+  ok(r.ok && r.place === 'the Square' && api.where(game, T).place == null, `${nm(T)} leaves for the Square`);
+  // the rest pass; when nominations open the rooms close and Odette comes back
+  for (const s of game.seats) if (!game.clock.nominationsOpen && api.view(game, s.index).clock.toSpeak?.includes(s.index)) call(s.index, 'pass');
+  ok(game.clock.nominationsOpen && api.where(game, O).place == null, `nominations open: ${nm(O)} is back at the Square`);
+  const hO = header(O);
+  ok(!/Rooms,/.test(hO) && /You are at the Square/.test(hO) && /rooms close/.test(hO), `${nm(O)}'s header: no rooms, at the Square, the closing in the moves: ${hO}`);
+  r = call(O, 'go', {room: 'nook'});
+  ok(!r.ok && /closed/.test(r.error), `go after nominations open is refused: ${r.error}`);
+  for (const i of game.seats.map(s => s.index)) {if (i === O || i === T) continue; call(i, 'read_talk', {since: 0}); header(i); call(i, 'where'); call(i, 'what_is_asked')}
+  for (const s of game.seats) if (s.index !== O && s.index !== T) ok(!out[s.index].some(x => x.includes(LINE)), `${s.name} never carries the room line`);
+  console.log(`    | ${nm(I)}'s header with two in the parlour:`);
+  console.log(hI.split('\n').map(l => '    | ' + l).join('\n'));
+}
+function andNames(xs) {return xs.length < 2 ? xs[0] : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`}
 
 
 section('nothing under src/ imports node: or scripts/');

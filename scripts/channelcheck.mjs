@@ -174,8 +174,11 @@ async function channels() {
         note: [{text: ''}], speak: [{text: ''}], whisper: [{to: nm(i), text: 'x'}, {to: 'Storyteller', text: 'x'}, {to: String(A), text: 'x'}, ...other.slice(0, 2).map(o => ({to: o, text: ''}))],
         nominate: [{target: nm(A)}, {target: 'Storyteller'}, {target: String(A)}], vote: [{yes: 'yes'}, {yes: 'maybe'}], night_choice: [{pick: [nm(A), 'Storyteller']}, {pick: other}], // never one name: by day one name fires a Slayer's shot (#37)
         slay: [{}, {target: 'Storyteller'}, {target: String(A)}], // hostile but never a real shot: the read must not change the game
+        // the rooms (#28): where reads; go and invite only with a room that does not exist, so no seat moves while it is read
+        where: [{}, {player: A + 1}, {seat: A}], go: [{}, {room: 'the Storyteller\'s room'}, {room: String(A)}],
+        invite: [{player: nm(i)}, {player: 'Storyteller', room: 'parlour'}, {player: nm(A), room: 'the Storyteller\'s room'}],
       }};
-    ok(PLAYER_TOOLS.every(t => t.name in variants(0) || t.name === 'pass'), 'every player tool is read with hostile arguments (pass is played, not probed)');
+    ok(PLAYER_TOOLS.every(t => t.name in variants(0) || t.name === 'pass' || t.name === 'leave'), 'every player tool is read with hostile arguments (pass and leave are played, not probed)');
     const heard = {}, tRead = Date.now();
     for (let i = 0; i < g.seats.length; i++) {
       const out = [], H = {'x-clocktower-player': String(i + 1), 'x-clocktower-runner': T.runners[i]};
