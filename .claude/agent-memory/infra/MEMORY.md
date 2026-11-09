@@ -23,3 +23,13 @@
 ## Pace knob (issue #26)
 - Start body `minGap` (5-600 s) and `heartbeat` (10-1440 game min) -> req -> `--min-gap` / `--heartbeat` (runnerArgs), kept in active.json. View: `paceNow: {minGap, heartbeat}` (the old `pace` string stays: the page parses it in runnerGap).
 - Live: POST /play/runner/limits {key, minGap?, heartbeat?} sets r.paceLive; relay-mcp withPace() adds `pace: {...}` to the pace answer (player and Storyteller routes) via play.onPace(fn); makePacer sends minGap and heartbeat each poll and adopts the answer's overrides.
+
+## Narrator voice (issue #50, PR #53)
+- startRelay -> makeVoice(env, log): RELAY_TTS unset probes TTS_URL (default 127.0.0.1:8880, Kokoro-FastAPI on the owner's PC) once at start: log "[relay] voice engine found (N voices)" (the launcher forwards relay lines) or "voice engine not found" + HINT and the voice goes off (status enabled:false, /tts/say 503). =0 forced off (status still answers), =1 forced on (engine used when it starts later). /tts/status adds seatVoices from src/data/voices.js (VOICES export), imported behind a try.
+- /health providers now includes `tts`; relaycheck filters it, and quietEnv points TTS_URL at a closed port so checks never meet the real engine. `npm run ttscheck` (runtime job).
+
+## Portrait pipeline (issue #27, PR #54)
+- scripts/art/{lib,portraits,accept}.mjs; `npm run art:portraits [-- --only Odette,Bram --size 512|768 --force --seed N --dry-run]`, `npm run art:accept -- Odette|all|--reject N|--list`; `npm run artcheck` (mock router, CI runtime job).
+- Reads PORTRAITS/PORTRAIT_STYLE from src/data/portraits.js (placeholder briefs, marked, if missing; accept refuses placeholder-made images). Default model black-forest-labs/FLUX.1-schnell (Apache-2.0) via router fal-ai/fal-ai/flux/schnell, body {prompt,image_size,seed,output_format:png}; env ART_MODEL, ART_PROVIDER (fal-ai|hf-inference), ART_PROVIDER_ID, ART_LICENCE, HF_ROUTER_URL, ART_ROOT. UNVERIFIED against the live router (no token here): first real run is the test. Eldmoor's route (fal-ai through the router with HF_TOKEN) was proven there.
+- Output: assets/incoming/portraits/<Name>.png + .json (git-ignored); accept -> assets/portraits/<Name>.png, index.json {version:1, portraits:{Name:{file,model,provider,licence,promptHash,seed,size,sha256,date}}}, a line per name in docs/CREDITS.md.
+- Heredocs with apostrophes in Git Bash tool commands broke twice: write files with the Write tool.

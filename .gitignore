@@ -8,3 +8,6 @@ logs/
 .claude/worktrees/
 # The owner's private overlay: our role names mapped to the official ones, for private play only. Never committed.
 overlay.local.json
+
+# Generated portraits wait here for review and are never committed (npm run art:portraits, then art:accept)
+assets/incoming/
