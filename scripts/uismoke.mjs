@@ -460,7 +460,7 @@ console.log('voices');
   const fakeAudio = () => ({src: '', plays: [], paused: true, onended: null, onerror: null,
     play() {this.paused = false; this.plays.push(this.src); return Promise.resolve()}, pause() {this.paused = true}, end() {const f = this.onended; if (f) f()}});
   const settle = async (n = 8) => {for (let i = 0; i < n; i++) await tick()};
-  const livePage = (r, audio) => {install(HTML); return createApp({client: relayClient({base: BASE, fetchImpl: r.fetch}), refreshMs: null, audio, voiceFile: async () => null})};
+  const livePage = (r, audio) => {install(HTML); localStorage.setItem(VO.NAMES_KEY, 'off'); return createApp({client: relayClient({base: BASE, fetchImpl: r.fetch}), refreshMs: null, audio, voiceFile: async () => null})};
   const push = (a, frame, from) => a.onSocket({type: 'watch', seed: frame.seed, last: frame.last, events: frame.events.filter(e => e.id > from), clock: frame.clock, pending: frame.pending, ballot: frame.ballot || null, phase: frame.phase, day: frame.day, night: frame.night, winner: frame.winner || null});
   const lit = () => document.querySelectorAll('#square .seat.speaking').map(s => +s.dataset.seat);
   const centreLit = () => document.querySelector('#square .centre').classList.contains('st-speaking');
@@ -574,10 +574,10 @@ console.log('voices');
   // ---- keeping time (#50): the relay's clips and the heard report ----
   console.log('voices keeping time');
   {
-    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY);
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.setItem(VO.NAMES_KEY, 'off');
     const kr = voiceRelay({clipsOnSay: true}), ka = fakeAudio();
     let tickFn = null;
-    install(HTML);
+    install(HTML); localStorage.setItem(VO.NAMES_KEY, 'off');
     const kp = createApp({client: relayClient({base: BASE, fetchImpl: kr.fetch}), refreshMs: null, audio: ka, voiceFile: async () => null,
       voiceTick: (fn, ms) => {tickFn = fn; kr.tickMs = ms; return () => {}}, clipWait: 600}); // long beside a timer tick (about 16 ms on Windows)
     const heards = () => kr.posts.filter(p => p.path === VOICE.heard).map(p => p.body);
@@ -648,7 +648,43 @@ console.log('voices');
     const {mergePush} = await import('../src/ui/model.js');
     const held = {...T, events: T.events.map((e, i) => i === T.events.length - 1 ? {...e, clip: {id: c2, ms: 1}} : e)};
     ok(!mergePush(held, {type: 'watch', seed: T.seed, last: T.last, events: T.events}).full, 'a replayed push is still a replay when the held event carries its clip');
-    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY);
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
+  }
+
+  // ---- listening mode (#82): phases and moves are spoken; the names tick says who speaks first ----
+  console.log('voices: listening mode');
+  {
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
+    const lr = voiceRelay(), la = fakeAudio();
+    install(HTML);
+    const lp = createApp({client: relayClient({base: BASE, fetchImpl: lr.fetch}), refreshMs: null, audio: la, voiceFile: async () => null});
+    lr.watch = T; await lp.onSocketOpen(); await settle();
+    ok($('voice-names').checked && lp.voice.state.names, 'the names tick is on by default');
+    ok(VO.spokenLine({id: 1, type: 'phase', what: 'night', text: 'Night 2 falls.'}).speaker === 'storyteller' && VO.spokenLine({id: 2, type: 'move', text: 'Odette went to the Snug.'}).speaker === 'storyteller', "a phase and a move are said in the Storyteller's voice");
+    $('voice-toggle').click(); await settle();
+    const L0 = T.last, ev = (i, o) => ({id: L0 + i, day: T.day, night: T.night, ...o});
+    const sendOne = async e => {lp.onSocket({type: 'watch', seed: T.seed, last: e.id, events: [e], clock: T.clock, pending: T.pending, ballot: T.ballot, phase: T.phase, day: T.day, night: T.night, winner: T.winner, places: T.places}); await settle()};
+    await sendOne(ev(1, {type: 'phase', what: 'round', text: 'Round 2 of 3 begins.'}));
+    ok(lr.says.some(x => x.text === 'Round 2 of 3 begins.'), 'a phase line is asked of the voice');
+    la.end(); await settle();
+    await sendOne(ev(2, {type: 'move', seats: [0], room: 0, text: 'Odette went to the Snug.'}));
+    ok(lr.says.some(x => x.text === 'Odette went to the Snug.'), 'a move line is asked of the voice');
+    la.end(); await settle();
+    const n0 = lr.says.length, nm = E.grimoire.seats[0].name;
+    await sendOne(ev(3, {type: 'say', seat: 0, text: 'Good evening.'}));
+    ok(lr.says.slice(n0).some(x => x.text === nm + '.' && x.voice === 'v_st'), 'a name tag is asked of the voice in the Storyteller voice');
+    ok(lp.voice.state.now && lp.voice.state.now.id === L0 + 3 && lp.voice.mark() < L0 + 3, 'the tag is playing: the line is not yet heard');
+    la.end(); await settle();
+    ok(lr.says.some(x => x.text === 'Good evening.') && lp.voice.mark() < L0 + 3, 'then the line itself, the heard mark still not moved');
+    la.end(); await settle();
+    ok(lp.voice.mark() >= L0 + 3, 'the heard mark moves once the line itself has played');
+    const n1 = lr.says.length;
+    await sendOne(ev(4, {type: 'say', seat: 0, text: 'Another thing.'}));
+    la.end(); await settle(); la.end(); await settle();
+    ok(lr.says.slice(n1).every(x => x.text !== nm + '.'), 'the same name tag is cached: not asked again');
+    $('voice-names').checked = false; $('voice-names').dispatch('change');
+    ok(localStorage.getItem(VO.NAMES_KEY) === 'off' && !lp.voice.state.names, 'the names choice is remembered');
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
   }
 }
 

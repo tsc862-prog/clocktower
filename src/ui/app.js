@@ -121,7 +121,7 @@ export function createApp({client, view = null, fixture = null, runnersFixture =
   let drawVoice = () => {};
   voice = createVoice({client, recorded: !!fixture, onSpeaker: who => {panels.square.setSpeaking(who); panels.stage.setSpeaking(who)}, onChange: st => {drawVoice(st); panels.stage.refresh()},
     ...(audio !== undefined ? {audio} : {}), ...(voiceFile !== undefined ? {voiceFile} : {}), ...(voiceTick !== undefined ? {tick: voiceTick} : {}), ...(clipWait !== undefined ? {clipWait} : {})});
-  drawVoice = voiceBar(voice, {box: $('voice'), toggle: $('voice-toggle'), skip: $('voice-skip'), mute: $('voice-mute'), whispers: $('voice-whispers'), note: $('voice-note'), time: $('voice-time')});
+  drawVoice = voiceBar(voice, {box: $('voice'), toggle: $('voice-toggle'), skip: $('voice-skip'), mute: $('voice-mute'), whispers: $('voice-whispers'), names: $('voice-names'), note: $('voice-note'), time: $('voice-time')});
   drawVoice();
 
   function renderBar() {

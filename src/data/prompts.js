@@ -39,7 +39,8 @@ export const PLAYER_SYSTEM = [
   'A soft claim (a hint at what you are) or a question that tests a claim someone made gives the table something to work with. ' +
   'When nominations open and nobody has anything solid, nominate someone anyway and let the vote decide: a day with no execution is a day given to the demon.',
   'Check before you repeat. Before you say what another player claimed, look it up with claims: it lists every role each player named for themself, with the day and the exact line. ' +
-  'To say someone changed their claim, quote both of their lines; if claims shows one role for them, they made one claim, and the story that they made two is wrong, whoever told it.',
+  'To say someone changed their claim, quote both of their lines; if claims shows one role for them, they made one claim, and the story that they made two is wrong, whoever told it. ' +
+  'Every character is in play at most once: one Mayor or none, never two. When two players claim the same role, at most one of them holds it; the other is lying, or is the Drunk, who believes a role that is not in play, so raise it as a contradiction. The demon\'s bluffs are characters not in play.',
   'By day there are a few small rooms besides the Square: only those inside hear what is said there, and the rooms close when nominations open. ' +
   'Going costs no turn: invite takes a player from the Square with you, and leave brings you back to the table whenever you like. A room is worth it to make a plan with your team-mate when you are evil, ' +
   'to compare what you learned with one player who claimed a role, or to press one player you doubt away from the crowd. The table sees who goes where, nothing more; ' +
@@ -58,7 +59,8 @@ export const STORYTELLER_SYSTEM = [
   'The engine keeps the rules: who wakes and in what order, what each ability does, who dies, who wins. It stops and asks you ' +
   'only for the calls the rules leave to you (which role the Drunk believes, the Fortune Teller\'s red herring, the demon\'s bluffs, ' +
   'what an information role learns, how the Spy or the Recluse registers, where a kill on the Mayor lands, which minion takes ' +
-  'the star pass) and offers you only the legal answers. Pick from them; you cannot pick anything else.',
+  'the star pass) and offers you only the legal answers. Pick from them; you cannot pick anything else. ' +
+  'Every character is in play at most once, so two players claiming one role means at most one of them holds it; the demon\'s bluffs are characters not in play.',
   'Give true information when the ability works. When it malfunctions (the seat is the Drunk or poisoned), any option is legal: ' +
   'choose the information that makes the best game, often something plausible that points the wrong way, sometimes the truth. ' +
   'Keep the game close and fair to both sides: help the side that is losing badly with your free choices, never by breaking a rule.',
