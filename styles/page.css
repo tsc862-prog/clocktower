@@ -34,30 +34,71 @@ a { color: var(--gold); }
 .panel h2 .opt { float: right; margin-left: 1rem; font: 12px var(--sans); color: var(--dim); letter-spacing: 0; }
 #grimoire, #agents { overflow: auto; }
 
-/* the square */
+/* tokens (src/ui/tokens.js draws them; restyle here). Rims tell the team; icons use two colours, ink and the rim's accent. */
+:root {
+  --rim-townsfolk: #3f7fc4; --rim-outsider: #3aa0a6; --rim-minion: #d27a34; --rim-demon: #b8282d;
+  --tk-face: #ece3cc; --tk-ink: #2b241d; --tk-name: #3a3027; --tk-shroud: #0d0c10;
+  --seat-rim: #3a3446; --seat-face: #262230; --seat-ink: #e8e2d4; --table: #3b2a1e; --table-edge: #5a4230;
+  --coin: #d8c27a; --hand-up: #7fbf7f; --hand-down: #c97b6b;
+}
+.token-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+.token { display: block; overflow: visible; }
+.role-token { --rim: var(--faint); }
+.role-token.team-townsfolk { --rim: var(--rim-townsfolk); } .role-token.team-outsider { --rim: var(--rim-outsider); }
+.role-token.team-minion { --rim: var(--rim-minion); } .role-token.team-demon { --rim: var(--rim-demon); }
+.role-token .tk-rim { fill: var(--rim); } .role-token .tk-face { fill: var(--tk-face); }
+.token .a { fill: var(--tk-ink); } .token .b { fill: var(--rim); }
+.token .s { fill: none; stroke: var(--tk-ink); stroke-width: 5; stroke-linecap: round; } .token .sb { fill: none; stroke: var(--rim); stroke-width: 4; stroke-linecap: round; }
+.token .initial { font: bold 34px var(--serif); fill: var(--tk-ink); }
+.tk-name { font-family: var(--sans); font-weight: 600; fill: var(--tk-name); letter-spacing: .02em; text-transform: uppercase; }
+.seat-marker .sm-rim { fill: var(--seat-rim); stroke: #4d455c; stroke-width: 1.5; } .seat-marker .sm-face { fill: var(--seat-face); }
+.seat-marker .sm-initial { font: 30px var(--serif); fill: var(--seat-ink); }
+.seat-marker .sm-name { font: 13px var(--serif); fill: var(--seat-ink); letter-spacing: .04em; }
+.seat-marker .shroud { fill: var(--tk-shroud); stroke: #e8e2d4; stroke-width: 2; }
+.seat-marker.is-dead .sm-rim { fill: #2a2632; } .seat-marker.is-dead .sm-name { fill: var(--dim); } .seat-marker.is-dead .sm-initial { display: none; }
+.reminder-token .rm-face { fill: var(--tk-face); stroke: var(--private); stroke-width: 5; } .reminder-token { --rim: var(--private); }
+.reminder-token.rem-poisoned .a { fill: #4f8a3c; } .reminder-token.rem-dead .a { fill: var(--tk-shroud); }
+.reminder-token.rem-protected .a { fill: var(--rim-townsfolk); } .reminder-token.rem-red-herring .a { fill: var(--rim-demon); }
+.reminder-token.rem-master .a { fill: #b8932f; } .reminder-token.rem-is-the-demon .a { fill: var(--rim-demon); }
+.reminder-token.off { opacity: .45; }
+.ghost-coin .gc-rim { fill: var(--coin); stroke: #8a7a46; stroke-width: 4; } .ghost-coin .gc-ghost { fill: var(--bg); } .ghost-coin .gc-eye { fill: var(--coin); }
+.ghost-coin.spent .gc-rim { fill: none; stroke: var(--faint); stroke-dasharray: 8 6; } .ghost-coin.spent .gc-ghost { fill: var(--faint); } .ghost-coin.spent .gc-eye { fill: var(--panel); }
+.hand-marker { width: 26px; height: 26px; } .hand-marker.up { fill: var(--hand-up); } .hand-marker.down { fill: var(--hand-down); opacity: .8; }
+.hand-marker.none circle { fill: none; stroke: var(--faint); stroke-width: 6; stroke-dasharray: 10 8; }
+
+/* the square: a table seen from above */
 .ring { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 64vh; margin: 0 auto; }
-.seat { position: absolute; transform: translate(-50%, -50%); width: 27%; text-align: center; padding: .3rem .2rem; border: 1px solid var(--line); border-radius: 8px; background: #211e29; font-size: .95rem; line-height: 1.3; }
-.seat .name { font-size: 1.15rem; }
+.ring::before { content: ''; position: absolute; left: 50%; top: 50%; width: 62%; height: 62%; transform: translate(-50%, -50%); border-radius: 50%;
+  background: radial-gradient(circle at 45% 40%, #4a3526, var(--table) 70%); box-shadow: 0 0 0 6px var(--table-edge), 0 0 30px #000a inset; }
+.seat { position: absolute; transform: translate(-50%, -50%); width: 25%; text-align: center; font-size: .95rem; line-height: 1.25; }
+.seat .marks { min-height: 28px; display: flex; justify-content: center; align-items: center; gap: .3rem; flex-wrap: wrap; }
+.seat .pieces { position: relative; width: 96px; height: 96px; margin: 0 auto; }
+.seat .seat-marker { width: 96px; height: 96px; }
+.seat .role-piece { position: absolute; right: -40px; bottom: -6px; } .seat .role-piece .role-token { width: 52px; height: 52px; }
+.seat .ghost { position: absolute; left: -26px; bottom: 0; } .seat .ghost .ghost-coin { width: 26px; height: 26px; }
 .seat .life { font: 12px var(--sans); color: var(--dim); }
-.seat.dead { opacity: .7; border-style: dashed; } .seat.dead .name { text-decoration: line-through; text-decoration-color: var(--faint); }
-.ghost.unspent { color: var(--ink); } .ghost.spent { color: var(--faint); }
-.seat.is-nominee { border-color: var(--evil); box-shadow: 0 0 0 1px var(--evil); }
-.seat.is-nominator { border-color: var(--gold); }
+.seat.is-nominee .seat-marker .sm-rim { stroke: var(--evil); stroke-width: 6; }
+.seat.is-nominator .seat-marker .sm-rim { stroke: var(--gold); stroke-width: 6; }
 .mark { font: 11px var(--sans); padding: 0 .3rem; border-radius: 3px; }
 .mark.nominee { background: var(--evil); color: var(--bg); } .mark.nominator { background: var(--gold); color: var(--bg); }
-.hand { font: 600 13px var(--sans); } .hand.up { color: var(--ok); } .hand.down { color: var(--off); } .hand.none { color: var(--faint); }
-.seat .st { margin-top: .2rem; padding-top: .2rem; border-top: 1px dotted var(--line); font: 12px var(--sans); }
+.hand { display: inline-flex; align-items: center; gap: 2px; font: 600 12px var(--sans); } .hand.up { color: var(--ok); } .hand.down { color: var(--off); } .hand.none { color: var(--faint); }
+.seat .st { margin-top: .15rem; font: 12px var(--sans); }
 .sees { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
 .role.team-townsfolk, .role.team-outsider { color: var(--good); } .role.team-minion, .role.team-demon { color: var(--evil); }
 .believed { color: var(--dim); }
 .tok { display: inline-block; font: 11px var(--sans); padding: 0 .3rem; margin: 1px; border: 1px solid var(--line); border-radius: 3px; color: var(--private); }
 .tok.off { color: var(--faint); text-decoration: line-through; }
-.centre { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 38%; text-align: center; }
-.centre .quiet { color: var(--dim); font-size: 1.2rem; }
-.vote .what { font-size: 1rem; } .vote .tally { font-size: 1.6rem; color: var(--gold); } .vote .bar, .vote .left { font: 12px var(--sans); color: var(--dim); }
+.centre { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 40%; text-align: center; }
+.centre .quiet { color: #cbb89a; font-size: 1.2rem; }
+.vote .what { font-size: 1rem; } .vote .tally { font-size: 1.6rem; color: var(--gold); } .vote .bar, .vote .left { font: 12px var(--sans); color: #b9aa90; }
 
 /* grimoire */
-.grim-row { display: grid; grid-template-columns: 1.6rem 5.5rem 9rem 9rem 9rem 1fr; gap: .4rem; padding: .3rem .8rem; border-bottom: 1px solid var(--line); font-size: .95rem; align-items: baseline; }
+.grim-row { display: grid; grid-template-columns: 1.4rem 44px 5.5rem 9rem 8rem 8rem 1fr; gap: .4rem; padding: .25rem .8rem; border-bottom: 1px solid var(--line); font-size: .95rem; align-items: center; }
+.grim-row .piece .role-token { width: 44px; height: 44px; }
+.grim-row .tokens { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+.tok.reminder { display: inline-flex; flex-direction: column; align-items: center; border: 0; padding: 0; margin: 0; width: 52px; }
+.tok.reminder .reminder-token { width: 30px; height: 30px; } .tok.reminder .rw { font-size: 10px; line-height: 1.1; text-align: center; }
+.tok.reminder.off { text-decoration: none; }
 .grim-row[data-alive="no"] { color: var(--dim); }
 .grim-row .n { color: var(--faint); font: 12px var(--sans); } .grim-row .life, .grim-row .believed { font: 12px var(--sans); }
 .grim-foot { padding: .5rem .8rem; font-size: .95rem; display: grid; gap: .3rem; }
@@ -115,7 +156,8 @@ a { color: var(--gold); }
 /* a phone: one column, in reading order */
 @media (max-width: 900px) {
   #board { grid-template-columns: minmax(0, 1fr); grid-template-areas: "square" "talk" "grimoire" "rulings" "agents"; }
-  .seat { width: 31%; font-size: .8rem; } .seat .name { font-size: 1rem; }
-  .grim-row { grid-template-columns: 1.4rem 5rem 1fr; } .grim-row .believed, .grim-row .life { grid-column: 3; } .grim-row .tokens { grid-column: 1 / -1; }
+  .seat { width: 31%; font-size: .8rem; } .seat .pieces, .seat .seat-marker { width: 64px; height: 64px; }
+  .seat .role-piece { right: -28px; } .seat .role-piece .role-token { width: 36px; height: 36px; }
+  .grim-row { grid-template-columns: 1.4rem 44px 5rem 1fr; } .grim-row .believed, .grim-row .life { grid-column: 3; } .grim-row .tokens { grid-column: 1 / -1; }
   .panel h2 .opt { float: none; display: block; margin: 0; }
 }
