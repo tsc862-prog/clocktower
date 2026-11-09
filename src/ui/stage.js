@@ -2,7 +2,9 @@
 // (clockwise from the top, so the two whisper neighbours of a seat sit either side of it), the Storyteller's portrait apart on the
 // left with its latest words beside it, and under the stage a strip of the last few lines.
 //   a card       the portrait (assets/portraits/, the initial without one), the name, alive or shrouded, the ghost-vote coin, the true
-//                role small in a corner (the watcher's; the "roles" switch on the game bar hides them), the room's name when away
+//                role small in a corner (the watcher's; the "roles" switch on the game bar hides them)
+//   the rooms    while seats are away (#80) the stage breaks out: the Square closes up round its table, each room in use is a panel
+//                beside it with its people and its newest line; the cards slide there and back, keyed by seat as ever
 //   the speaker  the newest line said (with the voice on: the line whose clip plays, then the last one played) lights its card and
 //                sits beside the face as a caption until the next line; a whisper says to whom and that the table did not hear it;
 //                a line said in a room carries its place. When a nomination, a vote or a phase comes after it, it steps back (dimmed)
@@ -109,12 +111,31 @@ function ringLayout(w, h, seats) {
   return {...out, groups: []};
 }
 
-// -> {cw, ch, namePx, pos: {seat: {x, y, side, cw?, namePx?, shift?}}, mid: {x, y, w, h}, groups: [{id, name, x, y, w, h}]} for a table
-// of w x h pixels, the seats in seat order and the rooms with people in them ([{id, name, seats}], #80). With nobody away, the ring.
-// With a room in use the stage breaks out: the Square closes up round its table on the left, and on the right one panel per occupied
-// room, stacked, its name on top and its people side by side. The split is the one that gives the smaller of the two card sizes the most.
+// -> {cw, ch, namePx, pos: {seat: {x, y, side, cw?, namePx?, room?}}, mid: {x, y, w, h}, groups: [{id, name, x, y, w, h, lineH}]} for a
+// table of w x h pixels, the seats in seat order and the rooms with people in them ([{id, name, seats}], #80). Nobody away: the ring.
+// With a room in use the stage breaks out: the Square closes up round its own table on the left, and on the right one panel per room
+// in use, its name on top, its people side by side and its newest line under them. The panels stack, or stand side by side when the
+// window is short; the split and the arrangement are the ones that give the smaller of the two card sizes (Square, rooms) the most.
 export const ROOM_HEAD = 34, ROOM_PAD = 14, ROOM_GAP = 16;
-const roomLineH = h => Math.round(Math.min(118, Math.max(64, h * 0.11))); // the room's newest line, under its people
+const roomLineH = h => Math.round(Math.min(118, Math.max(64, h * 0.11)));
+const roomCw = (k, pw, ph, lineH) => {
+  let cw = Math.min(320, (pw - 2 * ROOM_PAD - (k - 1) * ROOM_GAP - k * 2 * cardPadX(0)) / k);
+  while (cw > 40 && cw + cardLabel(cw).label + ROOM_HEAD + lineH + 2 * ROOM_PAD + 1.6 * cardPad(cw).y > ph) cw -= 2;
+  return Math.floor(cw);
+};
+function roomPanels(x0, wr, h, used, side) {
+  const m = used.length, lineH = roomLineH(h), panels = [];
+  if (side) { // side by side, each as wide as its people need
+    const wt = r => Math.max(r.seats.length, 1.7), total = used.reduce((a, r) => a + wt(r), 0), free = wr - ROOM_GAP * (m - 1);
+    let x = x0;
+    for (const r of used) {const pw = Math.round(free * wt(r) / total); panels.push({x, y: 0, w: pw, h}); x += pw + ROOM_GAP}
+  } else {
+    const ph = (h - ROOM_GAP * (m - 1)) / m;
+    used.forEach((r, i) => panels.push({x: x0, y: Math.round(i * (ph + ROOM_GAP)), w: wr, h: ph}));
+  }
+  const rcw = Math.min(...used.map((r, i) => roomCw(r.seats.length, panels[i].w, panels[i].h, lineH)));
+  return {rcw, panels, lineH};
+}
 export function stageLayout(w, h, seats, rooms = []) {
   const used = (rooms || []).filter(r => r && r.seats && r.seats.length);
   if (!used.length) return ringLayout(w, h, seats);
@@ -123,31 +144,24 @@ export function stageLayout(w, h, seats, rooms = []) {
   let best = null;
   for (const f of [0.26, 0.31, 0.36, 0.42, 0.48]) {
     const wr = Math.round(w * f), ws = w - wr - ROOM_GAP;
-    const sq = square.length ? ringLayout(ws, h, square) : {cw: Infinity, pos: {}, mid: {x: 0, y: 0, w: 0, h: 0}};
-    const panelH = (h - ROOM_GAP * (used.length - 1)) / used.length;
-    const rcw = Math.floor(Math.min(...used.map(r => {
-      const k = r.seats.length, byW = (wr - 2 * ROOM_PAD - (k - 1) * ROOM_GAP - k * 2 * cardPadX(0)) / k;
-      let cw = Math.min(byW, 320);
-      while (cw > 40 && cw + cardLabel(cw).label + ROOM_HEAD + roomLineH(h) + 2 * ROOM_PAD + cardPad(cw).y > panelH) cw -= 2;
-      return cw;
-    })));
-    const score = Math.min(sq ? sq.cw : 0, rcw) + 0.01 * (sq ? Math.min(sq.cw, 400) : 0);
-    if (!best || score > best.score) best = {score, wr, ws, sq, rcw, panelH};
+    const sq = square.length ? ringLayout(ws, h, square) : null, sqCw = sq ? sq.cw : Infinity;
+    for (const side of used.length > 1 ? [false, true] : [false]) {
+      const rp = roomPanels(ws + ROOM_GAP, wr, h, used, side);
+      const score = Math.min(sqCw, rp.rcw) + 0.01 * Math.min(sqCw, 400);
+      if (!best || score > best.score) best = {score, sq, rp};
+    }
   }
-  const {wr, ws, sq, panelH} = best, cw = sq && Number.isFinite(sq.cw) ? sq.cw : best.rcw, rcw = Math.min(best.rcw, Math.round(cw * 1.1));
-  const pos = {...(sq ? sq.pos : {})}, groups = [], {namePx, label} = cardLabel(rcw);
+  const {sq, rp} = best, cw = sq ? sq.cw : rp.rcw, rcw = Math.min(rp.rcw, Math.round(cw * 1.15));
+  const pos = {...(sq ? sq.pos : {})}, groups = [], {namePx, label} = cardLabel(rcw), body = ROOM_HEAD + rcw + label + 2 * ROOM_PAD + Math.round(1.6 * cardPad(rcw).y);
   used.forEach((r, i) => {
-    const k = r.seats.length, x0 = ws + ROOM_GAP, y0 = Math.round(i * (panelH + ROOM_GAP));
-    const rowW = k * rcw + (k - 1) * (ROOM_GAP + 2 * cardPadX(rcw)), gw = Math.min(wr, rowW + 2 * ROOM_PAD + 2 * cardPadX(rcw));
-    const lineH = roomLineH(h), gh = Math.min(Math.round(panelH), ROOM_HEAD + rcw + label + lineH + 2 * ROOM_PAD + cardPad(rcw).y), gx = x0 + Math.round((wr - gw) / 2), gy = y0 + Math.round((panelH - gh) / 2);
-    groups.push({id: r.id, name: r.name || r.id, x: gx, y: gy, w: gw, h: gh, lineH});
-    const cy = gy + ROOM_HEAD + Math.round((gh - ROOM_HEAD - lineH) / 2), left = gx + Math.round((gw - rowW) / 2);
-    r.seats.forEach((s, j) => {
-      const x = left + rcw / 2 + j * (rcw + ROOM_GAP + 2 * cardPadX(rcw));
-      pos[s] = {x: Math.round(x), y: cy, side: 'l', cw: rcw, namePx, room: r.id};
-    });
+    const P = rp.panels[i], k = r.seats.length, step = rcw + ROOM_GAP + 2 * cardPadX(rcw), rowW = k * rcw + (k - 1) * (step - rcw);
+    const lineH = Math.round(Math.max(rp.lineH, Math.min(170, P.h - body))); // a panel with height to spare gives it to its line
+    const gh = Math.min(Math.round(P.h), body + lineH), gx = P.x, gy = P.y + Math.round((P.h - gh) / 2);
+    groups.push({id: r.id, name: r.name || r.id, x: gx, y: gy, w: P.w, h: gh, lineH});
+    const cy = gy + ROOM_HEAD + Math.round(1.3 * cardPad(rcw).y) + Math.round((rcw + label) / 2), left = gx + (P.w - rowW) / 2;
+    r.seats.forEach((s, j) => {pos[s] = {x: Math.round(left + rcw / 2 + j * step), y: cy, side: 'l', cw: rcw, namePx, room: r.id}});
   });
-  return {cw, ch: cw + cardLabel(cw).label, namePx: sq && sq.namePx || namePx, pos, mid: sq ? sq.mid : {x: 0, y: 0, w: 0, h: 0}, groups};
+  return {cw, ch: cw + cardLabel(cw).label, namePx: sq ? sq.namePx : namePx, pos, mid: sq ? sq.mid : {x: 0, y: 0, w: 0, h: 0}, groups};
 }
 const cardPadX = cw => cardPad(cw).x;
 
