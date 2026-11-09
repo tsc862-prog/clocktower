@@ -14,6 +14,19 @@ lamps burn when no one lit them, and someone among the neighbours is feeding the
 should not have. The first script is **The Stopped Hour**: seven neighbours, one night at a time, and a
 tower that will not strike twelve until the town has dealt with what is wrong.
 
+### The three rooms
+
+On most days the whole town talks in the Square and everyone hears. For a word out of earshot there are
+three places besides, of three sizes. A player says "take Bram to the Snug" and the table sees who went
+where; the words stay inside. The ids in code (`nook`, `parlour`, `backroom`, in `src/data/rooms.js`) were
+written first and stay; the names below are what the page and the Storyteller say.
+
+| Place | Id | Holds | Flavour |
+| --- | --- | --- | --- |
+| **the Snug** | `nook` | 2 | The bench behind the Wick and Candle's stove, where two people sit knee to knee and nobody else can hear. |
+| **the Vestry** | `parlour` | 3 | The cold little room off the Tower stair where the clock committee used to count the collection. |
+| **the Taproom** | `backroom` | 4 | The inn's low back room, with a long table and a door that sticks. |
+
 ## The teams
 
 Our words for the teams stay the generic ones.
@@ -154,7 +167,7 @@ maps onto them as follows; a public release would swap the right column for the 
 
 The Storyteller narrates plainly and a little dry, like a town clerk reading the minutes of a bad week.
 It says what happened and no more, and it is never cute. Thistlewick's own names (the Square, the Tower,
-Lamp Row) are used without comment, as if everyone already knew them.
+Lamp Row, the Snug, the Vestry, the Taproom) are used without comment, as if everyone already knew them.
 
 ### The voices
 
