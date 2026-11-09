@@ -111,6 +111,7 @@ async function lastTurn() {
   const env = await quietEnv({CLOCKTOWER_FAKE_SDK: 'scripts/fake-agent-sdk.mjs', AGENT_PROVIDER: 'anthropic', AGENT_MIN_GAP: '1'});
   const R = await startRelayProcess(['--play-only', '--runners', '--game', '--scripted', '--grace', '150', '--seed', '5'], env), {base} = R;
   try {
+    ok(!!(await until(async () => (await req(base, '/play/watch?since=0', {origin: PAGE})).phase === 'day', ms(60000, 30000), 100)), 'the scripted Storyteller carries the game to day 1 (the seat sleeps through the night)');
     const s = await req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 2}});
     ok(s.status === 200, 'the page starts a Claude seat on the fake Agent SDK');
     const v = await until(async () => {const r = await req(base, '/play/runner', {origin: PAGE}); const x = (r.runners || []).find(y => y.key === 'player:2'); return x && x.lastTurn ? x : null}, ms(30000, 15000));

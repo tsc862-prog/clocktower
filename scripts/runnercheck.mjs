@@ -179,7 +179,9 @@ async function sessions() {
   const turnCtx = t => [...t.matchAll(/\[turn \d+\][^\n]*\| ctx (\d+)k/g)].map(m => Number(m[1]));
   const sess = () => JSON.parse(readFileSync(sessFile, 'utf8'));
   const view = () => req(base, '/play/runner', {origin: PAGE}).then(r => (r.runners || []).find(x => x.key === 'player:1'));
-  const start = () => req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 1}});
+  // #125: a seat sleeps through the night, so a seat is started once the scripted Storyteller has carried the game to day (polled, not timed)
+  const toDay = () => until(async () => (await req(base, '/play/watch?since=0', {origin: PAGE})).phase === 'day', ms(60000, 30000), 100);
+  const start = async () => {ok(!!(await toDay()), 'the game is at day 1 before the seat starts'); return req(base, '/play/runner/start', {method: 'POST', origin: PAGE, body: {player: 1}})};
   const stopIt = async () => {await req(base, '/play/runner/stop', {method: 'POST', origin: PAGE, body: {player: 1}}); return until(async () => {const v = await view(); return v && v.state === 'stopped' ? v : null}, ms(15000, 8000))};
   // the log after text offset `from`, once it has n turn lines
   const turnsAfter = (from, n) => until(async () => {const t = text().slice(from); return turnCtx(t).length >= n ? t : null}, ms(40000, 20000));
