@@ -49,7 +49,8 @@ function settle(g, choices = {}, until = gm => gm.phase === 'day' && gm.pending?
     } else if (p.kind === 'choose') {
       const pick = choices[p.role]?.(g, p);
       api.answer(g, p.seat, pick !== undefined ? pick : p.count ? p.options.filter(x => x !== p.seat).slice(0, p.count) : p.options.includes(null) ? null : p.options.find(x => x !== p.seat));
-    } else break;
+    } else if (p.kind === 'thoughts') {for (const i of p.seats) api.think(g, i, '')}
+    else break;
   }
 }
 const talkRound = (g, tag) => {for (const s of g.seats) if (s.alive && !g.clock.nominationsOpen) api.say(g, s.index, `${s.name} speaks, ${tag}, day ${g.day} round ${g.clock.round}.`)};
@@ -78,6 +79,12 @@ const g = newGame({seed: 1, roles: ROLES});
   for (let i = 1; i < 7; i++) ok(!api.events(g, i).some(e => e.type === 'told' && e.what === 'washerwoman'), `${g.seats[i].name} never sees the Washerwoman's information`);
   const imp = api.view(g, 2).told.map(t => t.text).join(' ');
   ok(/Your minion is Corwin/.test(imp) && /bluff/.test(imp), `the demon is told its minion and its bluffs: "${imp.slice(0, 160)}"`);
+  ok(imp.includes('Keep your minion covered: never name their role or team.'), 'the demon is told to keep its minion covered (#108)');
+  const mi = g.seats.findIndex(x => x.name === 'Corwin'), mtold = api.view(g, mi).told.map(t => t.text).join(' ');
+  ok(/The demon is /.test(mtold) && mtold.includes('Agree with your demon, in a room by day, which good role each of you claims.'), `the minion is told to agree a cover with its demon (#108): "${mtold.slice(-160)}"`);
+  ok(g.seats.every((x, i) => i === 2 || i === mi || !api.events(g, i).some(e => /covered|Agree with your demon/.test(e.text || ''))), 'the cover words reach the demon and its minion alone');
+  const dawn1 = api.events(g, 0).find(e => e.type === 'dawn' && e.day === 1);
+  ok(dawn1 && dawn1.text === 'Day 1 breaks. The first night passes without a death, as it always does.', `day 1's dawn tells the quiet first night as the rule (#110): "${dawn1 && dawn1.text}"`);
   const bram = JSON.stringify(seen(g, 1));
   const others = g.seats.filter(s => s.index !== 1).map(s => g.script.roles.find(r => r.id === s.role));
   ok(others.every(r => !bram.includes(r.name) && !bram.includes(`"${r.id}"`)), "the Soldier's view, pending and events name no other seat's role");
@@ -358,6 +365,7 @@ function apiGame(seed) {
     if (p.seat === ST) {api.answer(gm, ST, sc(gm), `scripted ${p.kind}`); continue}
     if (p.kind === 'choose') {api.answer(gm, p.seat, sc(gm)); continue}
     if (p.kind === 'vote') {const v = sc(gm); for (const i of p.seats) (i % 2 ? api.vote : api.answer)(gm, i, v[i]); continue}
+    if (p.kind === 'thoughts') {const v = sc(gm); for (const i of p.seats) (i % 2 ? api.think : api.answer)(gm, i, v[i] ?? ''); continue}
     if (p.kind === 'nomination' && !gm.clock.nominationsOpen) {
       for (const s of gm.seats) if (s.alive && !gm.clock.nominationsOpen && !gm.clock.spoke.includes(s.index)) (s.index === 3 ? api.pass(gm, s.index) : api.say(gm, s.index, `${s.name} on day ${gm.day}, round ${gm.clock.round}.`));
       continue;
@@ -387,6 +395,98 @@ function countPlayerAnswers(gm) {
   let n = 0; const st = new Set(gm.log.filter(e => e.type === 'ruling').map(e => e.decision));
   for (let k = 0; k < gm.answers.length; k++) if (!st.has(k)) n++;
   return n;
+}
+
+section('the night thoughts (#111): the api');
+{
+  // Odette washerwoman, Bram soldier, Ines imp, Corwin poisoner, Thea butler, Fitch empath, Yusuf chef
+  const tg = newGame({seed: 1, roles: ROLES}), SECRET = 'Thoughtmark zq111x: I am sure Fitch lies.';
+  settle(tg, {poisoner: () => 6, butler: () => 0}, gm => gm.pending?.kind === 'thoughts');
+  const p = tg.pending;
+  ok(p && p.kind === 'thoughts' && p.seat === 'table' && JSON.stringify(p.seats) === '[0,1,2,3,4,5,6]' && tg.phase === 'night' && tg.night === 1, 'night 1 ends with the thoughts scene, every living seat asked');
+  const po = api.pendingFor(tg, 0);
+  ok(po && JSON.stringify(Object.keys(po)) === '["kind","question","mine","tonight"]' && po.kind === 'thoughts' && po.mine === null && /what are you thinking/.test(po.question), `a seat's pending: {kind, question, mine, tonight} (${JSON.stringify(po)})`);
+  ok(/^You woke as the Washerwoman\. One of .* is the /.test(po.tonight), `tonight: what Odette did and learned ("${po.tonight}")`);
+  ok(api.pendingFor(tg, 1).tonight === 'You slept.', `a seat that did not wake slept ("${api.pendingFor(tg, 1).tonight}")`);
+  ok(/^You woke as the Poisoner\. You chose Yusuf\./.test(api.pendingFor(tg, 3).tonight), `the Poisoner's own choice ("${api.pendingFor(tg, 3).tonight}")`);
+  ok(/Your minion is Corwin/.test(api.pendingFor(tg, 2).tonight) && !/Washerwoman/.test(api.pendingFor(tg, 2).tonight), `the demon's night, nothing of others' ("${api.pendingFor(tg, 2).tonight.slice(0, 120)}")`);
+  ok(api.pendingFor(tg, ST) === null && throws(() => api.answer(tg, ST, {0: 'x'}, 'a reason'), /Nothing waits on the Storyteller/), 'the Storyteller is not asked and cannot answer the scene');
+  ok([0, 1, 2, 3, 4, 5, 6].every(i => api.mustAct(tg, i) && api.canAct(tg, i)), 'every living seat must act (a runner is woken now)');
+  ok(/what are you thinking\? Answer with a sentence or two \(or nothing\); nobody at the table hears it\./.test(api.legalNow(tg, 0)) && !/watcher/i.test(api.legalNow(tg, 0)), `legalNow says it: "${api.legalNow(tg, 0)}"`);
+  ok(api.nightOrder(tg).every(x => x.status === 'done'), 'during the scene the night order reads done');
+  ok(throws(() => api.think(tg, 0, 42), /sentence or two of text/), 'a thought that is not text is refused');
+  const r0 = api.think(tg, 0, SECRET);
+  ok(r0.thought === SECRET && r0.waitingOn === 6 && api.pendingFor(tg, 0).mine === SECRET && !api.mustAct(tg, 0), 'a seat thinks once; its pending keeps its own text as mine, and it need not act again');
+  ok(throws(() => api.think(tg, 0, 'again'), /already/), 'a second thought the same night is refused');
+  const r1 = api.answer(tg, 1, '  ' + 'y'.repeat(1000));
+  ok(r1.cut === 400 && r1.thought.length === 400, 'answer() takes a thought too; a long one is cut to 400');
+  ok(!tg.log.some(e => e.type === 'thought'), 'nothing is logged until every seat has answered');
+  for (const i of [2, 3, 4, 5]) api.answer(tg, i, i === 4 ? 'Thea wonders.' : '');
+  ok(tg.pending.kind === 'thoughts' && api.pendingFor(tg, 6).mine === null, 'the scene waits for the last seat');
+  api.think(tg, 6, null);
+  const th = tg.log.filter(e => e.type === 'thought');
+  ok(tg.phase === 'day' && th.length === 3 && JSON.stringify(th.map(e => e.seat)) === '[0,1,4]' && th.every(e => e.audience === 'watcher' && e.night === 1 && e.day === 0), `the scene ends, three thoughts logged for the watcher, the empty ones not (${th.map(e => e.seat)})`);
+  const dawn = tg.log.find(e => e.type === 'dawn' && e.day === 1);
+  ok(th.every(e => e.id < dawn.id) && th.every(e => e.id > Math.max(...tg.log.filter(x => x.type === 'told' && x.night === 1).map(x => x.id))), 'the thoughts come after the night and before the dawn');
+  for (let i = 0; i < 7; i++) {
+    const all = JSON.stringify([api.events(tg, i, -1), api.view(tg, i), api.pendingFor(tg, i), api.notes(tg, i)]);
+    ok(!all.includes('zq111x') && !all.includes('yyyy') && !all.includes('Thea wonders') && !/"thought"/.test(all), `${tg.seats[i].name}: no thought in its events, view, pending or notes, its own included`);
+  }
+  const stAll = JSON.stringify([api.events(tg, ST, -1), api.grimoire(tg), api.rulings(tg), api.nightOrder(tg)]);
+  ok(!stAll.includes('zq111x') && !stAll.includes('Thea wonders'), "the Storyteller's events, grimoire, rulings and night order carry no thought");
+  const back = api.restore(JSON.parse(JSON.stringify(tg)));
+  ok(JSON.stringify(back.log) === JSON.stringify(tg.log), 'a plain copy restores to the same thoughts');
+  // night 2: the dead are not asked and cannot think
+  api.endDay(tg, 'the check ends day 1');
+  settle(tg, {poisoner: () => 6, imp: () => 5}, gm => gm.pending?.kind === 'thoughts');
+  ok(tg.night === 2 && !tg.seats[5].alive && !tg.pending.seats.includes(5) && api.pendingFor(tg, 5) === null, 'night 2: the dead Empath is not asked');
+  ok(throws(() => api.think(tg, 5, 'from beyond'), /Only the living/), 'a dead seat cannot think');
+}
+
+section('the night thoughts (#111): the backend');
+{
+  const sc = createScripted(1), SECRET = 'Backmark zq111y';
+  const quiet = (g, p) => p.count ? p.options.filter(x => x !== p.seat).slice(0, p.count) : p.options.includes(null) ? null : p.options.find(x => x !== p.seat);
+  const tools = [
+    {name: 'look', act: false, desc: 'look', args: {}, handler: (args, ctx) => ({ok: true, events: ctx.api.events(ctx.game, ctx.seat.index, -1), view: ctx.api.view(ctx.game, ctx.seat.index)})},
+    {name: 'pick', act: true, desc: 'pick', args: {}, handler: (args, ctx) => ({ok: true, ...ctx.api.answer(ctx.game, ctx.seat.index, quiet(ctx.game, ctx.game.pending))})},
+    {name: 'think', act: true, desc: 'think', args: {text: {type: 'string'}}, handler: (args, ctx) => ({ok: true, ...ctx.api.answer(ctx.game, ctx.seat.index, args.text)})},
+  ];
+  const sttools = [
+    {name: 'auto', act: true, desc: 'auto', args: {}, handler: (args, ctx) => ({ok: true, ...ctx.api.answer(ctx.game, ST, sc(ctx.game), 'the check answers')})},
+    {name: 'look', act: false, desc: 'look', args: {}, handler: (args, ctx) => ({ok: true, events: ctx.api.events(ctx.game, ST, -1), pending: ctx.api.pendingFor(ctx.game, ST)})},
+  ];
+  const logged = [], clipped = [];
+  const toThoughts = async be => {
+    for (let n = 0; n < 100 && be.game.pending && be.game.pending.kind !== 'thoughts' && be.game.phase !== 'day'; n++) {
+      const p = be.game.pending;
+      if (p.seat === ST) await be.storytellerCall('auto', {}); else await be.call(p.seat + 1, 'pick', {});
+    }
+  };
+  const be = gameBackend({seed: 1, players: tools, storyteller: sttools, onEvent: r => logged.push(r)});
+  be.setVoice({clip: (name, text) => {clipped.push({name, text}); return {id: 'c' + clipped.length, ms: 10}}});
+  be.attach({readyState: 1, send() {}, on() {}});
+  await toThoughts(be);
+  ok(be.game.pending?.kind === 'thoughts', 'with a think tool at the table, the backend waits on the seats for their thoughts');
+  const w = await be.call(1, 'pace', {realMs: 0, wake: 'now'});
+  ok(w.wake === 'now' && /what are you thinking/.test(w.why), `a seat is woken now for its thought (${w.why})`);
+  ok((await be.call(1, 'think', {text: SECRET})).ok, 'Odette thinks through her tool');
+  for (let i = 2; i <= 7; i++) await be.call(i, 'think', {text: i === 2 ? 'Bram ponders the dark.' : ''});
+  ok(be.game.phase === 'day', 'when every seat has thought, the dawn comes');
+  const ev = be.watch(-1).events.filter(e => e.type === 'thought');
+  ok(ev.length === 2 && ev[0].seat === 0 && ev[0].text === SECRET && ev[0].audience === 'watcher' && ev[0].night === 1 && ev[0].day === 0, `the watch body carries the thoughts (${JSON.stringify(ev[0])})`);
+  ok(logged.some(r => r.type === 'thought' && r.who === 'Odette' && r.text === SECRET && r.night === 1), 'the behavior log gets the thought, with the seat by name');
+  for (let i = 1; i <= 7; i++) ok(!JSON.stringify(await be.call(i, 'look', {})).includes('zq111y') && !(await be.call(i, 'pace', {brief: true})).brief.includes('zq111y'), `seat ${i}: no thought in its tools or header`);
+  const stl = JSON.stringify([await be.storytellerCall('look', {}), await be.storytellerCall('pace', {brief: true})]);
+  ok(!stl.includes('zq111y') && !stl.includes('Bram ponders'), "the Storyteller's tools and header carry no thought");
+  await new Promise(r => setTimeout(r, 400));
+  ok(clipped.some(c => c.name === 'Odette' && c.text === SECRET) && clipped.some(c => c.name === 'Bram' && /ponders/.test(c.text)), `a thought is spoken in its seat's voice (${clipped.filter(c => c.name !== 'Storyteller').map(c => c.name)})`);
+  be.close();
+  // a table without a think tool has no thought to give: the backend answers the scene empty and the night runs on
+  const be2 = gameBackend({seed: 1, players: tools.filter(t => t.name !== 'think'), storyteller: sttools});
+  await toThoughts(be2);
+  ok(be2.game.phase === 'day' && !be2.game.log.some(e => e.type === 'thought') && be2.game.actions.filter(a => a[0] === 'think').length === 7, 'without a think tool the scene is answered empty at once and logs nothing');
+  be2.close();
 }
 
 section('the backend');

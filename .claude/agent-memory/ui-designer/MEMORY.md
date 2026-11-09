@@ -85,3 +85,17 @@
 - Room's newest line (since dawn / rooms closing) shows in its panel (.room-line, arrow at speaker, .now when it is the stage line);
   card captions hidden for away cards while broken out. Cards slide via left/top transition. #stage[data-rooms=out].
 - Recorded game: ?fixture=rooms (day 2: evil pair in the Snug, one seat alone in the Vestry); uifixture frames carry places + room talk.
+
+## The page follows the voices (issue #103, 2026-11-09; not yet reviewed by the owner)
+- app.js keeps a ring of 64 live frames {seq, max event id}; pickShown(ring, {boundary: queue[0].id, now, shown}) picks the newest
+  frame below the first waiting line (cut at the boundary when the playing line came in the same push); never steps back.
+- Panels but agents, and the bar's phase/winner/rooms line, draw the shown frame; voice.feed always gets the live frame (fed first in
+  render). Live when Voice off, muted, blocked, recorded, or nothing waits. voice.state.behind -> note "; the page keeps pace".
+- Relay hold (backend.js) only delays soft/heartbeat wakes, per seat, 30 s cap; 'now' wakes (votes, nights) are never held.
+- #109 (PR #114): the playing line is the boundary until its own clip's play() promise resolves (item.started); tags do not count.
+
+## The night aloud (issue #111 part 4, 2026-11-09; not yet reviewed by the owner or lore)
+- Event read: {type:'thought', seat, night, day, text, audience:'watcher'}; seat-spoken kinds from spoken.js SEAT_SPOKEN (guarded, fallback say+thought).
+- voice.js nightSpoken(e, names, seats): wake/acted/told/death(night)/bounce prose in the ST voice, page's own /tts/say (no clip wait);
+  thought after tag "Name, thinking.". Night kinds sit outside QUEUE_CAP (never dropped). Night list (NIGHT_N 6) and talk use the prose.
+- Fixture: uifixture writes frames.night (night 2 + 3 hand-made thoughts); recorded frames win over fixtureMoments.

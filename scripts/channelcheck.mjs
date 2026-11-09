@@ -20,6 +20,8 @@
 // 3. Walls. A player's runner reaches no Storyteller route or tool (JSON, MCP, pace, claim); the Storyteller's runner no player
 //    tool, pace or seat; a runner that does not hold a seat gets nothing from it (call, MCP, pace, narrate, ready, turn line) and
 //    cannot release it.
+// 3b. Thoughts (#111). A seat's night thought, planted with a secret, reaches the watch body and the behavior log and no seat's tool,
+//    header or prompt, its own included, nor the Storyteller's.
 // 4. A whole game. A second relay (--game --seed 5, no scripted fallback) is played to its end by eight fake runners through plain
 //    JSON tool calls: the scripted answers of src/game/scripted.js (the sim's) turned into night_choice, nominate, pass, vote and
 //    the Storyteller's decide, with a line of talk from every seat in every speaking round. The winner must be the one
@@ -35,6 +37,7 @@ import {PLAYER_TOOLS} from '../src/data/player-tools.js';
 import {STORYTELLER_TOOLS} from '../src/data/storyteller-tools.js';
 import {systemFor} from '../src/data/prompts.js';
 import {simulate} from './headless.mjs';
+import {gameBackend} from '../src/game/backend.js';
 
 export const SEED = 5;
 let fails = 0;
@@ -105,6 +108,12 @@ export async function table({base, backend, seed = SEED, sayFor = null, reasonFo
       if (v) {must(await call(v.by, 'nominate', {target: name(v.target)}), `${name(v.by)}'s nomination`); return true}
       const i = living.find(x => !g.today.nominators.includes(x) && !c.passedNominating.includes(x));
       must(await call(i, 'pass'), `${name(i)}'s pass on nominating`);
+      return true;
+    }
+    if (p.kind === 'thoughts') { // the night's thoughts (#111): a backend with a think tool waits on them; one without answers them empty
+      const i = p.seats.find(x => api.pendingFor(g, x)?.mine === null);
+      if (PLAYER_TOOLS.some(t => t.name === 'think')) must(await call(i, 'think', {text: `${name(i)} keeps its own counsel tonight.`}), `${name(i)}'s thought`);
+      else api.think(g, i, '');
       return true;
     }
     throw new Error(`no fake runner answers a ${p.kind} decision`);
@@ -258,6 +267,43 @@ async function channels() {
   } finally {await R.close()}
 }
 
+// ---- 3b: a thought is the watcher's alone (#111) ----
+// A backend in this process with the real player and Storyteller tools, plus a stand-in think tool (the player's own comes with the
+// player-builder's PR) when the real table has none. One seat plants a secret in its thought at the end of night 1; every seat's
+// reading tools (sensible and hostile arguments), header and prompt, and the Storyteller's reading tools and header, must not carry
+// it; the watch body and the behavior log must (positive controls).
+async function thoughts() {
+  console.log('thoughts: a planted thought reaches the watcher alone');
+  const THINK = {name: 'think', act: true, desc: 'think', args: {text: {type: 'string'}}, handler: (args, ctx) => ({ok: true, ...ctx.api.answer(ctx.game, ctx.seat.index, args.text)})};
+  const players = PLAYER_TOOLS.some(t => t.name === 'think') ? PLAYER_TOOLS : [...PLAYER_TOOLS, THINK];
+  const logged = [], be = gameBackend({seed: SEED, players, onEvent: r => logged.push(r)});
+  const g = () => be.game, sc = createScripted(SEED), SECRET = 'Thinkmark zq111t';
+  try {
+    for (let n = 0; n < 200 && g().pending && g().pending.kind !== 'thoughts'; n++) {
+      const p = g().pending;
+      if (p.seat === api.ST) api.answer(g(), api.ST, sc(g()), 'the check answers'); else api.answer(g(), p.seat, sc(g()));
+    }
+    const p = g().pending;
+    if (!ok(p && p.kind === 'thoughts', `seed ${SEED} reaches the thoughts scene of night ${g().night}`)) return;
+    const A = p.seats[0], nm = i => g().seats[i].name;
+    for (const i of p.seats) ok((await be.call(i + 1, 'think', {text: i === A ? `Only the watcher may know: ${SECRET}.` : ''})).ok, `${nm(i)} thinks${i === A ? ' the secret' : ''}`);
+    ok(g().phase === 'day' && g().log.some(e => e.type === 'thought' && e.text.includes(SECRET)), 'the scene ends and the thought is logged');
+    const ARGS = [{}, {since: 0}, {since: -5}, {player: A + 1}, {seat: A}, {name: nm(A)}, {to: nm(A)}];
+    for (let i = 0; i < g().seats.length; i++) {
+      const out = [];
+      for (const t of players.filter(x => !x.act)) for (const a of ARGS) out.push(J(await be.call(i + 1, t.name, a)));
+      out.push(J(await be.call(i + 1, 'pace', {brief: true})), J(await be.call(i + 1, 'pace', {realMs: 0, wake: 'all'})), systemFor('player', nm(i)));
+      ok(!out.join(' | ').includes('zq111t'), `${nm(i)}${i === A ? ' (the thinker)' : ''}: no thought in its tools, header or prompt`);
+    }
+    const st = [];
+    for (const t of STORYTELLER_TOOLS.filter(x => !x.act)) for (const a of [{}, {since: 0}, {player: A + 1}]) st.push(J(await be.storytellerCall(t.name, a)));
+    st.push(J(await be.storytellerCall('pace', {brief: true})), systemFor('storyteller'));
+    ok(!st.join(' | ').includes('zq111t'), 'the Storyteller: no thought in its tools, header or prompt');
+    ok(be.watch(-1).events.some(e => e.type === 'thought' && e.audience === 'watcher' && e.text.includes(SECRET)), 'the watch body carries the thought (positive control)');
+    ok(logged.some(r => r.type === 'thought' && r.who === nm(A) && r.text.includes(SECRET)), 'the behavior log carries the thought (positive control)');
+  } finally {be.close()}
+}
+
 // ---- 4: a whole game through the relay ----
 async function wholeGame() {
   console.log(`a whole game: seed ${SEED} through the relay with eight fake runners`);
@@ -275,7 +321,7 @@ async function wholeGame() {
 async function main() {
   console.log('\nClocktower channel check: seats meet only inside the game\n');
   const t0 = Date.now();
-  await Promise.race([(async () => {await channels(); await wholeGame()})(), new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms(600000, 120000)).unref())]);
+  await Promise.race([(async () => {await channels(); await thoughts(); await wholeGame()})(), new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms(600000, 120000)).unref())]);
   console.log(fails ? `\n${fails} channel check(s) failed` : `\nchannel check: all ok (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   process.exit(fails ? 1 : 0);
 }

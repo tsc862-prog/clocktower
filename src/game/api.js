@@ -27,9 +27,14 @@
 // The rooms open with the day's talk and close when nominations open (or the day ends): everyone comes back to the Square.
 // The dead may go to rooms and talk there. The Storyteller hears neither whispers nor room talk; the watcher hears both.
 //
-// Everything the api keeps lives in the state (game.clock, game.ballot, game.notes, game.actions), and every call that
+// The night's thoughts (#111): at the end of every night the engine asks every living seat at once for a thought (pending kind
+// 'thoughts'). Each seat answers its own, like a vote (answer or think: a text, empty for none), into game.thinking; when every
+// seat has answered the engine gets {seat: text}. A thought is logged with audience 'watcher': no seat (its own included) and not
+// the Storyteller ever reads it through this api; the watcher's page and the behavior log do (src/game/backend.js).
+//
+// Everything the api keeps lives in the state (game.clock, game.ballot, game.thinking, game.notes, game.actions), and every call that
 // changes the game is recorded in game.actions, so restore(plainCopy) rebuilds the same live game.
-import {answer as engineAnswer, validate, isLive} from './engine.js';
+import {answer as engineAnswer, validate, isLive, thoughtText, THOUGHT_MAX} from './engine.js';
 import {newGame} from './state.js';
 import {roleOf, roleName, alive, log, livingNeighbours, grimoire as fullGrimoire} from './grimoire.js';
 import {ROOMS, SQUARE} from '../data/rooms.js';
@@ -74,6 +79,8 @@ function sync(game) {
   const p = game.pending;
   if (p && p.kind === 'vote') {if (!game.ballot || game.ballot.id !== p.id) game.ballot = {id: p.id, nominee: p.nominee, votes: {}}}
   else game.ballot = null;
+  if (p && p.kind === 'thoughts') {if (!game.thinking || game.thinking.id !== p.id) game.thinking = {id: p.id, texts: {}}}
+  else game.thinking = null;
 }
 
 // Whether today's clock runs: it is day and the engine has reached the day's table decision (not night, not a dawn).
@@ -141,7 +148,8 @@ export function legalNow(game, seat) {
     return 'Nothing waits on you now; you may narrate.';
   }
   const p = pendingFor(game, seat);
-  if (p && !p.standing && (p.kind !== 'vote' || p.mine === null)) return p.kind === 'vote' ? `A vote is open on ${nameOf(game, p.nominee)}: vote yes or no.`
+  if (p && !p.standing && (!ONCE_EACH.includes(p.kind) || p.mine === null)) return p.kind === 'vote' ? `A vote is open on ${nameOf(game, p.nominee)}: vote yes or no.`
+    : p.kind === 'thoughts' ? `${p.question} Answer with a sentence or two (or nothing); nobody at the table hears it.`
     : p.kind === 'nomination' ? 'Nominations are open: nominate a player or pass.' : `A choice waits on you: ${p.question}`;
   if (game.phase === 'night') return `It is night ${game.night}: nothing is asked of you now; wait for the day.`;
   if (game.phase === 'setup') return 'The Storyteller is setting up the game; wait.';
@@ -155,6 +163,8 @@ export function legalNow(game, seat) {
   return 'Nothing is asked of you now.';
 }
 const refuse = (game, seat, msg) => fail(`${msg} ${legalNow(game, seat)}`);
+// The everyone-at-once scenes: each seat answers once, and its pending stays (with `mine`) until the scene ends.
+const ONCE_EACH = ['vote', 'thoughts'];
 
 // ---- recording: every call that changes the game goes through act(), so restore() can replay it ----
 const ACTS = {}, IMPLS = {};
@@ -203,14 +213,24 @@ function todayView(game) {
   return {day: t.day, nominations, block: t.block ? {...t.block} : null, executed: t.executed ?? null};
 }
 
+// The evil team's first-night words: keep each other covered (#108).
+export const DEMON_COVER = 'Keep your minion covered: never name their role or team.';
+export const MINION_COVER = 'Agree with your demon, in a room by day, which good role each of you claims.';
+
+// The dawn as the table hears it. The demon never kills on the first night, so day 1's quiet is the rule, not news (#110).
+export function dawnText(game, e) {
+  if (e.deaths.length) return `Day ${e.day} breaks. ${list(game, e.deaths)} died in the night.`;
+  return e.night === 1 ? `Day ${e.day} breaks. The first night passes without a death, as it always does.` : `Day ${e.day} breaks. Nobody died in the night.`;
+}
+
 // What a seat was told, as a plain sentence.
 export function toldText(game, e) {
   const rn = id => roleName(game, id), v = e.info;
   switch (e.what) {
     case 'role': {const r = roleOf(game, e.role); return `You are the ${r.name} (${r.team}): ${r.ability}`}
     case 'minion-info': {const others = e.minions.filter(m => m !== e.seat);
-      return `The demon is ${list(game, e.demon)}.${others.length ? ` The other minion${others.length > 1 ? 's are' : ' is'} ${list(game, others)}.` : ''}`}
-    case 'demon-info': return `Your minion${e.minions.length === 1 ? ' is' : 's are'} ${list(game, e.minions) || 'nobody'}.${e.bluffs?.length ? ` Good roles not in play, to bluff with: ${e.bluffs.map(rn).join(', ')}.` : ''}`;
+      return `The demon is ${list(game, e.demon)}.${others.length ? ` The other minion${others.length > 1 ? 's are' : ' is'} ${list(game, others)}.` : ''} ${MINION_COVER}`}
+    case 'demon-info': return `Your minion${e.minions.length === 1 ? ' is' : 's are'} ${list(game, e.minions) || 'nobody'}.${e.bluffs?.length ? ` Good roles not in play, to bluff with: ${e.bluffs.map(rn).join(', ')}.` : ''}${e.minions.length ? ' ' + DEMON_COVER : ''}`;
     case 'became-demon': return `You are now the ${rn(e.role)}.`;
     case 'grimoire': return 'You see the grimoire: ' + e.grimoire.map(s => `${s.name} the ${rn(s.role)}${s.believed !== s.role ? ` (believes they are the ${rn(s.believed)})` : ''}${s.alive ? '' : ', dead'}${s.tokens.length ? ` [${s.tokens.map(t => t.token.replace(/-/g, ' ') + (t.value != null ? ': ' + (typeof t.value === 'string' ? rn(t.value) : t.value) : '') + (t.active === false ? ' (no effect)' : '')).join('; ')}]` : ''}`).join('. ') + '.';
   }
@@ -228,7 +248,7 @@ function project(game, e) {
   const base = {id: e.id, type: e.type, day: e.day, night: e.night}, n = i => nameOf(game, i);
   switch (e.type) {
     case 'night': return {...base, type: 'phase', what: 'night', text: `Night ${e.night} falls.`};
-    case 'dawn': return {...base, deaths: [...e.deaths], text: `Day ${e.day} breaks. ${e.deaths.length ? list(game, e.deaths) + (e.deaths.length > 1 ? ' died' : ' died') + ' in the night.' : 'Nobody died in the night.'}`};
+    case 'dawn': return {...base, deaths: [...e.deaths], text: dawnText(game, e)};
     case 'phase': return {...base, what: e.what, ...(e.round != null ? {round: e.round} : {}), text: e.text};
     case 'say': return {...base, seat: e.seat, text: e.text, ...(e.room != null ? {room: e.room} : {})};
     case 'move': return {...base, seats: [...e.seats], room: e.room, from: e.from ?? null, by: e.by ?? null, text: e.text};
@@ -281,6 +301,10 @@ export function pendingFor(game, seat) {
     return {kind: 'vote', nominee: p.nominee, nominator: p.nominator, seats: [...p.seats], voted: Object.keys(votes).map(Number), ballots: copy(votes), mine: votes[seat] ?? null,
       question: `${nameOf(game, p.nominator)} nominates ${nameOf(game, p.nominee)}: do you vote to execute?${s.alive ? '' : ' (You are dead: a yes spends your one ghost vote.)'}`};
   }
+  if (p.kind === 'thoughts' && p.seats.includes(seat)) {
+    const texts = game.thinking?.texts || {};
+    return {kind: 'thoughts', question: p.question, mine: seat in texts ? texts[seat] : null, tonight: tonightText(game, seat)};
+  }
   if (p.kind === 'nomination' && game.clock.nominationsOpen && s.alive && !game.today.nominators.includes(seat) && !game.clock.passedNominating.includes(seat)) {
     const targets = p.options.filter(o => o && o.by === seat).map(o => o.target);
     return {kind: 'nomination', targets, question: 'Nominations are open: nominate a player for execution, or pass.'};
@@ -294,7 +318,20 @@ export function pendingFor(game, seat) {
 // Whether the seat must act now (a pending it has not answered): what wakes a runner at once.
 export function mustAct(game, seat) {
   const p = pendingFor(game, seat);
-  return !!p && !p.standing && (p.kind !== 'vote' || p.mine === null);
+  return !!p && !p.standing && (!ONCE_EACH.includes(p.kind) || p.mine === null);
+}
+
+// What this seat did and learned tonight, from its own wake, its own choices and what it was told (never anything else): plain
+// sentences for the thoughts scene ("You woke as the Empath. 1 of your living neighbours (...) is evil."), or "You slept."
+export function tonightText(game, seat) {
+  const out = [], night = game.night, rn = id => roleName(game, id);
+  for (const e of game.log) {
+    if (e.phase !== 'night' || e.night !== night || e.seat !== seat) continue;
+    if (e.type === 'wake') out.push(`You woke as the ${rn(e.role)}.`);
+    else if (e.type === 'acted' && Number.isInteger(e.target)) out.push(e.target === seat ? 'You chose yourself.' : `You chose ${nameOf(game, e.target)}.`);
+    else if (e.type === 'told' && canSee(e.audience, seat)) out.push(e.what === 'role' ? `You learned you are the ${rn(e.role)}.` : e.what === 'grimoire' ? 'You saw the grimoire.' : toldText(game, e));
+  }
+  return out.length ? out.join(' ') : 'You slept.';
 }
 
 // Whether the seat has anything to do now (what a soft wake is for): a decision (mustAct), its say-or-pass in this round,
@@ -326,7 +363,7 @@ export function nextTurnText(game, seat) {
 export function events(game, seat, since = 0) {
   sync(game);
   const from = Number.isFinite(Number(since)) ? Number(since) : 0;
-  if (seat === ST) return game.log.filter(e => e.id > from && e.audience && e.type !== 'whisper' && !(e.type === 'say' && e.room != null)).map(e => {const {n: _n, ...rest} = e; return copy({...rest, ...(project(game, e)?.text ? {text: project(game, e).text} : {})})});
+  if (seat === ST) return game.log.filter(e => e.id > from && e.audience && e.audience !== 'watcher' && e.type !== 'whisper' && !(e.type === 'say' && e.room != null)).map(e => {const {n: _n, ...rest} = e; return copy({...rest, ...(project(game, e)?.text ? {text: project(game, e).text} : {})})});
   player(game, seat);
   const out = [];
   for (const e of game.log) {
@@ -535,6 +572,23 @@ function castVote(game, seat, yes) {
 
 export const vote = act('vote', (game, seat, yes) => {player(game, seat); return castVote(game, seat, yes)});
 
+// A seat's thought before dawn: a text (cut to THOUGHT_MAX), or empty/null for none. Once a night; the scene ends when every
+// living seat has answered. The thought reaches the watcher alone.
+function castThought(game, seat, text) {
+  const p = game.pending;
+  if (!p || p.kind !== 'thoughts') refuse(game, seat, 'Nobody is asked for a thought now.');
+  if (!p.seats.includes(seat)) refuse(game, seat, 'Only the living are asked for a thought before dawn.');
+  if (text != null && typeof text !== 'string') refuse(game, seat, 'A thought is a sentence or two of text, or nothing.');
+  const t = game.thinking;
+  if (seat in t.texts) refuse(game, seat, 'You have given your thought for tonight already.');
+  t.texts[seat] = thoughtText(text);
+  const waiting = p.seats.filter(i => !(i in t.texts));
+  if (!waiting.length) toEngine(game, Object.fromEntries(p.seats.map(i => [i, t.texts[i]])));
+  return {thought: t.texts[seat], waitingOn: waiting.length, ...(typeof text === 'string' && text.trim().length > THOUGHT_MAX ? {cut: THOUGHT_MAX} : {})};
+}
+
+export const think = act('think', (game, seat, text) => {player(game, seat); return castThought(game, seat, text)});
+
 export const note = act('note', (game, seat, text) => {
   if (seat !== ST) player(game, seat);
   if (typeof text !== 'string' || !text.trim()) fail('A note needs some text.');
@@ -546,7 +600,8 @@ export const note = act('note', (game, seat, text) => {
   return {notes: list.length};
 });
 
-// A seat answers its own pending: a night or day choice, its vote, or the nomination round (a seat index, or null to pass).
+// A seat answers its own pending: a night or day choice, its vote, its thought before dawn (a text), or the nomination round
+// (a seat index, or null to pass).
 // The Storyteller answers its decisions with a reason, logged as a ruling.
 export const answer = act('answer', (game, seat, value, reason) => {
   const p = game.pending;
@@ -561,6 +616,7 @@ export const answer = act('answer', (game, seat, value, reason) => {
   }
   const s = player(game, seat);
   if (p && p.kind === 'vote' && p.seats.includes(seat)) return castVote(game, seat, value);
+  if (p && p.kind === 'thoughts') return castThought(game, seat, value);
   if (pendingFor(game, seat)?.standing) return IMPLS.dayAction(game, seat, value);
   if (p && p.kind === 'nomination' && game.phase === 'day' && game.clock.nominationsOpen && s.alive) {
     if (value === null || value === undefined) return IMPLS.pass(game, seat);
@@ -589,7 +645,7 @@ export function grimoire(game) {
 export function nightOrder(game) {
   const night = game.phase === 'night' ? game.night : game.night + 1;
   const order = night === 1 ? game.script.firstNight : game.script.otherNights;
-  const cur = game.phase === 'night' ? order.indexOf(game.step) : -1;
+  const cur = game.phase !== 'night' ? -1 : game.step === 'thoughts' ? order.length : order.indexOf(game.step); // the thoughts scene: the order is done
   const woke = game.log.filter(e => e.type === 'wake' && e.night === night && e.phase === 'night');
   const out = [];
   order.forEach((id, k) => {
@@ -653,9 +709,9 @@ export const endDay = act('endDay', (game, reason) => {
 });
 
 // ---- what a seat's tool handler gets ----
-export const PLAYER_FUNCTIONS = ['view', 'pendingFor', 'answer', 'say', 'whisper', 'pass', 'nominate', 'vote', 'events', 'note', 'notes', 'legalNow', 'mustAct', 'canAct', 'nextTurnText', 'dayActionFor', 'dayAction', 'where', 'go', 'invite', 'leave'];
+export const PLAYER_FUNCTIONS = ['view', 'pendingFor', 'answer', 'say', 'whisper', 'pass', 'nominate', 'vote', 'think', 'events', 'note', 'notes', 'legalNow', 'mustAct', 'canAct', 'nextTurnText', 'dayActionFor', 'dayAction', 'where', 'go', 'invite', 'leave'];
 export const STORYTELLER_FUNCTIONS = ['grimoire', 'nightOrder', 'narrate', 'openNominations', 'closeVote', 'endDay', 'rulings'];
-const ALL = {view, pendingFor, answer, say, whisper, pass, nominate, vote, events, note, notes, legalNow, mustAct, canAct, nextTurnText, dayActionFor, dayAction, where, go, invite, leave, grimoire, nightOrder, narrate, openNominations, closeVote, endDay, rulings, toldText};
+const ALL = {view, pendingFor, answer, say, whisper, pass, nominate, vote, think, events, note, notes, legalNow, mustAct, canAct, nextTurnText, dayActionFor, dayAction, where, go, invite, leave, grimoire, nightOrder, narrate, openNominations, closeVote, endDay, rulings, toldText};
 
 // The api bound to one seat: a player's handler may name only its own seat and has no Storyteller function; the
 // Storyteller may read any seat's view and pending but never acts for a player or reads its notes or whispers.

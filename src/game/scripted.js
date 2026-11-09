@@ -121,7 +121,13 @@ const KINDS = {
     }
     return out;
   },
+  // the night's thoughts (#111): a scripted seat has none, so the sim's play and transcript stay as they were
+  thoughts: () => ({}),
 };
+
+// A test-only answer for the thoughts scene (#111): every asked seat gives a short canned thought, so the scene's logging can be
+// tested. The sim's scripted seats give none (KINDS.thoughts).
+export const cannedThoughts = (state, p = state.pending) => Object.fromEntries(p.seats.map(i => [i, `${state.seats[i].name} thinks it over on night ${state.night}.`]));
 
 export const SCRIPTED_KINDS = Object.keys(KINDS);
 export const coversAllKinds = () => PENDING_KINDS.every(k => k in KINDS);

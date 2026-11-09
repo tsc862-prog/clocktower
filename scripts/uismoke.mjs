@@ -24,6 +24,11 @@
 //   - keeping time (#50): the relay's clip played when the event or the socket brings one, the page's own clip after a second without;
 //     whispers on the page's own path; POST /play/heard {last, voice} on each clip end, each skip and the 20 s tick, voice false at once
 //     on mute and off, nothing posted while the voice is off; the "keeping time" mark while the page reports
+//   - following the voices (#103): with lines waiting, a move, a vote's result and the talk wait until they are read; hands land at
+//     once; the line playing shows only once its own clip has begun, not while it is made or its name tag plays (#109); Mute and Voice off show the live game; the recorded game is unaffected; the pick of the shown frame on a hand-made ring
+//   - the night aloud (#111): the night's prose (nightSpoken) for each kind; told at once in the Storyteller's voice on the page's own
+//     clip; a thought after its tag in its seat's voice, its card lit with an italic caption; nothing dropped at night; Voice off
+//     speaks nothing and still lists the night; the recorded night (?fixture=night) with its hand-made thoughts
 //   - rooms (#28): a line said in a room carries its place, a move is a one-line mark; in the square, a seat away carries its room's
 //     name, the rooms show as discs off the table with their occupants, one line says who is where; all of it goes when the rooms close
 //   - the People view (#77): the default, the Table view one click away and remembered; seven cards in seat order with the role in a
@@ -511,7 +516,7 @@ console.log('voices');
   ok(rest.some(e => e.type === 'whisper'), 'the recorded game has whispers after this point');
   const before = vr.says.length;
   push(va, E, day2.at(-1).id); await settle();
-  ok(va.voice.state.queue.length <= VO.QUEUE_CAP && va.voice.state.dropped > 0, `a burst of ${rest.length} entries leaves at most ${VO.QUEUE_CAP} lines waiting (${va.voice.state.dropped} dropped)`);
+  {const dayQ = va.voice.state.queue.filter(x => x.kind !== 'night' && x.kind !== 'thought'); ok(dayQ.length <= VO.QUEUE_CAP && va.voice.state.dropped > 0, `a burst of ${rest.length} entries leaves at most ${VO.QUEUE_CAP} of the day's lines waiting (${va.voice.state.dropped} dropped; the night's ${va.voice.state.queue.length - dayQ.length} told lines are kept)`)}
   ok(vr.says.slice(before).every(b => !rest.some(e => e.type === 'whisper' && e.text === b.text)), 'whispers are not read unless asked');
   // skip and mute
   const playing = va.voice.state.now;
@@ -685,6 +690,230 @@ console.log('voices');
     $('voice-names').checked = false; $('voice-names').dispatch('change');
     ok(localStorage.getItem(VO.NAMES_KEY) === 'off' && !lp.voice.state.names, 'the names choice is remembered');
     localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
+  }
+
+  // ---- the page follows the voices (#103): what is drawn is what has been said ----
+  console.log('voices: the page follows the voices');
+  {
+    const {pickShown, FRAME_RING} = await import('../src/ui/app.js');
+    // the pick on a hand-made ring: frames seq 1..4 carrying events up to 10, 12, 15, 20
+    const ring = [{seq: 1, max: 10}, {seq: 2, max: 12}, {seq: 3, max: 15}, {seq: 4, max: 20}];
+    ok(pickShown(ring, {boundary: null}) === null, 'the pick: nothing waiting, the live frame');
+    ok(JSON.stringify(pickShown(ring, {boundary: 15, now: 11})) === '{"seq":2,"trim":null}', 'the pick: the newest frame below the first waiting line');
+    ok(JSON.stringify(pickShown(ring, {boundary: 14, now: 13})) === '{"seq":3,"trim":14}', 'the pick: the line playing came with the waiting one, so its frame is cut at the waiting line');
+    ok(JSON.stringify(pickShown(ring, {boundary: 13, now: 11, shown: {seq: 3, trim: null}})) === '{"seq":3,"trim":null}', 'the pick never steps back from what is shown');
+    ok(JSON.stringify(pickShown(ring, {boundary: 16, now: 13, shown: {seq: 2, trim: null}})) === '{"seq":3,"trim":null}', 'the pick moves forward as the lines are heard');
+    ok(FRAME_RING >= 32, `the page keeps the last ${FRAME_RING} frames`);
+
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY);
+    const fr = voiceRelay(), fa = fakeAudio();
+    const fp = livePage(fr, fa); // names tick off: one clip per line
+    fr.watch = T; await fp.onSocketOpen(); await settle();
+    $('voice-toggle').click(); await settle();
+    const L = T.last, n = T.grimoire.seats.map(s => s.name), ev = (i, o) => ({id: L + i, day: T.day, night: T.night, ...o});
+    const send = async (events, extra = {}) => {fp.onSocket({type: 'watch', seed: T.seed, last: events.length ? events.at(-1).id : fp.state.watch.last, events, clock: T.clock, pending: T.pending, ballot: T.ballot, phase: T.phase, day: T.day, night: T.night, winner: T.winner, places: fp.state.watch.places, ...extra}); await settle()};
+    const talkHas = id => !!document.querySelector(`#talk .line[data-key="e${id}"]`);
+    const stage = () => document.querySelector('#stage');
+    const away = {square: [2, 3, 4, 5, 6], rooms: [{id: 'nook', name: 'the Snug', size: 2, seats: [0, 1], free: 0}, ...T.places.rooms.slice(1)], open: true};
+    await send([ev(1, {type: 'say', seat: 2, text: 'First, at the Square.'})]);
+    ok(fp.voice.state.now && fp.voice.state.now.id === L + 1 && talkHas(L + 1), 'a line that plays at once is on the page at once');
+    await send([ev(2, {type: 'say', seat: 3, text: 'Second, still waiting.'})]);
+    await send([ev(3, {type: 'move', seats: [0, 1], room: 'nook', text: `${n[0]} and ${n[1]} went to the Snug.`})], {places: away});
+    ok(fp.state.watch.places.rooms[0].seats.length === 2 && fp.voice.state.queue.length === 2, 'the live frame has the move; two lines wait for the voice');
+    ok(stage().dataset.rooms === '' && !document.querySelector('#stage .card.away'), 'the move not yet said: the stage keeps everyone at the Square');
+    ok(!talkHas(L + 2) && !talkHas(L + 3) && !document.querySelector('#square .seat.away'), 'the talk and the square wait for the voice too');
+    ok(/keeps pace/.test($('voice-note').textContent) && /keeps pace/.test($('voice-note').title), `the voice bar says the page keeps pace (${$('voice-note').textContent})`);
+    fa.end(); await settle();
+    ok(fp.voice.state.now.id === L + 2 && talkHas(L + 2) && !talkHas(L + 3) && stage().dataset.rooms === '', 'the second line plays: it shows, the move still waits');
+    fa.end(); await settle();
+    ok(fp.voice.state.now.id === L + 3 && stage().dataset.rooms === 'out' && talkHas(L + 3), 'the move is read: the stage breaks out into the rooms as it is said');
+    ok(!/keeps pace/.test($('voice-note').textContent), 'nothing waits: the page is live again and the hint goes');
+    fa.end(); await settle();
+
+    // mute: the live frame at once
+    await send([ev(4, {type: 'say', seat: 4, text: 'Third.'})]);
+    await send([ev(5, {type: 'say', seat: 5, text: 'Fourth, waiting.'})]);
+    ok(!talkHas(L + 5), 'a waiting line is not shown');
+    $('voice-mute').click(); await settle();
+    ok(talkHas(L + 5), 'Mute: the page shows the live game at once');
+    $('voice-mute').click(); await settle();
+    // voice off: always live
+    $('voice-toggle').click(); await settle();
+    await send([ev(6, {type: 'say', seat: 6, text: 'Fifth.'})]);
+    await send([ev(7, {type: 'say', seat: 2, text: 'Sixth.'})]);
+    ok(!fp.voice.state.on && talkHas(L + 6) && talkHas(L + 7), 'Voice off: every line shows as it arrives');
+    fp.voice.stop();
+
+    // a vote: hands land at once, the result waits for its reading
+    localStorage.removeItem(VO.VOICE_KEY);
+    const gr = voiceRelay(), ga = fakeAudio();
+    const gp = livePage(gr, ga);
+    const V0 = {...V, ballot: {...V.ballot, votes: {}}};
+    gr.watch = V0; await gp.onSocketOpen(); await settle();
+    $('voice-toggle').click(); await settle();
+    const M = V.last, vsend = async (events, extra = {}) => {gp.onSocket({type: 'watch', seed: V.seed, last: events.length ? events.at(-1).id : gp.state.watch.last, events, clock: V.clock, pending: V.pending, ballot: gp.state.watch.ballot, phase: V.phase, day: V.day, night: V.night, winner: null, ...extra}); await settle()};
+    const handsUp = () => document.querySelectorAll('#stage .hand-mark.up').length;
+    await vsend([{id: M + 1, day: V.day, night: V.night, phase: 'day', type: 'narration', text: 'The hands begin to rise.'}]);
+    ok(gp.voice.state.now && gp.voice.state.now.id === M + 1, 'a line plays');
+    await vsend([], {ballot: {...V.ballot, votes: {1: true}}});
+    ok(handsUp() === 1, 'a hand landing with nothing waiting shows at once');
+    const result = E.events.find(e => e.type === 'vote');
+    await vsend([{...result, id: M + 2}], {ballot: null, pending: null});
+    ok(gp.voice.state.queue.length === 1 && gp.voice.state.queue[0].id === M + 2, 'the result waits behind the line playing');
+    ok(!document.querySelector('#stage .card.flash') && !document.querySelector('#stage .result:not(.block)') && handsUp() === 1, 'the result not yet read: no tally flash, the hands as they were');
+    ga.end(); await settle();
+    ok(gp.voice.state.now && gp.voice.state.now.id === M + 2 && !!document.querySelector('#stage .card.flash'), 'the result is read: it flashes as it is heard');
+    gp.voice.stop();
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
+
+    // the picture waits for the clip's own sound (#109): not while the clip is made and fetched, nor while its name tag plays
+    localStorage.removeItem(VO.VOICE_KEY);
+    const holdAudio = () => {const a = fakeAudio(); a.held = [];
+      a.play = function () {this.paused = false; this.plays.push(this.src); return new Promise(r => this.held.push(r))};
+      a.start = function () {const h = this.held; this.held = []; for (const r of h) r()}; return a};
+    const hr = voiceRelay(), ha = holdAudio();
+    const hp = livePage(hr, ha);
+    hr.watch = T; await hp.onSocketOpen(); await settle();
+    $('voice-toggle').click(); await settle(); ha.start(); await settle();
+    const hsend = async (events, extra = {}) => {hp.onSocket({type: 'watch', seed: T.seed, last: events.at(-1).id, events, clock: T.clock, pending: T.pending, ballot: T.ballot, phase: T.phase, day: T.day, night: T.night, winner: T.winner, places: hp.state.watch.places, ...extra}); await settle()};
+    await hsend([ev(1, {type: 'move', seats: [0, 1], room: 'nook', text: `${n[0]} and ${n[1]} went to the Snug.`})], {places: away});
+    ok(hp.voice.state.now && hp.voice.state.now.id === L + 1 && hp.voice.state.queue.length === 0 && !hp.voice.state.now.started, 'a move behind nothing: its clip is asked for and not yet begun');
+    ok(stage().dataset.rooms === '' && !document.querySelector('#stage .card.away') && !talkHas(L + 1), "the clip not yet begun: everyone stays at the Square, the talk waits");
+    ha.start(); await settle();
+    ok(hp.voice.state.now.started && stage().dataset.rooms === 'out' && talkHas(L + 1), "the move's own clip begins: the stage breaks out as it is heard");
+    ha.end(); await settle();
+    // a vote's result behind nothing
+    const flashed = () => !!document.querySelector('#stage .card.flash');
+    await hsend([{...result, id: L + 2, day: T.day}], {ballot: null, pending: null, places: hp.state.watch.places});
+    ok(hp.voice.state.now && hp.voice.state.now.id === L + 2 && !hp.voice.state.now.started && !flashed() && !talkHas(L + 2), "a vote's result behind nothing: no flash while its clip is made");
+    ha.start(); await settle();
+    ok(flashed() && talkHas(L + 2), 'the result flashes as its own clip begins');
+    ha.end(); await settle();
+    // the name tag first: the seat's caption comes with the line's own clip, not the tag's
+    $('voice-names').checked = true; $('voice-names').dispatch('change');
+    await hsend([ev(3, {type: 'say', seat: 4, text: 'Hear me out.'})], {places: hp.state.watch.places});
+    const cap = () => {const c = document.querySelector('#stage .card[data-seat="4"]'); return c && c.querySelector('.cap-text') ? c.querySelector('.cap-text').textContent : ''};
+    ha.start(); await settle(); // the tag begins
+    ok(hp.voice.state.now.id === L + 3 && !hp.voice.state.now.started && hr.says.some(x => x.text === n[4] + '.') && cap() !== 'Hear me out.' && !talkHas(L + 3), 'while the name tag plays the line is not yet shown');
+    ha.end(); await settle(); // the tag ends, the line's clip is asked to play
+    ok(!hp.voice.state.now.started && cap() !== 'Hear me out.', 'the line asked to play but not begun: still not shown');
+    ha.start(); await settle();
+    ok(hp.voice.state.now.started && cap() === 'Hear me out.' && document.querySelector('#stage .card[data-seat="4"]').classList.contains('voicing') && talkHas(L + 3), "the line's own clip begins: its caption and its speaker light");
+    ha.end(); await settle();
+    hp.voice.stop();
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
+
+    // the recorded game is drawn as recorded
+    install(HTML);
+    const rp = createApp({client: relayClient({base: BASE, fetchImpl: voiceRelay().fetch}), fixture: GAME, runnersFixture: RUN, frame: 'rooms', audio: fakeAudio(), voiceFile: async () => null});
+    await settle();
+    ok(document.querySelector('#stage').dataset.rooms === 'out' && rp.state.source === 'recorded', 'the recorded game (rooms) is unaffected: the rooms are out');
+  }
+
+  // ---- the night aloud (#111): the night told in the Storyteller's voice, each seat's thought in its own ----
+  console.log('voices: the night aloud');
+  {
+    const {NIGHT_N} = await import('../src/ui/stage.js');
+    const {roleName} = await import('../src/ui/model.js');
+    const vname = name => {const m = SEATV[name]; return typeof m === 'string' ? m : m.voice};
+    const NF = GAME.frames.night, nn = NF.grimoire.seats.map(s => s.name), NS = NF.grimoire.seats;
+    const at = o => ({phase: 'night', night: 2, day: 1, ...o});
+    const P = (e, seats = NS) => VO.nightSpoken(at(e), nn, seats);
+    const drunkSeat = NS.find(s => s.role === 'drunk');
+    ok(P({type: 'wake', seat: 6, role: 'soldier'}) === `The Storyteller wakes ${nn[6]}, the Soldier.`, `wake: "${P({type: 'wake', seat: 6, role: 'soldier'})}"`);
+    ok(P({type: 'wake', seat: drunkSeat.seat, role: drunkSeat.believed}) === `The Storyteller wakes ${nn[drunkSeat.seat]}, the ${roleName(drunkSeat.believed)}, who is truly the Drunk.`,
+      `wake, the Drunk: "${P({type: 'wake', seat: drunkSeat.seat, role: drunkSeat.believed})}"`);
+    ok(P({type: 'acted', seat: 0, role: 'poisoner', target: 1}) === `${nn[0]} poisons ${nn[1]}.` && P({type: 'acted', seat: 4, role: 'monk', target: 3}) === `${nn[4]} guards ${nn[3]}.`,
+      `acted, a verb that names the role: "${P({type: 'acted', seat: 0, role: 'poisoner', target: 1})}" / "${P({type: 'acted', seat: 4, role: 'monk', target: 3})}"`);
+    ok(P({type: 'acted', seat: 1, role: 'imp', target: 4}) === `${nn[1]}, the Imp, chooses ${nn[4]}.`, `acted, the demon: "${P({type: 'acted', seat: 1, role: 'imp', target: 4})}"`);
+    ok(P({type: 'acted', seat: 5, role: 'butler', target: 1}) === `${nn[5]}, the Butler, picks ${nn[1]} as master.`, `acted, the Butler: "${P({type: 'acted', seat: 5, role: 'butler', target: 1})}"`);
+    ok(P({type: 'acted', seat: 3, role: 'fortune-teller', targets: [0, 6]}) === `${nn[3]}, the Fortune Teller, checks ${nn[0]} and ${nn[6]}.` && P({type: 'acted', seat: 3, role: 'empath', target: null}) === `${nn[3]}, the Empath, picks nobody.`,
+      `acted, two targets and a role with no verb: "${P({type: 'acted', seat: 3, role: 'fortune-teller', targets: [0, 6]})}" / "${P({type: 'acted', seat: 3, role: 'empath', target: null})}"`);
+    ok(P({type: 'told', seat: 3, text: 'No: neither Odette nor Yusuf is the demon.'}) === `The Storyteller tells ${nn[3]}: No: neither Odette nor Yusuf is the demon.`, 'told: the Storyteller tells the seat, in its own words');
+    ok(P({type: 'death', seat: 2, text: 'Ines dies.'}) === `${nn[2]} dies.` && P({type: 'bounce', from: 4, to: 3}) === `The kill passes from ${nn[4]} to ${nn[3]}.`, 'a death at night and a bounced kill');
+    ok(P({type: 'thought', seat: 0, text: 'Quiet tonight.'}) === `${nn[0]} thinks: Quiet tonight.`, 'a thought, in the night list: "Name thinks: ..."');
+    ok(VO.nightSpoken({type: 'death', phase: 'day', seat: 2}, nn) === null && VO.nightSpoken({type: 'told', phase: 'setup', seat: 0, text: 'You are the Baron.'}, nn) === null && VO.nightSpoken({type: 'ruling', phase: 'night'}, nn) === null && VO.nightSpoken({type: 'night', phase: 'night', text: 'Night 2 falls.'}, nn) === null,
+      "a day death, a role told at setup, a ruling and nightfall are not the night's prose");
+    const th = VO.spokenLine({id: 9, type: 'thought', seat: 4, text: 'Hm.'});
+    ok(th && th.speaker === 4 && th.kind === 'thought', 'a thought is a seat-spoken line: in its own voice');
+
+    // the live page: voice on, names on, the relay makes clips for the seats' lines (not for the night's prose)
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
+    const nr = voiceRelay({clipsOnSay: true}), na = fakeAudio();
+    install(HTML);
+    const np = createApp({client: relayClient({base: BASE, fetchImpl: nr.fetch}), refreshMs: null, audio: na, voiceFile: async () => null, clipWait: 600});
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const N0 = {...NF, events: NF.events.filter(e => e.id <= 54), last: 54};
+    nr.watch = N0; await np.onSocketOpen(); await settle();
+    $('voice-toggle').click(); await settle();
+    const nsend = async events => {np.onSocket({type: 'watch', seed: NF.seed, last: events.at(-1).id, events, clock: null, pending: null, ballot: null, phase: 'night', day: NF.day, night: NF.night, winner: null}); await settle()};
+    const told = NF.events.filter(e => e.id > 54 && e.id <= 60), prose = told.map(e => VO.nightSpoken(e, nn, NS)).filter(Boolean);
+    const s0 = nr.says.length;
+    await nsend(told);
+    ok(nr.says.length > s0 && nr.says[s0].text === prose[0] && nr.says[s0].voice === 'v_st', `the night is told at once, in the Storyteller's voice, no clip waited for ("${nr.says[s0] && nr.says[s0].text}")`);
+    ok(np.voice.state.now && np.voice.state.now.via === 'say' && np.voice.state.now.kind === 'night', "the night's prose is the page's own clip");
+    const heardProse = [nr.says[s0].text];
+    for (let i = 1; i < prose.length; i++) {na.end(); await settle(); heardProse.push(np.voice.state.now && np.voice.state.now.text)}
+    ok(JSON.stringify(heardProse) === JSON.stringify(prose), `the night told in order: ${prose.map(t => '"' + t + '"').join(' / ')}`);
+    ok(prose.some(t => t === `${nn[2]} dies.`), 'a death at night is spoken as it happens');
+    {const st = document.querySelector('#stage .stage-st'); ok(st.classList.contains('speaking') && st.querySelector('.st-line').textContent === prose.at(-1), "the Storyteller's card speaks the night's line")}
+    na.end(); await settle();
+
+    // a thought: the tag "Name, thinking.", then the thought in the seat's voice, from the relay's clip
+    const T1 = {id: 61, phase: 'night', night: NF.night, day: NF.day, type: 'thought', seat: 4, text: 'I keep counting the empty chairs.', audience: 'watcher'};
+    const s1 = nr.says.length;
+    await nsend([T1]);
+    ok(nr.says.slice(s1).some(x => x.text === `${nn[4]}, thinking.` && x.voice === 'v_st'), `the name tag: "${nn[4]}, thinking." in the Storyteller's voice`);
+    np.onSocket({type: 'clip', id: 61, clip: {id: 'c'.repeat(24), ms: 300}}); await settle();
+    na.end(); await settle(); // the tag ends
+    ok(na.plays.at(-1) === BASE + VOICE.clip + '?id=' + 'c'.repeat(24) && np.voice.state.now.via === 'clip', "then the thought itself, from the relay's clip");
+    {const c = document.querySelector('#stage .card[data-seat="4"]'), cap = c.querySelector('.caption.thought .cap-text');
+      ok(c.classList.contains('speaking') && c.classList.contains('thinking') && c.classList.contains('voicing') && cap && cap.textContent === T1.text, 'the thinking card lights with its thought as a caption in the thinking style');
+      ok(!document.querySelector('#stage .stage-st').classList.contains('speaking'), "the Storyteller's card is not the speaker while a seat thinks")}
+    na.end(); await settle();
+    // without the relay's clip: the page's own, in the seat's voice
+    const T2 = {...T1, id: 62, seat: 6, text: 'Tomorrow I say less.'};
+    const s2 = nr.says.length;
+    await nsend([T2]); na.end(); await sleep(700); await settle();
+    ok(nr.says.slice(s2).some(x => x.text === T2.text && x.voice === vname(nn[6])),
+      `no clip within the wait: the thought is asked of /tts/say in ${nn[6]}'s voice`);
+    na.end(); await settle();
+    {const l = document.querySelectorAll('#stage .st-night .nl').map(x => x.textContent);
+      ok(l.length <= NIGHT_N && l.includes(`${nn[6]} thinks: ${T2.text}`) && l.some(t => t.startsWith('The Storyteller ')), `the night's list in the same prose (${l.length} lines)`)}
+    ok(!!document.querySelector('#talk .line.thought') && /thinks, unheard/.test(document.querySelector('#talk .line.thought').textContent), 'the talk lists the thoughts with the night, marked as the watcher\'s alone');
+
+    // seven thoughts and the night's prose in one push: none dropped
+    const d0 = np.voice.state.dropped;
+    const burst = [...[0, 1, 3, 4, 6].map((s, i) => ({id: 63 + i, phase: 'night', night: NF.night, day: NF.day, type: 'thought', seat: s, text: `Thought ${i + 1}.`, audience: 'watcher'})),
+      {id: 68, phase: 'night', night: NF.night, day: NF.day, type: 'wake', seat: 3, role: 'fortune-teller'}, {id: 69, phase: 'night', night: NF.night, day: NF.day, type: 'told', seat: 3, text: 'Yes.'},
+      {id: 70, phase: 'night', night: NF.night, day: NF.day, type: 'thought', seat: 2, text: 'Thought six.'}, {id: 71, phase: 'night', night: NF.night, day: NF.day, type: 'thought', seat: 5, text: 'Thought seven.'}];
+    await nsend(burst);
+    const q = np.voice.state, inLine = [q.now, ...q.queue].filter(Boolean).map(x => x.id);
+    ok(q.dropped === d0 && burst.every(e => inLine.includes(e.id)), `nothing is dropped at night: ${burst.length} lines wait to be read (cap ${VO.QUEUE_CAP} is the day's)`);
+    np.voice.stop();
+    localStorage.removeItem(VO.VOICE_KEY); localStorage.removeItem(VO.WHISPER_KEY); localStorage.removeItem(VO.NAMES_KEY);
+
+    // voice off: nothing spoken; the night view still lists the prose and the newest thought lights its card
+    const or = voiceRelay(), oa = fakeAudio();
+    const op = livePage(or, oa);
+    or.watch = N0; await op.onSocketOpen(); await settle();
+    op.onSocket({type: 'watch', seed: NF.seed, last: 63, events: NF.events.filter(e => e.id > 54), clock: null, pending: null, ballot: null, phase: 'night', day: NF.day, night: NF.night, winner: null}); await settle();
+    {const l = document.querySelectorAll('#stage .st-night .nl').map(x => x.textContent), lastT = NF.events.at(-1);
+      ok(or.says.length === 0 && oa.plays.length === 0, 'Voice off: nothing is spoken at night');
+      ok(l.some(t => t.startsWith('The Storyteller tells ')) && l.includes(`${nn[lastT.seat]} thinks: ${lastT.text}`), `Voice off: the night view lists the night in prose (${l.join(' | ')})`);
+      ok(document.querySelector(`#stage .card[data-seat="${lastT.seat}"]`).classList.contains('thinking'), 'Voice off: the newest thought lights its card')}
+    op.voice.stop();
+
+    // the recorded night (?fixture=night)
+    install(HTML);
+    createApp({client: relayClient({base: BASE, fetchImpl: voiceRelay().fetch}), fixture: GAME, runnersFixture: RUN, frame: 'night', audio: fakeAudio(), voiceFile: async () => null});
+    await settle();
+    {const thoughts = NF.events.filter(e => e.type === 'thought'), lastT = thoughts.at(-1), c = document.querySelector(`#stage .card[data-seat="${lastT.seat}"]`);
+      const l = document.querySelectorAll('#stage .st-night .nl').map(x => x.textContent);
+      ok(thoughts.length >= 2 && document.querySelector('#stage').dataset.phase === 'night', `the recorded game has a night with ${thoughts.length} thoughts`);
+      ok(c.classList.contains('thinking') && c.querySelector('.caption.thought .cap-text').textContent === lastT.text, 'the recorded night: a card thinking, its thought as its caption');
+      ok(l.filter(t => / thinks: /.test(t)).length === thoughts.length && l.some(t => /^The Storyteller (wakes|tells) /.test(t)), "the recorded night's list in the voice's prose")
+      ok(document.querySelectorAll('#talk .line.thought').length === thoughts.length, 'the talk lists the recorded thoughts')}
   }
 }
 

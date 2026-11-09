@@ -75,3 +75,11 @@ Useful now: vote, who_voted, read_talk.
 
 ## Game 5 fixes (#104)
 - [Evil cover](evil-cover.md): Cover line by day for evil seats (bluff / grimoire / guess), secret claims kept out of the claims line, prompt paragraph; header order now ... [Claims], [Cover], [stale notes] ...
+
+## The first night is quiet (#110, PR #112)
+- Seats reasoned from "nobody died" on day 1 (game 6). Prompt paragraph after the day-1 one: no first-night kill, so day 1's empty dawn says nothing; from night 2 a quiet night is news (Monk, Soldier, Mayor, dead/protected pick).
+- cleanEvent replaces a day-1 dawn with no deaths by FIRST_DAWN (player.js); later quiet dawns keep the engine text. Day-1 nudge ends "A quiet night 1 is the rule, no clue." The header cap 900 is hit by the notes-line test at +4 chars: any new clause needs a cut.
+- Escaping: an escaped quote (backslash, quote) in a JS string edited by a node heredoc or sed loses its backslash; write a .cjs with String.fromCharCode(92).
+
+## Table pendings (#119)
+- Nomination, vote and thoughts pendings carry `seat: 'table'` (+ `seats`); never pass p.seat to api.answer for them. Test drive loops: think per seat for thoughts, or playScripted with an onDecision that throws a sentinel to stop at a scene (the #107 red CI was a test loop, not player.js).

@@ -11,7 +11,7 @@ import {join, dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {PLAYER_TOOLS, TOOL_NAMES, ATTEMPT_INVITE} from '../src/data/player-tools.js';
 import {PLAYER_TOOL_LINES, systemFor} from '../src/data/prompts.js';
-import {playerHeader, whatsNew, useApi, claimsInLine} from '../src/seats/player.js';
+import {playerHeader, whatsNew, useApi, claimsInLine, cleanEvent, FIRST_DAWN} from '../src/seats/player.js';
 import * as api from '../src/game/api.js';
 import {newGame, createScripted, playScripted} from '../src/game/index.js';
 
@@ -310,6 +310,15 @@ section('game 1 fixes: no doubled names, a voice per seat, a useful first day, t
   ok(/nominate someone anyway/.test(playerHeader(fakeGame('nominations'), 0, fakeApi)), 'the header with nominations open and none made says to nominate anyway');
   ok(!/First day|nominate someone anyway/.test(playerHeader(fakeGame('night'), 0, fakeApi)), 'no nudge at night');
 
+  // #110: the demon never kills on the first night, so a quiet first night is no clue; from night 2 a quiet night is news
+  ok(/never kills on the first night/.test(sys) && /says nothing about anyone/.test(sys) && /From night 2 on, a night with no death is news/.test(sys) && /Monk guarded/.test(sys) && /Soldier/.test(sys),
+    'the prompt says the first night is quiet by the rules and a quiet night after it is news');
+  ok(/A quiet night 1 is the rule, no clue./.test(playerHeader(fakeGame('day'), 0, fakeApi)), 'the day-1 nudge says a quiet first night is no clue');
+  const dawn1 = cleanEvent({day: 1}, 0, {id: 1, type: 'dawn', day: 1, deaths: [], text: 'Day 1 breaks. Nobody died in the night.'});
+  ok(dawn1.text === FIRST_DAWN && /demon does not kill then/.test(dawn1.text), `day 1's empty dawn reads as the rule: ${dawn1.text}`);
+  const dawn2 = cleanEvent({day: 2}, 0, {id: 2, type: 'dawn', day: 2, deaths: [], text: 'Day 2 breaks. Nobody died in the night.'});
+  ok(dawn2.text === 'Day 2 breaks. Nobody died in the night.', 'a quiet dawn from day 2 keeps the engine text');
+
   // #38: the stakes line at four alive or fewer, by day only
   const withAlive = (st, n) => {const x = fakeGame(st); x.seats.forEach((s, i) => {s.alive = i < n}); return x};
   const h4 = playerHeader(withAlive('day', 4), 0, fakeApi), h3 = playerHeader(withAlive('day', 3), 0, fakeApi), h5 = playerHeader(withAlive('day', 5), 0, fakeApi);
@@ -470,7 +479,7 @@ section("the Slayer's standing shot: an honest header line, slay, night_choice's
   const toDay = (game, sc) => {
     for (let n = 0; n < 500 && !(game.phase === 'day' && game.step === 'nominations' && game.pending?.kind === 'nomination'); n++) {
       const p = game.pending;
-      if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game));
+      if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(game, i, ''); else api.answer(game, p.seat, sc(game));
     }
   };
   const real = (seed = 7) => {
@@ -550,6 +559,7 @@ section('integration: a real game through the real api, every seat with its own 
     const p = game.pending;
     if (!p) break;
     if (p.seat === 'storyteller') {api.answer(game, 'storyteller', answerer(game), STR); continue}
+    if (p.kind === 'thoughts') {for (const i of p.seats) api.think(game, i, ''); continue} // the night's thoughts (#111): the think tool is the player-builder's
     if (p.kind === 'choose') {
       const i = p.seat, h = header(i); done.headers++;
       if (!/WAITING ON YOU/.test(h)) done.bad.push(`no waiting line for a choice: ${h}`);
@@ -716,7 +726,7 @@ section('rooms in a real game: a line in a room stays in the room, the moves are
   const header = i => {const h = playerHeader(game, i); out[i].push(h); return h};
   for (let n = 0; n < 500 && !(game.phase === 'day' && api.roomsOpen(game)); n++) {
     const p = game.pending;
-    if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game));
+    if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(game, i, ''); else api.answer(game, p.seat, sc(game));
   }
   const nm = i => game.seats[i].name, [O, T, I] = [0, 4, 2], PARLOUR = api.where(game, 0).rooms.find(x => x.id === 'parlour').name; // the lore-keeper's name for it
   ok(api.roomsOpen(game) && game.seats.every(s => s.alive), `seed 7, day 1: the talk has begun and the rooms are open (${game.seats.map(s => s.name).join(', ')})`);
@@ -873,7 +883,7 @@ section('game 3 fixes: claims checked before repeated (#67), a reason to use a r
   const game = newGame({seed: 23, rounds: 1}), sc = createScripted(23);
   const ctx = i => ({game, seat: {index: i, name: game.seats[i].name}, api: api.forSeat(i), log: () => {}});
   const call = (i, name, args = {}) => tool(name).handler(args, ctx(i));
-  const step = () => {const p = game.pending; if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game))};
+  const step = () => {const p = game.pending; if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(game, i, ''); else api.answer(game, p.seat, sc(game))};
   for (let n = 0; n < 500 && !(game.phase === 'day' && api.roomsOpen(game)); n++) step();
   const SW = game.seats.findIndex(s => s.role === 'scarlet-woman'), IMP = game.seats.findIndex(s => s.role === 'imp'), nm = i => game.seats[i].name;
   ok(SW >= 0 && IMP >= 0, `seed 23 deals a Scarlet Woman (${nm(SW)}) and an Imp (${nm(IMP)})`);
@@ -1017,7 +1027,7 @@ section("game 4 fixes: no dodge on day 1 (#87), the Poisoner's targets (#88), th
   // carry the poison line and never offer the demon; every header stays under the cap.
   const first = newGame({seed: 31}), sc = createScripted(31);
   for (let n = 0; n < 500 && !(first.phase === 'day' && api.roomsOpen(first)); n++) {
-    const p = first.pending; if (p.seat === api.ST) api.answer(first, api.ST, sc(first), 'scripted'); else api.answer(first, p.seat, sc(first));
+    const p = first.pending; if (p.seat === api.ST) api.answer(first, api.ST, sc(first), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(first, i, ''); else api.answer(first, p.seat, sc(first));
   }
   const monk = first.seats.findIndex(s => s.role === 'monk');
   ok(monk >= 0 && /First day: the Monk first acts on night 2, so you have nothing to tell yet/.test(playerHeader(first, monk)), `the Monk's day 1 header: ${monk >= 0 ? playerHeader(first, monk) : 'no Monk'}`);
@@ -1100,7 +1110,7 @@ section('game 5 fixes: evil seats keep their roles secret (#104), the Chef count
   // a real deal: game 5's seed (37). The Imp's cover is one of the bluffs it was told; a Spy's is out of the grimoire she saw.
   const game = newGame({seed: 37}), sc = createScripted(37);
   for (let n = 0; n < 500 && !(game.phase === 'day' && api.roomsOpen(game)); n++) {
-    const p = game.pending; if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else api.answer(game, p.seat, sc(game));
+    const p = game.pending; if (p.seat === api.ST) api.answer(game, api.ST, sc(game), 'scripted'); else if (p.kind === 'thoughts') for (const i of p.seats) api.think(game, i, ''); else api.answer(game, p.seat, sc(game));
   }
   const IMP = game.seats.findIndex(s => s.role === 'imp'), SPY = game.seats.findIndex(s => s.role === 'spy');
   const h = playerHeader(game, IMP), v = api.view(game, IMP);
@@ -1116,6 +1126,28 @@ section('game 5 fixes: evil seats keep their roles secret (#104), the Chef count
     ok(sp && !grim.includes(` the ${sp}`), `seed 37: the Spy's cover (${sp}) is not in the grimoire she saw`);
   }
   for (const s of game.seats) if (!['imp', 'spy', 'poisoner', 'baron', 'scarlet-woman'].includes(s.role)) ok(!/[Cc]over:/.test(playerHeader(game, s.index)), `seed 37: ${s.name}, good, has no cover line`);
+  // the night's thoughts scene (#119): the pending addresses the table (seat 'table', seats = the living); the evil seats'
+  // header and tools read it through their own pendingFor and never hand 'table' to the api as a seat
+  const ctx = i => ({game, seat: {index: i, name: game.seats[i].name}, api: api.forSeat(i), log: () => {}});
+  if (pick) tool('speak').handler({text: `I am the ${pick}, for what it is worth.`}, ctx(IMP));
+  const STOP = {}; // playScripted plays the day (talk, nominations, votes) and the night; stop it at night 2's thoughts
+  try {playScripted(game, 37, {onDecision: p => {if (p.kind === 'thoughts' && game.night >= 2) throw STOP}})} catch (e) {if (e !== STOP) throw e}
+  const tp = game.pending;
+  const atScene = tp?.kind === 'thoughts' && tp.seat === 'table' && Array.isArray(tp.seats);
+  ok(atScene, `seed 37 reaches the thoughts scene of night ${game.night} (seat ${JSON.stringify(tp?.seat)})`);
+  if (atScene) {
+    for (const i of tp.seats.filter(i => ['imp', 'spy', 'poisoner', 'baron', 'scarlet-woman'].includes(game.seats[i].role))) {
+      const who = `${game.seats[i].name} (${game.seats[i].role})`;
+      let hn = '';
+      try {hn = playerHeader(game, i)} catch (e) {hn = 'THREW ' + e.message}
+      ok(!/^THREW/.test(hn) && !/[Cc]over:/.test(hn) && hn.length <= HEADER_CAP, `seed 37, thoughts scene: ${who}'s header reads, no cover line at night, under ${HEADER_CAP} (${hn.length})${/^THREW/.test(hn) ? ': ' + hn : ''}`);
+      console.log(`    | seed 37, night ${game.night} thoughts scene, ${who}'s header (${hn.length}): ${hn.split('\n').slice(0, 2).join(' / ')}`);
+      for (const name of ['look', 'my_role', 'what_is_asked', 'claims', 'read_talk', 'my_whispers', 'my_notes', 'where']) {
+        let r; try {r = tool(name).handler({}, ctx(i))} catch (e) {r = {ok: false, error: 'threw ' + e.message}}
+        ok(r && r.ok !== false && !/seat "table"/.test(JSON.stringify(r)), `seed 37, thoughts scene: ${who}'s ${name} answers${r?.ok === false ? ': ' + r.error : ''}`);
+      }
+    }
+  }
 }
 
 section('nothing under src/ imports node: or scripts/');

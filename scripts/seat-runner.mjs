@@ -74,7 +74,7 @@ async function main() {
     while (!stopping && turns < cap) {
       const w = await pacer.next();
       if (w.stopped || stopping) break;
-      if (w.dead || w.gone) {say(`[agent] stopped after ${turns} turns (${w.dead ? 'out of the game' : 'the game is over'}${w.why ? ': ' + String(w.why).slice(0, 60) : ''})`); return 0}
+      if (w.dead || w.gone) {say(`[agent] stopped after ${turns} turns (${w.dead ? 'out of the game' : 'the game is over'})${w.why ? ' - ' + String(w.why).slice(0, 80) : ''}`); return 0} // the reason stays outside the brackets: the supervisor reads the bracket as the end's category (#116)
       if (w.gameId && sess.gameId && w.gameId !== sess.gameId) {rollSession(sess, s => setAside(s)); sess.gameId = w.gameId; saveSession(sess); say(`[session] new game ${w.gameId}: fresh session`)} // #66
       const roll = rollDue(sess, 0); if (roll) {rollSession(sess, s => setAside(s)); say(roll.line)}
       const b = await pacer.brief();

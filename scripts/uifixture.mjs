@@ -4,6 +4,7 @@
 //   talk     day 1, mid-round: talk and a whisper, no vote yet
 //   vote     the first vote of the game with some hands cast and some still to come
 //   rooms    day 2, the evil pair gone to the Snug and one seat alone in the Vestry, a line said in a room (#80)
+//   night    the second night before its dawn, with three seats' thoughts made by hand (#111: the scripted seats think nothing)
 //   end      the game over, every event
 // Each frame is watchView(game): the body the page asks of the backend as GET /play/watch (not served yet; see the slice 6 PR).
 // The page builds every panel from these frames until the route exists, and npm run uismoke checks the panels against them.
@@ -17,6 +18,7 @@ import {newGame} from '../src/game/state.js';
 import {createScripted} from '../src/game/scripted.js';
 import {createRng} from '../src/game/rng.js';
 import {SCRIPTED_REASON} from '../src/game/backend.js';
+import {fixtureMoments} from '../src/ui/model.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const FIXTURE = join(ROOT, 'src', 'ui', 'fixtures', 'game.json');
@@ -58,6 +60,25 @@ const REASONS = {
   'star-pass': 'The minion most likely to keep the demon hidden.',
 };
 
+// The night before the second dawn, with the thoughts the seats' runners would give (#111), made by hand: the first three living seats
+// in seat order, each in the words for its team.
+const THOUGHTS = {
+  good: ['Nothing came to me tonight but the clock. Tomorrow I listen for who is too sure of themselves.',
+    'What I learned fits two stories. I will tell it plainly at first light and see who flinches.',
+    'Someone at that table is lying with a steady voice. I mean to find the one who never asks a question.'],
+  evil: ['Another name crossed off. Tomorrow I agree with the loudest voice and let them vote each other down.',
+    'They are looking the wrong way. I will keep my claim simple and my vote late.'],
+};
+export function nightWithThoughts(end) {
+  const night = fixtureMoments(end).night;
+  if (!night) return null;
+  const alive = night.grimoire.seats.filter(s => s.alive), k = {good: 0, evil: 0};
+  const thoughts = alive.slice(0, 3).map((s, i) => {
+    const team = EVIL.includes(SCRIPT.roles.find(r => r.id === s.role)?.team) ? 'evil' : 'good';
+    return {id: night.last + 1 + i, phase: 'night', night: night.night, day: night.day, type: 'thought', seat: s.seat, text: THOUGHTS[team][k[team]++ % THOUGHTS[team].length], audience: 'watcher'};
+  });
+  return {...night, events: [...night.events, ...thoughts], last: thoughts.at(-1).id};
+}
 export function record(seed = FIXTURE_SEED, rounds = 2) {
   const game = newGame({seed, rounds}), ans = createScripted(seed), rng = createRng(seed * 7919 + 13), frames = {};
   let said = 0, whispered = 0, dawns = 0, guard = 0, stCalls = 0;
@@ -110,9 +131,11 @@ export function record(seed = FIXTURE_SEED, rounds = 2) {
       });
       continue;
     }
+    if (p.kind === 'thoughts') {for (const i of p.seats) api.think(game, i, ''); continue} // the night's thoughts (#111): none in the fixture
     throw new Error(`the recorder has no move for ${p.kind} (${p.seat})`);
   }
   frames.end = watchView(game);
+  frames.night = nightWithThoughts(frames.end);
   return {seed, rounds, recorded: 'npm run uifixture', frames};
 }
 

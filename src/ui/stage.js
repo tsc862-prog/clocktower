@@ -11,7 +11,9 @@
 //   a vote       the nominee and the nominator ringed and labelled, each voter's hand on their card as the ballot lands, the tally
 //                and its bar in the middle of the table; the result flashed on the nominee once the vote closes; who is on the block
 //   the night    the stage dims, the Storyteller's card wakes with what it does tonight (what only it and the watcher see), the seat it
-//                has woken glows faintly; deaths shroud a card where it sits; at dawn the dawn and its narration show large in the middle
+//                has woken glows faintly; deaths shroud a card where it sits; at dawn the dawn and its narration show large in the middle.
+//                The night's list is the prose the voice reads (#111); a seat's thought before dawn lights its card with the thought as an
+//                italic caption on a dimmer plate (the line on stage, as a say is by day)
 // Cards are keyed by seat and patched only when their HTML changes; the strip is keyed by event id. Nothing here acts for a seat.
 import {esc, el, keyedRows} from './dom.js';
 import {roleName, teamOf, voteView, seatNames, clockText} from './model.js';
@@ -20,11 +22,13 @@ import {roleToken, ghostCoin, shroudArt} from './art.js';
 import {portraitOf} from './portraits.js';
 import {openRooms} from './square.js';
 import {talkLine, roomNames} from './talk.js';
+import {nightSpoken} from './voice.js';
 
 export const RECENT_N = 8; // lines in the strip under the stage
-const STAGE_LINES = new Set(['say', 'whisper', 'narration', 'dawn']); // a line that takes the stage
+const STAGE_LINES = new Set(['say', 'whisper', 'narration', 'dawn', 'thought']); // a line that takes the stage
+const NIGHT_TOLD = new Set(['wake', 'acted', 'told', 'death', 'bounce']); // read aloud at night in the Storyteller's voice (#111)
 const STEPS_BACK = new Set(['nomination', 'vote', 'execution', 'no-execution', 'phase', 'night', 'win']); // after these the caption dims
-const RECENT = new Set(['say', 'whisper', 'narration', 'dawn', 'night', 'nomination', 'vote', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'death', 'win']);
+const RECENT = new Set(['say', 'whisper', 'thought', 'narration', 'dawn', 'night', 'nomination', 'vote', 'execution', 'no-execution', 'slayer-shot', 'virgin', 'death', 'win']);
 const ST_WORDS = new Set(['narration', 'dawn', 'night', 'win', 'execution', 'no-execution', 'virgin', 'slayer-shot']);
 const LEAVES = new Set(['nomination', 'night', 'win']); // after these the caption leaves the stage altogether
 const TALK_AFTER = new Set(['say', 'whisper', 'pass', 'nomination']);
@@ -171,11 +175,15 @@ const cardPadX = cw => cardPad(cw).x;
 export function stageLine(w, {voiced = null, playing = false} = {}) {
   const ev = (w && w.events) || [];
   let e = voiced != null ? ev.find(x => x.id === voiced) : null;
+  // the night told aloud: the line on stage is the Storyteller's prose for it (#111)
+  if (e && NIGHT_TOLD.has(e.type) && (e.phase === 'night' || e.type !== 'death' && e.type !== 'told')) {
+    const t = nightSpoken(e, seatNames(w), w.grimoire && w.grimoire.seats); e = t ? {...e, text: t} : null;
+  }
   if (!e) for (let i = ev.length - 1; i >= 0; i--) if (STAGE_LINES.has(ev[i].type) && ev[i].text) {e = ev[i]; break}
   if (!e) return null;
-  const speaker = e.type === 'say' ? e.seat : e.type === 'whisper' ? e.from : 'storyteller';
+  const speaker = e.type === 'say' || e.type === 'thought' ? e.seat : e.type === 'whisper' ? e.from : 'storyteller';
   const now = playing && voiced === e.id;
-  if (!now && ev.some(x => x.id > e.id && LEAVES.has(x.type))) return null;
+  if (!now && ev.some(x => x.id > e.id && (LEAVES.has(x.type) || e.type === 'thought' && x.type === 'dawn'))) return null; // a thought goes at dawn
   const stale = !now && ev.some(x => x.id > e.id && STEPS_BACK.has(x.type));
   return {e, speaker, stale, playing: playing && voiced === e.id};
 }
@@ -211,21 +219,22 @@ export function roomLines(w) {
   return out;
 }
 
-// What the Storyteller does tonight, as only it (and the watcher) sees: the last few of tonight's wakings, choices, deaths and tellings.
+// What the Storyteller does tonight, as only it (and the watcher) sees: the last few of tonight's wakings, choices, deaths, tellings and
+// the seats' thoughts -> {lines: [{id, text, kind: 'told' | 'thought'}], woken: seat | null}.
+export const NIGHT_N = 6;
 export function nightLines(w, names) {
   if (!w || w.phase !== 'night') return {lines: [], woken: null};
-  const n = i => names[i] ?? `seat ${i}`, list = v => (Array.isArray(v) ? v : [v]).filter(x => x != null).map(x => typeof x === 'number' ? n(x) : roleName(x)).join(' and ');
-  const tonight = (w.events || []).filter(e => e.phase === 'night' && e.night === w.night);
-  const lines = [];
+  // the same prose the voice reads (nightSpoken in src/ui/voice.js, #111), the seats' thoughts among them
+  const tonight = (w.events || []).filter(e => e.night === w.night && (e.phase === 'night' || e.type === 'thought'));
+  const seats = w.grimoire && w.grimoire.seats, lines = [];
   let woken = null;
   for (const e of tonight) {
-    if (e.type === 'wake') {lines.push(`wakes ${n(e.seat)} (${roleName(e.role)})`); woken = e.seat}
-    else if (e.type === 'acted') {lines.push(`${n(e.seat)} (${roleName(e.role)}) chooses ${list(e.target ?? e.targets) || 'nobody'}`); woken = e.seat}
-    else if (e.type === 'told' && Number.isInteger(e.seat)) {lines.push(`tells ${n(e.seat)}: ${e.text}`); woken = e.seat}
-    else if (e.type === 'death') lines.push(`${n(e.seat)} dies${e.by != null ? `, killed by ${n(e.by)}` : ''}`);
-    else if (e.type === 'bounce') lines.push(`the kill passes from ${n(e.from)} to ${n(e.to)}`);
+    const t = nightSpoken(e, names, seats);
+    if (!t) continue;
+    lines.push({id: e.id, text: t, kind: e.type === 'thought' ? 'thought' : 'told'});
+    if (['wake', 'acted', 'told'].includes(e.type)) woken = e.seat;
   }
-  return {lines: lines.slice(-4), woken};
+  return {lines: lines.slice(-NIGHT_N), woken};
 }
 
 const face = (name, cls = '') => {
@@ -285,11 +294,13 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
   function voiceNow() {
     const vs = voiceState();
     const on = !!(vs && vs.on && !vs.muted && !recorded);
-    return {on, playing: on && !!vs.now, voiced: on ? (vs.now ? vs.now.id : lastVoiced) : null};
+    const begun = !!(vs && vs.now && vs.now.started); // the line's own clip has begun (#109): not while its name tag plays
+    return {on, playing: on && begun, voiced: on ? (begun ? vs.now.id : lastVoiced) : null};
   }
 
   function captionHtml(line, names, rooms) {
     const e = line.e, n = i => esc(names[i] ?? `seat ${i}`);
+    if (e.type === 'thought') return `<div class="caption thought${line.stale ? ' stale' : ''}" data-event="${e.id}"><div class="cap-head">thinking</div><div class="cap-text">${esc(e.text)}</div></div>`;
     const kind = e.type === 'whisper' ? 'whisper' : e.room != null ? 'say in-room' : 'say';
     const head = e.type === 'whisper' ? `<div class="cap-head">to ${n(e.to)} <span class="unheard">the table did not hear this</span></div>`
       : e.room != null ? `<div class="cap-head place">in ${esc(rooms[e.room] || e.room)}</div>` : '';
@@ -367,7 +378,7 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
       if (h !== r.h) {r.node.innerHTML = h; r.h = h}
       const speaking = !!line && line.speaker === s.seat;
       const cls = 'card sc-' + (s.seat % 7) + ' cap-' + r.side + (s.alive ? '' : ' dead') + (speaking ? ' speaking' : '') + (speaking && line.stale ? ' stale' : '') +
-        (speaking && line.playing ? ' voicing' : '') + (v && v.nominee === s.seat ? ' is-nominee' : '') + (v && v.nominator === s.seat ? ' is-nominator' : '') +
+        (speaking && line.playing ? ' voicing' : '') + (speaking && line.e.type === 'thought' ? ' thinking' : '') + (v && v.nominee === s.seat ? ' is-nominee' : '') + (v && v.nominator === s.seat ? ' is-nominator' : '') +
         (v && v.open && v.voters.includes(s.seat) ? ' is-voter' : '') + (room ? ' away' : '') + (night.woken === s.seat ? ' woken' : '') + (vote && vote.target === s.seat ? ' flash' : '');
       if (r.node.className !== cls) r.node.className = cls;
     });
@@ -388,7 +399,7 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
     const stSpeaking = !!line && line.speaker === 'storyteller';
     const sh = face('Storyteller') + '</div><div class="name">Storyteller</div>' +
       `<div class="st-words">${said ? `<div class="st-line${stSpeaking && !line.stale ? '' : ' older'}">${esc(said.text)}</div>` : '<div class="st-line older">The Storyteller has not spoken yet.</div>'}` +
-      (night.lines.length ? `<div class="st-night"><span class="seen-by">tonight, as the Storyteller sees it</span>${night.lines.map(l => `<div>${esc(l)}</div>`).join('')}</div>` : '') + '</div>';
+      (night.lines.length ? `<div class="st-night"><span class="seen-by">tonight, as the Storyteller sees it</span>${night.lines.map(l => `<div class="nl ${l.kind}${line && line.e.id === l.id && line.playing ? ' now' : ''}">${esc(l.text)}</div>`).join('')}</div>` : '') + '</div>';
     if (stSide._h !== sh) {stSide.innerHTML = sh; stSide._h = sh}
     const stCls = 'stage-st' + (stSpeaking ? ' speaking' : '') + (stSpeaking && line.playing ? ' voicing' : '') + (w && w.phase === 'night' ? ' awake' : '');
     if (stSide.className !== stCls) stSide.className = stCls;
@@ -411,7 +422,7 @@ export function createStage(root, {voiceState = () => null, recorded = false} = 
   // the voice (src/ui/voice.js) began or ended a clip: the line it plays takes the stage
   function setSpeaking(who) {
     const vs = voiceState();
-    if (who != null && vs && vs.now) lastVoiced = vs.now.id;
+    if (who != null && vs && vs.now && vs.now.started) lastVoiced = vs.now.id;
     draw();
   }
   return {render, setSpeaking, refresh: draw, cards, get line() {return last && last.watch ? stageLine(last.watch, voiceNow()) : null}};

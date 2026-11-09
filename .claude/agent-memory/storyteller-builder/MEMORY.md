@@ -45,3 +45,6 @@
 - `fallback` with nothing pending but a narration owed narrates `scriptedNarration` (plain facts, end with roles).
 - `look` returns `due` + `dueTool`. Runner side (infra files, edited with permission): pacing `storytellerDueNow(post)`; claude-runner skips soft/heartbeat wakes when nothing due (no model call) and plays one last turn after `gone` when the end is owed; scripted runner does the same via fallback. backend.js left alone (after the win every pace still answers gone).
 - Manager's expected shape for #91 was a cheap pre-check before the model call consulting storytellerDue: done that way.
+
+## First dawn (#110, PR #115)
+- Day 1's quiet dawn is the rule, not news: `quietWords(day)` / `FIRST_NIGHT_QUIET` ("the first night passes without a death, as it always does") in the owed line, makings (warns off a reprieve) and scripted fallback; day 2+ keeps "nobody died in the night". Prompt: never a reprieve or a demon that spared anyone on Day 1. Narration check unchanged (owner/manager: no misfiring regex).
