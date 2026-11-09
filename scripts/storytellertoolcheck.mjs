@@ -7,7 +7,8 @@ import {newGame, answer as engineAnswer, playOut, grimoire, createScripted} from
 import * as realApi from '../src/game/api.js';
 import {SCRIPT} from '../src/data/script.js';
 import {STORYTELLER_TOOLS, STORYTELLER_TOOL_NAMES, reasonError, reasonFactsError, resolveValue} from '../src/data/storyteller-tools.js';
-import {storytellerHeader, HEADER_CAP} from '../src/seats/storyteller.js';
+import {storytellerHeader, HEADER_CAP, storytellerDue, toolsNow} from '../src/seats/storyteller.js';
+import {DAWN_TOUCHES, DUSK_TOUCHES, touchFor, touchOrder} from '../src/data/colour.js';
 import {STORYTELLER_SYSTEM, systemFor} from '../src/data/prompts.js';
 
 let fails = 0, passes = 0;
@@ -516,7 +517,7 @@ section('a narrated dawn (#36)');
   D.clock = {round: 1, roundsBeforeNominations: 3, nominationsOpen: false};
   api._push(D, {type: 'dawn', deaths: []});
   const h = header(D, api);
-  ok(/DAWN NOT YET NARRATED: nobody died in the night/.test(h) && /Thistlewick/.test(h), `the header flags a dawn not yet narrated\n${h}`);
+  ok(/^DAWN NOT YET NARRATED \(Day 1\): nobody died in the night/.test(h) && h.includes(touchFor(D.config.seed, 1)), `the header opens with the dawn call and a touch of the town\n${h}`);
   ok(/Now: narrate,/.test(h), 'the Now line puts narrate first at dawn');
   ok(h.length <= HEADER_CAP, `the dawn header is under the cap (${h.length})`);
   api._say(D, 1, 'Good morning.');
@@ -525,6 +526,95 @@ section('a narrated dawn (#36)');
   const h2 = header(D, api);
   ok(!/DAWN NOT YET NARRATED/.test(h2), 'the flag clears once narrated');
   ok(/narrate/.test(STORYTELLER_SYSTEM) && /every dawn/.test(STORYTELLER_SYSTEM) && /Thistlewick/.test(STORYTELLER_SYSTEM) && /only reads/.test(STORYTELLER_SYSTEM), 'the prompt asks for a narrated dawn with colour and for acting turns');
+}
+
+section('a dawn with one touch of the town, acting first (#70)');
+{
+  // the colour table: seeded, never repeating within a game, different between seeds
+  ok(DAWN_TOUCHES.length >= 12 && DUSK_TOUCHES.length >= 8, `a dozen dawn touches (${DAWN_TOUCHES.length}) and some dusk ones (${DUSK_TOUCHES.length})`);
+  let repeats = 0;
+  for (let seed = 1; seed <= 50; seed++) {
+    const dawns = DAWN_TOUCHES.map((_, k) => touchFor(seed, k + 1)), dusks = DUSK_TOUCHES.map((_, k) => touchFor(seed, k + 1, 'dusk'));
+    if (new Set(dawns).size !== dawns.length || new Set(dusks).size !== dusks.length) repeats++;
+  }
+  ok(repeats === 0, 'no touch repeats within a game, dawn or dusk, over seeds 1-50');
+  ok(touchFor(23, 2) === touchFor(23, 2) && touchFor(23, 2, 'dusk') === touchOrder(23, 'dusk')[1], 'the same seed and day give the same touch');
+  const orders = new Set(Array.from({length: 20}, (_, k) => touchOrder(k + 1).join('|')));
+  ok(orders.size >= 18, `the order differs by seed (${orders.size} orders over 20 seeds)`);
+  ok(touchOrder(1).slice(0, 3).join('|') !== touchOrder(2).slice(0, 3).join('|'), 'seeds 1 and 2 open differently');
+  ok(DAWN_TOUCHES.concat(DUSK_TOUCHES).every(t => !/thirteen|imp\b|demon|minion|poison|drunk/i.test(t)), 'no touch hints at a role or the rules');
+
+  const api = fakeApi();
+  const D = newGame({seed: 7, roles: ['imp', 'mayor', 'poisoner', 'washerwoman', 'chef', 'empath', 'soldier']});
+  until(D, s => s.phase === 'day' && s.pending?.kind === 'nomination');
+  D.clock = {round: 1, roundsBeforeNominations: 3, nominationsOpen: false, spoke: [], passedNominating: []};
+  // a death dawn: the dead neighbour, the day, the touch, the two sentences
+  D.diedTonight = [5];
+  api._push(D, {type: 'dawn', deaths: [5]});
+  const h = header(D, api), dead = D.seats[5].name;
+  ok(h.startsWith(`DAWN NOT YET NARRATED (Day ${D.day}): ${dead} died in the night`), `the dawn call is the header's first line, with the death\n${h}`);
+  ok(h.includes(touchFor(D.config.seed, D.day)) && /Exactly two sentences/.test(h), 'the makings carry the touch and ask for two sentences');
+  ok(new RegExp(`sentence about the person: ${dead} as a neighbour`).test(h) && /never a role/.test(h), 'a death asks for a sentence about the person');
+  ok(/Now: narrate, talk, open_nominations\. Act first: narrate is due/.test(h), 'the Now line leads with narrate at dawn');
+  ok(storytellerDue(D, api)?.tool === 'narrate', 'storytellerDue names narrate at an unnarrated dawn');
+  ok(call(D, api, 'look').useful[0] === 'narrate', 'look leads with narrate too');
+  ok(call(D, api, 'narrate', {text: `${dead} was found by the pump at first light, coat buttoned wrong. The heron kept to the millpond and did not look round.`}).ok, 'the death dawn is narrated');
+  // mid-day, nothing due
+  const hq = header(D, api);
+  ok(/Now: talk, open_nominations, end_day\. Nothing is due from you/.test(hq) && /only reads is wasted/.test(hq), `with nothing due the Now line says a reading turn is wasted\n${hq}`);
+  ok(storytellerDue(D, api) === null, 'storytellerDue is null when nothing waits');
+  // the day is done: every living seat nominated or passed
+  D.clock.nominationsOpen = true; D.clock.passedNominating = D.seats.filter(x => x.alive).map(x => x.index);
+  ok(/Now: end_day, day_state\. Act first: end_day is due/.test(header(D, api)), 'the Now line leads with end_day when every living seat has nominated or passed');
+  ok(storytellerDue(D, api)?.tool === 'end_day', 'storytellerDue names end_day then');
+  D.clock.passedNominating = [];
+  // an execution not yet narrated, at night with a decision waiting
+  const E = newGame({seed: 7, roles: ['imp', 'mayor', 'poisoner', 'washerwoman', 'chef', 'empath', 'soldier']});
+  until(E, s => s.night === 2 && s.pending?.seat === 'storyteller');
+  const eapi = fakeApi();
+  E.executed = [{day: 1, seat: 3, role: 'washerwoman', how: 'vote'}];
+  eapi._push(E, {type: 'execution', seat: 3, day: 1});
+  const he = header(E, eapi);
+  ok(he.startsWith(`EXECUTION NOT YET NARRATED: ${E.seats[3].name} was executed at dusk on Day 1`) && he.includes(touchFor(E.config.seed, 1, 'dusk')), `the execution call leads, with a dusk touch\n${he}`);
+  ok(/Now: narrate, decide, what_is_asked\. Act first: narrate is due/.test(he), 'with a decision waiting too, narrate leads, then decide');
+  ok(call(E, eapi, 'narrate', {text: `${E.seats[3].name} was executed at dusk, and the lamps on Lamp Row came on behind the crowd.`}).ok, 'the execution is narrated');
+  const hd = header(E, eapi);
+  ok(!/NOT YET NARRATED/.test(hd) && /Now: decide, what_is_asked, fallback\. Act first: decide is due/.test(hd), `then decide leads\n${hd}`);
+  ok(toolsNow(E, true, false)[0] === 'decide', 'toolsNow leads with decide when asked');
+  // the end
+  const W = newGame({seed: 7, roles: ['imp', 'mayor', 'poisoner', 'washerwoman', 'chef', 'empath', 'soldier']});
+  playOut(W, quiet, {override: spare, maxDays: 10});
+  const wapi = fakeApi();
+  if (W.winner) {
+    wapi._push(W, {type: 'win', text: W.winner.text});
+    const hw = header(W, wapi);
+    ok(/^THE END NOT YET NARRATED/.test(hw) && /Now: narrate, rulings\. Act first/.test(hw), `the end is owed and narrate leads\n${hw}`);
+    call(W, wapi, 'narrate', {text: 'That is the end of the week, and the tower kept its counsel.'});
+    ok(/Nothing is due/.test(header(W, wapi)), 'once the end is narrated nothing is due');
+  } else ok(false, 'the quiet game ends');
+  // the prompt
+  ok(/exactly two sentences/.test(STORYTELLER_SYSTEM) && /one touch of the town/.test(STORYTELLER_SYSTEM), 'the prompt asks for two sentences at dawn with one touch of the town');
+  ok(/Every execution gets one sentence/.test(STORYTELLER_SYSTEM) && /end of the game\s+gets one sentence/.test(STORYTELLER_SYSTEM), 'the prompt gives executions and the end one sentence each');
+  ok(/as a person/.test(STORYTELLER_SYSTEM) && /A turn that only reads is wasted/.test(STORYTELLER_SYSTEM) && /end_day/.test(STORYTELLER_SYSTEM), 'the prompt asks for the person in a death and for acting turns');
+}
+
+// ---- the header through the real api over whole seeded games: dawns and executions owed, the Now line kept ----
+section('the header through the real api over seeds 1-20');
+{
+  let max = 0, owedSeen = 0, nowKept = true;
+  for (let seed = 1; seed <= 20; seed++) {
+    const g = newGame({seed}), sc = createScripted(seed);
+    for (let n = 0; g.pending && n < 400; n++) {
+      const h = storytellerHeader(g);
+      if (/NOT YET NARRATED/.test(h)) owedSeen++;
+      if (!/\nNow: [a-z_]+/.test(h)) nowKept = false;
+      max = Math.max(max, h.length);
+      engineAnswer(g, sc(g));
+    }
+  }
+  ok(owedSeen > 0, `owed narrations appear in real games (${owedSeen} headers)`);
+  ok(nowKept, 'every header ends with its Now line');
+  ok(max > 0 && max <= HEADER_CAP, `the longest real header is ${max} characters (cap ${HEADER_CAP})`);
 }
 
 // ---- the header's length over whole seeded games ----

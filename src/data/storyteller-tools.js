@@ -12,6 +12,7 @@ import {createScripted} from '../game/scripted.js';
 import {
   describePending, valueWords, grimoireRows, grimoireLine, tableEvents, eventWords, clockWords, openVote, waitingOn,
   roleFromWord, seatFromWord, roleLabel, seatLabel, phaseOf, toolsNow, KIND_WORDS, malfunctionWords, narrationError, nominationsWords, offeredWords,
+  narrationOwed, storytellerDue,
 } from '../seats/storyteller.js';
 
 const ME = 'storyteller';
@@ -164,7 +165,8 @@ const TOOLS = [
     handler: (args, {game, api}) => {
       const p = tryApi(() => api.pendingFor(game, ME)), yours = !!(p && p.ok !== false);
       return {ok: true, phase: clockWords(game), seats: (game.seats || []).map(s => ({name: s.name, alive: s.alive})),
-        waitingOn: yours ? 'you: ' + (KIND_WORDS[p.kind] || p.kind) : waitingOn(game), useful: toolsNow(game, yours)};
+        waitingOn: yours ? 'you: ' + (KIND_WORDS[p.kind] || p.kind) : waitingOn(game), useful: toolsNow(game, yours, !!narrationOwed(game, api)),
+        due: storytellerDue(game, api)?.why || 'nothing'};
     }},
   {name: 'grimoire', act: false, args: {},
     desc: 'The grimoire: every seat with its name, true role, the role it believes it is when different (the Drunk), alive or dead, ghost vote, and the tokens on it with who placed them; the demon\'s bluffs.',
@@ -218,13 +220,13 @@ const TOOLS = [
     handler: (args, {game, api}) => tryApi(() => ({ok: true, rulings: api.rulings(game) || []}))},
   {name: 'day_state', act: false, args: {},
     desc: 'The day: the clock (round, rounds before nominations, whether nominations are open), today\'s nominations and their votes, the vote open now, who is on the block, who was executed.',
-    handler: (args, {game}) => {
+    handler: (args, {game, api}) => {
       const t = game.today || {}, c = game.clock || {};
       return {ok: true, phase: clockWords(game),
         clock: {round: c.round ?? null, roundsBeforeNominations: c.roundsBeforeNominations ?? null, nominationsOpen: !!c.nominationsOpen},
         nominations: (t.votes || []).map(v => ({by: seatLabel(game, v.by), target: seatLabel(game, v.target), yes: (v.yes || []).map(i => seatLabel(game, i)), tally: v.tally, needed: v.need})),
         voteOpen: openVote(game), block: t.block?.seat != null ? {seat: seatLabel(game, t.block.seat), votes: t.block.votes} : null,
-        executed: t.executed != null ? seatLabel(game, t.executed) : null, waitingOn: waitingOn(game), useful: toolsNow(game, false)};
+        executed: t.executed != null ? seatLabel(game, t.executed) : null, waitingOn: waitingOn(game), useful: toolsNow(game, false, !!narrationOwed(game, api))};
     }},
 
   // ---- acts ----

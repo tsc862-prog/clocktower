@@ -5,6 +5,7 @@
 // Storyteller (forSeat), which may read any seat's view and pending but never a seat's notes or whispers.
 import {SCRIPT} from '../data/script.js';
 import {forSeat} from '../game/api.js';
+import {touchFor} from '../data/colour.js';
 
 const ST_API = forSeat('storyteller');
 
@@ -222,12 +223,80 @@ export function narrationError(game, text) {
   return null;
 }
 
-// The dawn of this day, when it has not been narrated: {deaths: [names]}; null when none is owed.
+// The dawn of this day, when it has not been narrated: {day, deaths: [names], touch}; null when none is owed.
 export function dawnOwed(game, api = ST_API) {
   if (phaseOf(game) !== 'day') return null;
   const evs = tableEvents(game, api, 0), dawn = evs.filter(e => e.type === 'dawn' && e.day === game.day).at(-1);
   if (!dawn || evs.some(e => e.type === 'narration' && e.id > dawn.id)) return null;
-  return {deaths: diedNames(game)};
+  return {day: game.day, deaths: diedNames(game), touch: touchFor(seedOf(game), game.day, 'dawn')};
+}
+const seedOf = game => game?.config?.seed ?? 0;
+
+// The last execution, when the table has not heard the Storyteller since and no dawn has come after it: {day, name, touch}.
+export function executionOwed(game, api = ST_API) {
+  const ph = phaseOf(game);
+  if (ph !== 'day' && ph !== 'night') return null;
+  const evs = tableEvents(game, api, 0), ex = evs.filter(e => (e.type === 'execution' || e.type === 'virgin') && Number.isInteger(e.seat)).at(-1);
+  if (!ex || evs.some(e => (e.type === 'narration' || e.type === 'dawn') && e.id > ex.id)) return null;
+  const day = ex.day ?? game.day;
+  return {day, name: seatLabel(game, ex.seat), touch: touchFor(seedOf(game), day, 'dusk')};
+}
+
+// The end of the game, when it has not been narrated: {text}.
+export function endOwed(game, api = ST_API) {
+  if (phaseOf(game) !== 'ended') return null;
+  const evs = tableEvents(game, api, 0), win = evs.filter(e => e.type === 'win').at(-1);
+  if (evs.some(e => e.type === 'narration' && (!win || e.id > win.id))) return null;
+  return {text: game.winner?.text || win?.text || 'the game has ended'};
+}
+
+// The narration the table is owed now, the first of: the end, the dawn, the execution. {kind, ...} or null.
+export function narrationOwed(game, api = ST_API) {
+  try {
+    const end = endOwed(game, api); if (end) return {kind: 'end', ...end};
+    const dawn = dawnOwed(game, api); if (dawn) return {kind: 'dawn', ...dawn};
+    const ex = executionOwed(game, api); if (ex) return {kind: 'execution', ...ex};
+  } catch {}
+  return null;
+}
+
+// The owed narration in the header: the call (its first line) and the makings of the line (death, day, a touch of the town).
+export function owedLines(game, owed) {
+  if (!owed) return [];
+  if (owed.kind === 'dawn') {
+    const died = owed.deaths.length ? `${owed.deaths.join(' and ')} died in the night` : 'nobody died in the night';
+    const person = owed.deaths.length ? ` A death deserves a sentence about the person: ${owed.deaths.join(' and ')} as a neighbour (where found, what is left), never a role.` : '';
+    return [`DAWN NOT YET NARRATED (Day ${owed.day}): ${died}. Narrate it now, before anything else.`,
+      `Makings: Day ${owed.day}; ${died}; touch of the town: ${owed.touch}. Exactly two sentences: what happened, then the touch in your words.${person}`];
+  }
+  if (owed.kind === 'execution') {
+    return [`EXECUTION NOT YET NARRATED: ${owed.name} was executed at dusk on Day ${owed.day}. Narrate it now, before anything else.`,
+      `Makings: ${owed.name}, and the dusk: ${owed.touch}. One sentence: the execution and that touch in your own words, about the person, never a role.`];
+  }
+  return [`THE END NOT YET NARRATED: ${owed.text}. Narrate it now: one sentence; roles may be named now.`];
+}
+
+// The day is done: nominations open, nothing on the table, every living seat has nominated or passed on nominating.
+export function dayDone(game) {
+  if (phaseOf(game) !== 'day' || game.pending?.kind !== 'nomination') return false;
+  const c = game.clock || {}, t = game.today || {};
+  if (!c.nominationsOpen) return false;
+  const nominators = t.nominators || [], passed = c.passedNominating || [];
+  const alive = (game.seats || []).filter(s => s.alive);
+  return alive.length > 0 && alive.every(s => nominators.includes(s.index) || passed.includes(s.index));
+}
+
+// What is due from the Storyteller now, for the header and for the pace (a due act is worth an urgent wake): {tool, why} or null.
+// null means nothing waits on it: a turn now could only read.
+export function storytellerDue(game, api = ST_API) {
+  if (!game) return null;
+  let p = null;
+  try {p = api.pendingFor(game, 'storyteller')} catch {}
+  const owed = narrationOwed(game, api);
+  if (owed) return {tool: 'narrate', why: owed.kind === 'dawn' ? `the dawn of day ${owed.day} is not yet narrated` : owed.kind === 'execution' ? `${owed.name}'s execution is not yet narrated` : 'the end of the game is not yet narrated'};
+  if (p) return {tool: 'decide', why: `${KIND_WORDS[p.kind] || p.kind} waits on you`};
+  if (dayDone(game)) return {tool: 'end_day', why: 'every living player has nominated or passed'};
+  return null;
 }
 
 // The table's open vote, when one is open: nominee, nominator, who has voted, how many are needed.
@@ -250,19 +319,28 @@ export function waitingOn(game) {
   return String(p.seat);
 }
 
-// The tools that fit now, two or three.
-export function toolsNow(game, mine, dawn = false) {
+// The tools that fit now, two or three, an acting tool first whenever one is due: narrate when a narration is owed (the dawn,
+// an execution, the end), decide when a decision waits, end_day when every living seat has nominated or passed. `owed`: a
+// narration is owed (narrationOwed); undefined when the caller does not know (an older caller), false when none is.
+export function toolsNow(game, mine, owed = undefined) {
   const ph = phaseOf(game);
-  if (mine) return ['what_is_asked', 'decide', 'fallback'];
+  if (owed) return ['narrate', ...toolsNow(game, mine, false).filter(t => t !== 'narrate')].slice(0, 3);
+  if (mine) return ['decide', 'what_is_asked', 'fallback'];
   if (ph === 'ended') return ['narrate', 'rulings'];
   if (ph === 'day') {
     if (game.pending?.kind === 'vote') return ['day_state', 'close_vote'];
-    if (dawn) return ['narrate', 'talk', 'open_nominations'];
+    if (dayDone(game)) return ['end_day', 'day_state'];
     const c = game.clock || {};
-    if (game.step === 'dawn' || (c.round === 1 && !c.nominationsOpen && !(c.spoke || []).length)) return ['narrate', 'talk', 'open_nominations'];
-    return game.clock?.nominationsOpen ? ['day_state', 'end_day'] : ['talk', 'open_nominations', 'end_day'];
+    if (owed === undefined && (game.step === 'dawn' || (c.round === 1 && !c.nominationsOpen && !(c.spoke || []).length))) return ['narrate', 'talk', 'open_nominations'];
+    return c.nominationsOpen ? ['day_state', 'end_day'] : ['talk', 'open_nominations', 'end_day'];
   }
   return ['night_order', 'grimoire'];
+}
+// The "Now:" line: the tools in order; an act that is due is named; when nothing is due, a turn that only reads is wasted.
+export function nowLine(game, mine, owed) {
+  const tools = toolsNow(game, mine, owed);
+  if (owed || mine || tools[0] === 'end_day') return `Now: ${tools.join(', ')}. Act first: ${tools[0]} is due.`;
+  return `Now: ${tools.join(', ')}. Nothing is due from you: unless the talk needs a ruling or the day needs moving, end this turn without a call (a turn that only reads is wasted).`;
 }
 
 // The state header for one Storyteller turn. Short: the phase, the grimoire one line a seat, the decision waiting
@@ -270,10 +348,13 @@ export function toolsNow(game, mine, dawn = false) {
 export function storytellerHeader(game, api = ST_API) {
   const lines = [], ph = phaseOf(game);
   const alive = (game.seats || []).filter(s => s.alive).length;
+  // An owed narration is the header's first line, so the first turn that reads it narrates (#70).
+  const nom = nominationsWords(game), owed = narrationOwed(game, api);
+  const [call, makings] = owedLines(game, owed);
+  if (call) lines.push(call);
   lines.push(`Storyteller. ${clockWords(game)}. ${alive} of ${(game.seats || []).length} alive.`);
-  const nom = nominationsWords(game), owed = dawnOwed(game, api);
+  if (makings) lines.push(makings);
   if (nom) lines.push(`Clock fact for narration: ${nom}. Announce nothing the clock does not say.`);
-  if (owed) lines.push(`DAWN NOT YET NARRATED: ${owed.deaths.length ? owed.deaths.join(' and ') + ' died in the night' : 'nobody died in the night'}. Narrate it in your own words with one line of Thistlewick colour.`);
   for (const r of grimoireRows(game, api)) lines.push('- ' + grimoireLine(game, r));
   const p = api.pendingFor(game, 'storyteller');
   if (p) {
@@ -299,8 +380,9 @@ export function storytellerHeader(game, api = ST_API) {
     lines.push(`Since your last turn: ${said} said, ${wh} whispers seen, ${other} other events.`);
     if (evs.length) markSeen(game, Math.max(...evs.map(e => e.id || 0)));
   }
-  lines.push(`Now: ${toolsNow(game, !!p, !!owed).join(', ')}.`);
+  // the Now line always survives the cap: the body is cut before it
+  const now = nowLine(game, !!p, !!owed);
   let out = lines.join('\n');
-  if (out.length > HEADER_CAP) out = out.slice(0, HEADER_CAP - 1) + '…';
-  return out;
+  if (out.length + 1 + now.length > HEADER_CAP) out = out.slice(0, HEADER_CAP - now.length - 2) + '…';
+  return out + '\n' + now;
 }
