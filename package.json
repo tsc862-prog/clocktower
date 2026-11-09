@@ -19,6 +19,7 @@
     "behavior-report": "node scripts/behavior-report.mjs",
     "cost-report": "node scripts/cost-report.mjs",
     "upcheck": "node scripts/upcheck.mjs",
+    "ttscheck": "node scripts/ttscheck.mjs",
     "sim": "node scripts/headless.mjs",
     "gamecheck": "node scripts/gamecheck.mjs",
     "edgecheck": "node scripts/edgecheck.mjs",

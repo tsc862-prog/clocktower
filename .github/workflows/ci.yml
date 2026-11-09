@@ -84,6 +84,7 @@ jobs:
       - {name: "Mock game (eight runners from the supervisor play seed 5 to a winner, no dollar spent)", run: npm run mockgamecheck}
       - {name: Providers against their mocks, run: npm run providercheck}
       - {name: The launcher starts the relay and the page, run: npm run upcheck}
+      - {name: "Narrator voice against a mock engine (probe, forced off, say and cache)", run: npm run ttscheck}
       - name: Keep the mock game's runner and behavior logs when a step failed
         if: failure()
         uses: actions/upload-artifact@v4
