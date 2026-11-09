@@ -7,7 +7,6 @@
 //   5. The page's origin only: another origin is refused (403), the page's origin gets CORS.
 import http from 'node:http';
 import {quietEnv, startRelayProcess, req, freePort} from './relaycheck.mjs';
-import {ms} from './ci-clock.mjs';
 
 let fails = 0;
 const ok = (c, m) => {console.log(`  ${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) fails++};
@@ -26,7 +25,7 @@ async function mockEngine(port = 0) {
   return {url: 'http://127.0.0.1:' + server.address().port, speech, close: () => new Promise(res => server.close(res))};
 }
 const sleep = t => new Promise(r => setTimeout(r, t));
-const until = async (f, t = ms(8000)) => {const t0 = Date.now(); while (Date.now() - t0 < t) {const v = await f(); if (v) return v; await sleep(100)} return null};
+const until = async (f, t = 15000) => {const t0 = Date.now(); while (Date.now() - t0 < t) {const v = await f(); if (v) return v; await sleep(100)} return null};
 
 async function main() {
   const mock = await mockEngine();
@@ -55,11 +54,12 @@ async function main() {
     } finally {await R.stop()}
 
     console.log('off when nothing answers');
-    R = await startRelayProcess(['--play-only'], await quietEnv()); // quietEnv points TTS_URL at a closed port
+    R = await startRelayProcess(['--play-only'], await quietEnv({TTS_URL: 'http://127.0.0.1:' + await freePort()})); // a port bound and released: nothing listens
     try {
-      ok(await until(() => R.out.some(l => /voice engine not found/.test(l))), 'the relay says: voice engine not found, with the hint');
-      const s = await req(R.base, '/tts/status', {origin: PAGE});
-      ok(s.status === 200 && s.enabled === false && s.ok === false && /Kokoro/.test(s.hint || ''), '/tts/status: off, with the hint');
+      // the relay's own status, polled until the start-up probe has decided (not a log line)
+      let s = null; await until(async () => (s = await req(R.base, '/tts/status', {origin: PAGE})).enabled === false);
+      ok(s && s.status === 200 && s.enabled === false && s.ok === false && /Kokoro/.test(s.hint || ''), '/tts/status: off, with the hint');
+      ok(R.out.some(l => /voice engine not found/.test(l)), 'the relay also says so');
       const say = await req(R.base, '/tts/say', {method: 'POST', body: {text: 'Hello.'}, origin: PAGE});
       ok(say.status === 503, '/tts/say is refused (503)');
     } finally {await R.stop()}
