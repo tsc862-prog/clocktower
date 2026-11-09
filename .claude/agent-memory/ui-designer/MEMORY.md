@@ -47,3 +47,12 @@
   Voice toggle off by default (localStorage clocktower.voice); recorded game never spoken; queue cap 4 waiting, talk dropped first.
 - Bash heredocs here collapse `\` to `\`: write files containing backslashes with the Write tool. CDP screenshots: ws package + Chrome
   --remote-debugging-port (script pattern: launch, Page.navigate, Runtime.evaluate, Page.captureScreenshot).
+
+## Keeping time and rooms in the square (PRs #63, #64, 2026-11-08)
+- Relay clips (infra #62): watch event `clip:{id,ms}` or socket {type:'clip', id:<event id>, clip:{id,ms}}; play GET /tts?id=. Page waits
+  CLIP_WAIT_MS 1 s only when /tts/status clipsOnSay, then POST /tts/say; whispers say at once. `ms` is generation time, not duration.
+- POST /play/heard {last, voice}: last = newest event played/skipped (st.seen when idle). Sent on end, skip, turn on, unmute, 20 s tick
+  while on; voice:false at once on mute/off; never while off or recorded. #voice-time "keeping time" pill when clipsOnSay + reporting.
+- mergePush ignores `clip` when testing replay. Smoke timers: Windows setTimeout(0) ~16 ms, so clip waits in the smoke are 600 ms.
+- places {square, rooms:[{id,name,size,seats,free}], open}: square.js openRooms/roomsLine; tag .away-tag under the marker, discs in
+  .rooms-strip under the ring (roomDisc in tokens.js, clip ids ct-room-N-i), --room-* variables. All hidden when !open. Not yet reviewed.
