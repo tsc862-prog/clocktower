@@ -203,14 +203,24 @@ function todayView(game) {
   return {day: t.day, nominations, block: t.block ? {...t.block} : null, executed: t.executed ?? null};
 }
 
+// The evil team's first-night words: keep each other covered (#108).
+export const DEMON_COVER = 'Keep your minion covered: never name their role or team.';
+export const MINION_COVER = 'Agree with your demon, in a room by day, which good role each of you claims.';
+
+// The dawn as the table hears it. The demon never kills on the first night, so day 1's quiet is the rule, not news (#110).
+export function dawnText(game, e) {
+  if (e.deaths.length) return `Day ${e.day} breaks. ${list(game, e.deaths)} died in the night.`;
+  return e.night === 1 ? `Day ${e.day} breaks. The first night passes without a death, as it always does.` : `Day ${e.day} breaks. Nobody died in the night.`;
+}
+
 // What a seat was told, as a plain sentence.
 export function toldText(game, e) {
   const rn = id => roleName(game, id), v = e.info;
   switch (e.what) {
     case 'role': {const r = roleOf(game, e.role); return `You are the ${r.name} (${r.team}): ${r.ability}`}
     case 'minion-info': {const others = e.minions.filter(m => m !== e.seat);
-      return `The demon is ${list(game, e.demon)}.${others.length ? ` The other minion${others.length > 1 ? 's are' : ' is'} ${list(game, others)}.` : ''}`}
-    case 'demon-info': return `Your minion${e.minions.length === 1 ? ' is' : 's are'} ${list(game, e.minions) || 'nobody'}.${e.bluffs?.length ? ` Good roles not in play, to bluff with: ${e.bluffs.map(rn).join(', ')}.` : ''}`;
+      return `The demon is ${list(game, e.demon)}.${others.length ? ` The other minion${others.length > 1 ? 's are' : ' is'} ${list(game, others)}.` : ''} ${MINION_COVER}`}
+    case 'demon-info': return `Your minion${e.minions.length === 1 ? ' is' : 's are'} ${list(game, e.minions) || 'nobody'}.${e.bluffs?.length ? ` Good roles not in play, to bluff with: ${e.bluffs.map(rn).join(', ')}.` : ''}${e.minions.length ? ' ' + DEMON_COVER : ''}`;
     case 'became-demon': return `You are now the ${rn(e.role)}.`;
     case 'grimoire': return 'You see the grimoire: ' + e.grimoire.map(s => `${s.name} the ${rn(s.role)}${s.believed !== s.role ? ` (believes they are the ${rn(s.believed)})` : ''}${s.alive ? '' : ', dead'}${s.tokens.length ? ` [${s.tokens.map(t => t.token.replace(/-/g, ' ') + (t.value != null ? ': ' + (typeof t.value === 'string' ? rn(t.value) : t.value) : '') + (t.active === false ? ' (no effect)' : '')).join('; ')}]` : ''}`).join('. ') + '.';
   }
@@ -228,7 +238,7 @@ function project(game, e) {
   const base = {id: e.id, type: e.type, day: e.day, night: e.night}, n = i => nameOf(game, i);
   switch (e.type) {
     case 'night': return {...base, type: 'phase', what: 'night', text: `Night ${e.night} falls.`};
-    case 'dawn': return {...base, deaths: [...e.deaths], text: `Day ${e.day} breaks. ${e.deaths.length ? list(game, e.deaths) + (e.deaths.length > 1 ? ' died' : ' died') + ' in the night.' : 'Nobody died in the night.'}`};
+    case 'dawn': return {...base, deaths: [...e.deaths], text: dawnText(game, e)};
     case 'phase': return {...base, what: e.what, ...(e.round != null ? {round: e.round} : {}), text: e.text};
     case 'say': return {...base, seat: e.seat, text: e.text, ...(e.room != null ? {room: e.room} : {})};
     case 'move': return {...base, seats: [...e.seats], room: e.room, from: e.from ?? null, by: e.by ?? null, text: e.text};
